@@ -1426,13 +1426,14 @@ export const TOOL_SCHEMAS: Tool[] = [
       "Fetch a Workato job's per-step execution trace. Read-only. Returns a slimmed " +
       'shape by default (step list, status, error, truncated input/output). Pass ' +
       'full=true to get raw responses for both the job metadata and line details ' +
-      'endpoints. Requires an open Workato tab.',
+      'endpoints. Requires an open Workato tab. Both recipe_id and job_id are ' +
+      'required — Workato job trace endpoints are recipe-scoped.',
     inputSchema: {
       type: 'object',
       properties: {
         recipe_id: {
           type: 'number',
-          description: 'Numeric Workato recipe id the job belongs to (required).',
+          description: 'Numeric Workato recipe id the job belongs to.',
         },
         job_id: {
           type: ['string', 'number'],
