@@ -1,6 +1,7 @@
 /**
- * Find a Workato tab and dispatch a fetch in its MAIN-world context so the
- * page's session cookies travel with the request.
+ * Find a Workato tab and dispatch a self-contained function in its MAIN-world
+ * context so the page's session cookies travel with any fetch the function
+ * makes.
  *
  * Selection algorithm (from spec §6):
  *   1. Query tabs matching *.workato.com or *.workato.is.
@@ -11,6 +12,22 @@
 
 const WORKATO_URL_PATTERNS = ['*://*.workato.com/*', '*://*.workato.is/*'];
 
+const EXECUTE_SCRIPT_TIMEOUT_MS = 30_000;
+
+/**
+ * Error thrown by tab-dispatch operations.
+ *
+ * Codes thrown by this module:
+ *   - 'TabNotFound' — no Workato tab open, or no scriptable tab matched.
+ *   - 'MultipleWorkatoHosts' — tabs span >1 distinct Workato host.
+ *   - 'ScriptExecutionFailed' — chrome.scripting.executeScript rejected, timed
+ *     out, returned no frames, or returned a null/undefined result.
+ *
+ * Codes reserved for callers (Tasks 6/7, e.g. pull-recipe.ts, job-trace.ts):
+ *   - 'UnexpectedShape' — in-page script returned a value whose JSON shape
+ *     does not match what the tool expected. Throw from the tool layer after
+ *     inspecting the in-page result. Not thrown by this module.
+ */
 export class WorkatoDispatchError extends Error {
   constructor(
     public code:
@@ -80,15 +97,31 @@ export async function runInWorkatoTab<TArgs extends unknown[], TResult>(
   func: (...args: TArgs) => Promise<TResult> | TResult,
   args: TArgs,
 ): Promise<TResult> {
+  const execPromise = chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: func as (...a: unknown[]) => unknown,
+    args: args as unknown[],
+  });
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(
+      () =>
+        reject(
+          new WorkatoDispatchError(
+            'ScriptExecutionFailed',
+            `In-page script timed out after ${EXECUTE_SCRIPT_TIMEOUT_MS / 1000}s.`,
+          ),
+        ),
+      EXECUTE_SCRIPT_TIMEOUT_MS,
+    );
+  });
+
   let results;
   try {
-    results = await chrome.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      func: func as (...a: unknown[]) => unknown,
-      args: args as unknown[],
-    });
+    results = await Promise.race([execPromise, timeoutPromise]);
   } catch (err) {
+    if (err instanceof WorkatoDispatchError) throw err;
     throw new WorkatoDispatchError(
       'ScriptExecutionFailed',
       `chrome.scripting.executeScript failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -103,10 +136,10 @@ export async function runInWorkatoTab<TArgs extends unknown[], TResult>(
   }
 
   const first = results[0];
-  if (first.result === undefined) {
+  if (first.result == null) {
     throw new WorkatoDispatchError(
       'ScriptExecutionFailed',
-      'In-page script returned undefined. The function likely threw before returning.',
+      'In-page script returned no value (null/undefined). The function likely threw before returning.',
     );
   }
 
