@@ -44,6 +44,10 @@ export const TOOL_NAMES = {
     FLOW_RUN: 'record_replay_flow_run',
     LIST_PUBLISHED: 'record_replay_list_published',
   },
+  WORKATO: {
+    PULL_RECIPE: 'workato_pull_recipe',
+    JOB_TRACE: 'workato_job_trace',
+  },
 };
 
 export const TOOL_SCHEMAS: Tool[] = [
@@ -1395,6 +1399,53 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['action'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.PULL_RECIPE,
+    description:
+      "Fetch a Workato recipe's full code tree plus version metadata. Read-only. " +
+      'Requires an open Workato tab (*.workato.com or *.workato.is) using the same ' +
+      "session as the recipe's account.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description:
+            'Numeric Workato recipe id, e.g. 72449879. Found in the recipe URL: ' +
+            'app.workato.com/recipes/<recipe_id>-<slug>.',
+        },
+      },
+      required: ['recipe_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.JOB_TRACE,
+    description:
+      "Fetch a Workato job's per-step execution trace. Read-only. Returns a slimmed " +
+      'shape by default (step list, status, error, truncated input/output). Pass ' +
+      'full=true to get raw responses for both the job metadata and line details ' +
+      'endpoints. Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description: 'Numeric Workato recipe id the job belongs to (required).',
+        },
+        job_id: {
+          type: ['string', 'number'],
+          description:
+            'Workato job id. May be string or number depending on source; both accepted.',
+        },
+        full: {
+          type: 'boolean',
+          description: 'If true, return raw responses instead of the slim shape. Default false.',
+          default: false,
+        },
+      },
+      required: ['recipe_id', 'job_id'],
     },
   },
 ];
