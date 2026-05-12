@@ -2,9 +2,16 @@ import { createErrorResponse } from '@/common/tool-handler';
 import { ERROR_MESSAGES } from '@/common/constants';
 import * as browserTools from './browser';
 import * as workatoTools from './workato';
+import * as workatoUiTools from './workato-ui';
 import { flowRunTool, listPublishedFlowsTool } from './record-replay';
 
-const tools = { ...browserTools, ...workatoTools, flowRunTool, listPublishedFlowsTool } as any;
+const tools = {
+  ...browserTools,
+  ...workatoTools,
+  ...workatoUiTools,
+  flowRunTool,
+  listPublishedFlowsTool,
+} as any;
 const toolsMap = new Map(Object.values(tools).map((tool: any) => [tool.name, tool]));
 
 /**

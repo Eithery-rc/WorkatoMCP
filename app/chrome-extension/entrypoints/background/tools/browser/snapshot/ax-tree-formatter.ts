@@ -26,18 +26,16 @@ const INTERACTIVE_ROLES = new Set<string>([
   'option',
 ]);
 
-// Containers whose direct StaticText children are treated as interactive even
-// though they lack proper ARIA roles. Workato's popovers/menus render menu items
-// as plain divs (Clone/Delete in the "More actions" menu, etc.), so we surface
-// them by context. Cheap heuristic, not a full a11y compute path.
-const INTERACTIVE_CONTAINER_ROLES = new Set<string>([
-  'menu',
-  'menubar',
-  'listbox',
-  'dialog',
-  'tooltip',
-  'tablist',
-]);
+// StaticText is "interactive-by-context" when its parent is NOT itself
+// interactive — i.e., it's a freestanding text node rather than a label
+// inside a <button>/<link>. Workato renders menu items (Clone/Delete) and
+// other custom-popover content as plain divs at body-level with no ARIA
+// role, so the only reliable signal is "this StaticText isn't a button label."
+//
+// Trade-off: a few decorative labels (e.g. recipe canvas "TRIGGER"/"ACTIONS")
+// also get UIDs. Click-side exceptionDetails check throws loudly when the
+// underlying DOM node isn't an HTMLElement or has no click handler, so the
+// cost is noise in snapshots, not silent wrong-success.
 
 const SKIP_RENDER_ROLES = new Set<string>(['generic', 'none', 'presentation', 'InlineTextBox']);
 
@@ -110,11 +108,10 @@ export function formatAxTree(nodes: AXNode[]): FormatResult {
     const roleRaw = normalizeRole(node.role);
     const trimmedName = truncateName(normalizeName(node.name).replace(/\s+/g, ' ').trim());
 
-    // Treat StaticText inside a popover/menu container as interactive-by-context
-    // — Workato's "More actions" menu items render this way.
+    // See INTERACTIVE_CONTAINER_ROLES comment above for the heuristic & trade-off.
     const interactiveByContext =
       roleRaw === 'StaticText' &&
-      INTERACTIVE_CONTAINER_ROLES.has(parentRole) &&
+      !INTERACTIVE_ROLES.has(parentRole) &&
       trimmedName.length > 0 &&
       typeof node.backendDOMNodeId === 'number';
 
