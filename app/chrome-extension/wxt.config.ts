@@ -10,7 +10,14 @@ import IconsResolver from 'unplugin-icons/resolver';
 config({ path: resolve(process.cwd(), '.env') });
 config({ path: resolve(process.cwd(), '.env.local') });
 
-const CHROME_EXTENSION_KEY = process.env.CHROME_EXTENSION_KEY;
+// Public RSA key (NOT a secret — Chrome publishes the `key` field in every installed
+// manifest). Pinning it makes the unpacked-extension ID deterministic across machines,
+// so everyone who builds this repo gets the same extension ID and the bridge's
+// native-messaging `allowed_origins` whitelist works out of the box.
+// Derived ID: bpjpdgkeelhkijkllcmogemkmndgeana
+const DEFAULT_EXTENSION_KEY =
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6GcfzFpYKGf9KZNpdXCWXSK3JpsXE5kBnT0tGRrkXYYclQA3iIHbQtu6e7L8Hh8uDelB6+T64IIKU4lxMsruChCTshgdS51F6OT3+KNDGijeliZifV5nV6JR0h2X9qyMlvC+N727FziYjqbEIn+8o9skR8wP/1qsZbknB6nz2nZxhMtyqMOmI+fFw9dIsTcxEpz/0U15oMAeV8MpKgUHELij/obv90kC80E+5o1W+SMqzno5Aa5msBdq/57mQoTwmVyQ/fiRTHltAfC/NtN7uWtIz1HD8Ra52sjJN2JR19eAyZPg7bnfi1SfifnpVNylgTT53D0ANtcxpJlsjqyIYwIDAQAB';
+const CHROME_EXTENSION_KEY = process.env.CHROME_EXTENSION_KEY ?? DEFAULT_EXTENSION_KEY;
 // Detect dev mode early for manifest-level switches
 const IS_DEV = process.env.NODE_ENV !== 'production' && process.env.MODE !== 'production';
 
