@@ -108,13 +108,23 @@ Anything else (e.g. `add_record`, `upsert_record`, `delete_record`, `__adhoc_htt
 - `execute_suiteql` — SuiteQL query on NetSuite. Input: `{query}`.
 - `search_sobjects_soql_v2` — SOQL search on Salesforce. Input: `{query, output_schema, ...}`.
 
-## Install (dev)
+## Install
 
-1. `pnpm install`
-2. `pnpm build:shared && pnpm build:extension`
-3. Chrome → `chrome://extensions/` → enable Developer mode → "Load unpacked" → select `app/chrome-extension/.output/chrome-mv3` (confirm the exact folder name from `app/chrome-extension/.output/`).
-4. Start the bridge: `pnpm dev:native` (or the production equivalent; see `app/native-server/package.json`). The bridge listens on `http://127.0.0.1:12306/mcp`.
-5. Register in your MCP client. Example for Claude Code (`~/.claude/mcp.json` or equivalent):
+The extension's RSA public key is pinned in `app/chrome-extension/wxt.config.ts`, so every clone of this repo builds to the same deterministic extension ID (`bpjpdgkeelhkijkllcmogemkmndgeana`). That ID is hardcoded in the bridge's `allowed_origins` list — meaning native messaging works out of the box without per-machine setup.
+
+```bash
+git clone https://github.com/Eithery-rc/WorkatoMCP
+cd WorkatoMCP
+pnpm install
+pnpm build
+node app/native-server/dist/cli.js register
+```
+
+Then in Chrome:
+
+1. `chrome://extensions/` → enable Developer mode → "Load unpacked" → select `app/chrome-extension/.output/chrome-mv3`
+2. Open `https://app.workato.com` (or your region) and sign in
+3. Add this to your MCP client config (Claude Code: `~/.claude.json`):
 
 ```json
 {
@@ -127,11 +137,27 @@ Anything else (e.g. `add_record`, `upsert_record`, `delete_record`, `__adhoc_htt
 }
 ```
 
+The bridge auto-launches via Chrome native-messaging on the first MCP call. If a tool errors with `WorkatoTabNotFound`, double-check you have a Workato tab open + signed in.
+
 If pnpm v7+ skips postinstall scripts, add to `.npmrc`:
 
 ```
 enable-pre-post-scripts=true
 ```
+
+### Verifying the deterministic ID
+
+After `pnpm build`, your `chrome://extensions` should show extension ID `bpjpdgkeelhkijkllcmogemkmndgeana`. If you see a different ID, either your build picked up a stale state (delete `.wxt/`, rebuild) or someone overrode `CHROME_EXTENSION_KEY` via env var.
+
+### Troubleshooting
+
+If the popup says "Service Not Started" and your MCP client gets `ConnectionRefused`:
+
+```bash
+node app/native-server/dist/cli.js doctor
+```
+
+Then `--fix` if anything reports an error. Typical fix is a re-register after the dist directory was regenerated.
 
 ## Manual smoke test
 

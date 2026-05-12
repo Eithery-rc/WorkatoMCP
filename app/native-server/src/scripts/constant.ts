@@ -2,12 +2,14 @@ export const COMMAND_NAME = 'workatomcp-bridge';
 
 /**
  * Extension IDs allowed to connect to this native host.
- * First entry is the WorkatoMCP unpacked-load ID for this dev box; second is the
- * upstream published ID kept for compatibility with older installs.
+ * First entry is the deterministic WorkatoMCP ID derived from the pinned RSA public
+ * key in `app/chrome-extension/wxt.config.ts` — everyone who builds from this repo
+ * gets this ID. Second is upstream's Web Store ID, kept so an existing install of
+ * upstream's `mcp-chrome` extension would still work against this bridge.
  * The `register` script writes ALL of these into the manifest's `allowed_origins`.
  */
 export const EXTENSION_IDS = [
-  'plnjlpaeelbcbhahjhenjifeceodoikl',
+  'bpjpdgkeelhkijkllcmogemkmndgeana',
   'hbdgbgagpkpjffpklnamcljpakneikee',
 ];
 
