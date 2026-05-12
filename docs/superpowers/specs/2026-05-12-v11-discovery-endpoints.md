@@ -4,7 +4,14 @@
 **Status:** Endpoints captured, ready to brainstorm v1.1 tool surfaces.
 **Companion spec:** `2026-05-11-workatomcp-design.md` (v1, shipped).
 
-Two endpoints reverse-engineered for the `workato_search_recipes` and `workato_list_jobs` tools planned in v1.1. Captured live against a real Workato workspace at app.workato.com using the v1 bridge's own `chrome_network_capture` + `chrome_javascript` tools.
+Three endpoints reverse-engineered for the v1.1 discovery toolset:
+
+- `workato_search_recipes` — `GET /web_api/mixed_assets.json?asset_type=recipe`
+- `workato_search_connections` — same endpoint with `asset_type=connection`
+- `workato_get_connection` — `GET /connections/<id>.json`
+- `workato_list_jobs` — `GET /web_api/recipes/<id>/jobs.json`
+
+Captured live against a real Workato workspace at app.workato.com using the v1 bridge's own `chrome_network_capture` + `chrome_javascript` tools.
 
 ---
 
@@ -187,12 +194,106 @@ Pass `full: true` for the raw response.
 
 ### Open questions
 
-- True pagination param name. `page`, `offset`, `cursor`, `before_id`, `after_id` — all worth probing. Or possibly the API simply doesn't paginate at all and `per_page` caps the result.
-- Status filter param name. `statuses[]` didn't work. Try `status=failed` (singular) or `filter[status]`.
+- `started_at` window filter behavior — need a recipe with old jobs to confirm it actually narrows.
+- `query=` match semantics — does it match title only, error message only, or both? Substring or token?
 
 ---
 
-## 3. Notes for tool implementations
+## 3. Connections — list, search, and get single
+
+Connections use **the same endpoint as recipes** for listing/searching, plus a separate legacy route for fetching a single connection.
+
+### 3.1 List / search connections — `/web_api/mixed_assets.json?asset_type=connection`
+
+Same endpoint, same params, same response envelope as recipe search. Override the type with `asset_type=connection`. Verified: 172 connections in the test workspace.
+
+- `text=salesforce` → 14 hits (matches connection NAMES, not provider field).
+- `provider=`, `adapter=`, `provider_name=` are all silently ignored — there is no server-side filter by adapter. Filter client-side on the response's `provider` field.
+
+### Connection per-item shape — 18 keys
+
+| Key                                              | Type        | Notes                                                                                                                                                                                             |
+| ------------------------------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                                             | number      | Connection id (use with `workato_get_connection`).                                                                                                                                                |
+| `name`                                           | string      | Display name.                                                                                                                                                                                     |
+| `provider`                                       | string      | Adapter type. Observed in this workspace: `salesforce`, `netsuite`, `sftp`, `sap`, `pgp`, `rest`, `onprem_files`, `azure_blob_storage`, `steelbrick`, `workato_app`. Many more exist server-wide. |
+| `folder_id`, `project_id`                        | number      | Containing folder + project.                                                                                                                                                                      |
+| `asset_type`                                     | string      | Always `"connection"` for items returned with `asset_type=connection`.                                                                                                                            |
+| `updated_at`                                     | ISO         | Last modification.                                                                                                                                                                                |
+| `authorization_status`                           | string      | Auth state (e.g. `"success"`, `"failed"`).                                                                                                                                                        |
+| `authorized_at`                                  | ISO \| null | When auth was last refreshed.                                                                                                                                                                     |
+| `recipe_count`                                   | number      | How many recipes reference this connection. Useful for impact analysis before disabling.                                                                                                          |
+| `connection_lost_at`, `connection_lost_reason`   | mixed       | Set when the connection becomes invalid.                                                                                                                                                          |
+| `genie_count`, `proxy_api_endpoints_count`       | number      | Counts of dependent assets (AI agents, API proxies).                                                                                                                                              |
+| `alr_connection`, `traffic_mirroring_connection` | boolean     | Feature flags — usually false. Not load-bearing for v1.1.                                                                                                                                         |
+| `tags`                                           | array       | Tag refs.                                                                                                                                                                                         |
+| `latest_activity`                                | object      | `{event_type, timestamp, user_name}`. Useful for "who touched this last".                                                                                                                         |
+
+### 3.2 Get single connection — `/connections/<id>.json`
+
+```
+GET /connections/<id>.json
+```
+
+**Important — legacy route, not under `/web_api/`.** `/web_api/connections/<id>.json` returns `404 "The action 'show' could not be found for WebApi::SharedAccountsController"`. Use the unprefixed `/connections/<id>.json`.
+
+Auth: session cookies. No CSRF for GET. Headers: `accept: application/json`, `x-requested-with: XMLHttpRequest`.
+
+Response envelope: `{result: {<connection>}}` — the connection object is significantly richer than the list shape. Confirmed keys include `id`, `name`, `provider`, `created_at`, `authorized_at`, `authorization_status` (and presumably the full auth/config payload). Don't return `input` (credentials) verbatim — see safety note below.
+
+### Example slim shape for `workato_search_connections`
+
+```ts
+{
+  count: number,
+  page: number,
+  connections: Array<{
+    id: number,
+    name: string,
+    provider: string,                   // adapter type
+    folder_id: number,
+    project_id: number,
+    recipe_count: number,               // dependency impact
+    authorization_status: string,
+    authorized_at: string | null,
+    connection_lost_at: string | null,
+    updated_at: string,
+  }>
+}
+```
+
+Pass `full: true` for the 18-key per-item shape.
+
+### Example slim shape for `workato_get_connection`
+
+```ts
+{
+  id: number,
+  name: string,
+  provider: string,
+  created_at: string,
+  authorized_at: string | null,
+  authorization_status: string,
+  folder_id: number,
+  project_id: number,
+  recipe_count: number,
+  // Connection-config fields (per-provider; e.g. salesforce host, netsuite account_id).
+  // Stripped of secrets — see safety note.
+}
+```
+
+### Safety: connection secrets
+
+Connection records contain authentication material (OAuth tokens, API keys, signed JWTs). The Workato UI hides them, but the JSON response may surface them under keys like `auth_token`, `client_secret`, `password`, `refresh_token`, etc. **The `workato_get_connection` tool MUST strip these before returning to the agent.** Recommended allowlist approach: only emit the keys listed in the slim shape above; everything else discarded by default. `full: true` should still strip secret-shaped keys — never trust an agent to handle them.
+
+### Open questions for v1.1 brainstorm
+
+- Should we have one combined `workato_search_assets({ asset_type, ... })` tool, or split into `workato_search_recipes` + `workato_search_connections`? Splitting gives narrower typed shapes per tool.
+- For `workato_get_connection`, what's the right secret allowlist? Probe `/connections/<id>.json` for a salesforce + netsuite connection and audit the response keys.
+
+---
+
+## 4. Notes for tool implementations
 
 Both endpoints follow v1's "fetch in MAIN-world of an open Workato tab" pattern. The in-page functions for `workato_search_recipes` and `workato_list_jobs` should:
 
