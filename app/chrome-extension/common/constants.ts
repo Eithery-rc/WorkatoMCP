@@ -55,7 +55,8 @@ export const SUCCESS_MESSAGES = {
 
 // External Links
 export const LINKS = {
-  TROUBLESHOOTING: 'https://github.com/hangwin/mcp-chrome/blob/master/docs/TROUBLESHOOTING.md',
+  REPO: 'https://github.com/Eithery-rc/WorkatoMCP',
+  TROUBLESHOOTING: 'https://github.com/Eithery-rc/WorkatoMCP#manual-smoke-test',
 } as const;
 
 // File Extensions and MIME Types
