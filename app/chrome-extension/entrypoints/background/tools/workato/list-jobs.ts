@@ -35,12 +35,15 @@ interface InPageResult {
   };
 }
 
-const PER_PAGE = 25;
-const HARD_CAP = 100;
-
 /**
  * In-page function. Plain function returning a Promise chain — DO NOT add
  * async/await. Recurses via .then() to walk pages until limit reached.
+ *
+ * CRITICAL: This function is serialized via Function.prototype.toString()
+ * by chrome.scripting.executeScript. Module-scope constants referenced
+ * inside the function body do NOT survive serialization — they become
+ * undefined in the page context. All constants must be declared INSIDE
+ * the function (same class of pitfall as v1's `_pullInPage` issue).
  */
 function listJobsInPage(
   recipeId: number,
@@ -51,6 +54,9 @@ function listJobsInPage(
   groupByMaster: boolean,
   startCursor: string | null,
 ): Promise<InPageResult> {
+  const PER_PAGE = 25;
+  const HARD_CAP = 100;
+
   function buildUrl(cursor: string | null): string {
     const params = new URLSearchParams();
     params.set('per_page', String(PER_PAGE));
@@ -235,9 +241,11 @@ class WorkatoListJobsTool extends BaseBrowserToolExecutor {
         failed: Number(lastPage.job_failed_count ?? 0),
       };
       // Compute next_cursor only when more remains (scope > collected and last page was full).
+      // PER_PAGE mirrors the in-page constant — kept inline to avoid module-scope coupling
+      // with the serialized in-page function.
       const collected = trimmedJobs.length;
       const lastPageJobs = lastPage.jobs ?? [];
-      const lastPageFull = lastPageJobs.length >= PER_PAGE;
+      const lastPageFull = lastPageJobs.length >= 25;
       const moreRemains = meta.scope > collected && lastPageFull;
       const lastJobId =
         moreRemains && trimmedJobs.length > 0
@@ -245,8 +253,10 @@ class WorkatoListJobsTool extends BaseBrowserToolExecutor {
           : '';
       const nextCursor = moreRemains && lastJobId ? lastJobId : undefined;
 
+      // In full mode, return raw jobs (untrimmed, truncated only at the auto-walk
+      // limit, not by .slice). Drop `pages` so the response isn't doubled.
       const payload = full
-        ? { ...meta, next_cursor: nextCursor, pages, jobs: trimmedJobs }
+        ? { ...meta, next_cursor: nextCursor, jobs: trimmedJobs }
         : {
             ...meta,
             next_cursor: nextCursor,
