@@ -537,7 +537,7 @@ class WorkatoUiAddStepImpl extends BaseBrowserToolExecutor {
  *   { ok: false, error: string }
  */
 const SET_FIELD_PAGE_FN = `
-((field, value, mode) => {
+(async (field, value, mode) => {
   try {
     // ---- find the field's input element ----
     let wrapper = null;
@@ -553,7 +553,7 @@ const SET_FIELD_PAGE_FN = `
       if (txt.toLowerCase() === fieldLower || txt.toLowerCase().includes(fieldLower)) {
         // Walk up to the field container (w-form-field / form-field), then find
         // the input wrapper inside.
-        let container = lab.closest('w-form-field, [class*="form-field"]') || lab.parentElement;
+        let container = lab.closest('w-form-field') || lab.closest('[class~="form-field"]') || lab.parentElement;
         if (container) {
           wrapper = container.querySelector('w-text-field, w-textarea, w-formula-field, w-toggle, input, textarea, [contenteditable], .CodeMirror');
           if (wrapper) {
@@ -564,12 +564,19 @@ const SET_FIELD_PAGE_FN = `
       }
     }
 
-    // Strategy 2: data-field-id match.
+    // Strategy 2: data-field-id match. Workato encodes data-field-id as a JSON
+    // array, e.g. data-field-id='["message"]', so we accept both raw and encoded.
     if (!wrapper) {
-      const byId = document.querySelector('w-text-field[data-field-id="' + CSS.escape(field) + '"], [data-field-id="' + CSS.escape(field) + '"]');
-      if (byId) {
-        wrapper = byId;
-        matchedLabel = field;
+      const wantRaw = field;
+      const wantEncoded = JSON.stringify([field]);
+      const byIdNodes = document.querySelectorAll('[data-field-id]');
+      for (const node of byIdNodes) {
+        const v = node.getAttribute('data-field-id') || '';
+        if (v === wantRaw || v === wantEncoded) {
+          wrapper = node;
+          matchedLabel = field;
+          break;
+        }
       }
     }
 
@@ -596,10 +603,31 @@ const SET_FIELD_PAGE_FN = `
     }
 
     // ---- write the value ----
-    // Priority 1: CodeMirror.
-    const cmRoot = wrapper.classList && wrapper.classList.contains('CodeMirror')
-      ? wrapper
-      : wrapper.querySelector('.CodeMirror') || (wrapper.closest && wrapper.closest('.CodeMirror'));
+    // Priority 1: CodeMirror. Workato renders a w-text-field-preview placeholder
+    // and lazy-instantiates CodeMirror on user interaction. If we see the
+    // preview, click to promote it to the live editor, then wait briefly for
+    // the .CodeMirror instance to attach.
+    const findCmRoot = () =>
+      wrapper.classList && wrapper.classList.contains('CodeMirror')
+        ? wrapper
+        : wrapper.querySelector('.CodeMirror') || (wrapper.closest && wrapper.closest('.CodeMirror'));
+    let cmRoot = findCmRoot();
+    if (cmRoot && !cmRoot.CodeMirror) {
+      const container = wrapper.closest('w-form-field') || wrapper.closest('[class~="form-field"]') || wrapper.parentElement;
+      const preview = container && container.querySelector('w-text-field-preview, [class*="text-field-preview"], [class*="text-field__preview"]');
+      if (preview && typeof preview.click === 'function') {
+        preview.click();
+      } else if (typeof cmRoot.click === 'function') {
+        cmRoot.click();
+      }
+      // Wait up to 1.5s for the CodeMirror instance to attach.
+      const start = Date.now();
+      while (Date.now() - start < 1500) {
+        await new Promise(r => setTimeout(r, 50));
+        cmRoot = findCmRoot();
+        if (cmRoot && cmRoot.CodeMirror) break;
+      }
+    }
     if (cmRoot && cmRoot.CodeMirror) {
       cmRoot.CodeMirror.focus();
       cmRoot.CodeMirror.setValue(value);
@@ -675,7 +703,7 @@ class WorkatoUiSetFieldImpl extends BaseBrowserToolExecutor {
         kind?: string;
         label?: string;
         error?: string;
-      }>(tabId, expr);
+      }>(tabId, expr, { awaitPromise: true });
 
       if (!result?.ok) {
         return createErrorResponse(
@@ -715,7 +743,7 @@ class WorkatoUiSetFieldImpl extends BaseBrowserToolExecutor {
  *   { ok: false, error: string, attempted: ['drag', 'formula'] }
  */
 const INSERT_DATAPILL_PAGE_FN = `
-((field, sourceStep, path, recipeId) => {
+(async (field, sourceStep, path, recipeId) => {
   function findFieldWrapper(field) {
     const labels = Array.from(document.querySelectorAll('w-form-field-simple-label, [class*="form-field-simple-label"]'));
     const fieldLower = field.toLowerCase();
@@ -724,15 +752,21 @@ const INSERT_DATAPILL_PAGE_FN = `
       const txt = (searchable.textContent || '').trim();
       if (!txt) continue;
       if (txt.toLowerCase() === fieldLower || txt.toLowerCase().includes(fieldLower)) {
-        const container = lab.closest('w-form-field, [class*="form-field"]') || lab.parentElement;
+        const container = lab.closest('w-form-field') || lab.closest('[class~="form-field"]') || lab.parentElement;
         if (container) {
           const w = container.querySelector('w-text-field, w-textarea, w-formula-field, .CodeMirror, [contenteditable]');
           if (w) return w;
         }
       }
     }
-    const byId = document.querySelector('w-text-field[data-field-id="' + CSS.escape(field) + '"], [data-field-id="' + CSS.escape(field) + '"]');
-    return byId;
+    const wantRaw = field;
+    const wantEncoded = JSON.stringify([field]);
+    const byIdNodes = document.querySelectorAll('[data-field-id]');
+    for (const node of byIdNodes) {
+      const v = node.getAttribute('data-field-id') || '';
+      if (v === wantRaw || v === wantEncoded) return node;
+    }
+    return null;
   }
 
   function expandStep(sourceStep) {
@@ -788,10 +822,26 @@ const INSERT_DATAPILL_PAGE_FN = `
     }
   }
 
-  function writeFormula(wrapper, formula) {
-    const cmRoot = wrapper.classList && wrapper.classList.contains('CodeMirror')
-      ? wrapper
-      : wrapper.querySelector('.CodeMirror') || (wrapper.closest && wrapper.closest('.CodeMirror'));
+  async function writeFormula(wrapper, formula) {
+    const findCm = () =>
+      wrapper.classList && wrapper.classList.contains('CodeMirror')
+        ? wrapper
+        : wrapper.querySelector('.CodeMirror') || (wrapper.closest && wrapper.closest('.CodeMirror'));
+    let cmRoot = findCm();
+    // Workato lazy-instantiates CodeMirror — if the DOM element exists but the
+    // JS instance doesn't, click the preview placeholder to promote it.
+    if (cmRoot && !cmRoot.CodeMirror) {
+      const container = wrapper.closest('w-form-field') || wrapper.closest('[class~="form-field"]') || wrapper.parentElement;
+      const preview = container && container.querySelector('w-text-field-preview, [class*="text-field-preview"], [class*="text-field__preview"]');
+      if (preview && typeof preview.click === 'function') preview.click();
+      else if (typeof cmRoot.click === 'function') cmRoot.click();
+      const start = Date.now();
+      while (Date.now() - start < 1500) {
+        await new Promise(r => setTimeout(r, 50));
+        cmRoot = findCm();
+        if (cmRoot && cmRoot.CodeMirror) break;
+      }
+    }
     if (cmRoot && cmRoot.CodeMirror) {
       cmRoot.CodeMirror.focus();
       cmRoot.CodeMirror.setValue(formula);
@@ -863,7 +913,7 @@ const INSERT_DATAPILL_PAGE_FN = `
           resolve({ ok: false, error: 'drag did not take effect and no recipe_id available for formula fallback', attempted: ['drag'] });
           return;
         }
-        fetchRecipeCode(recipeId).then((code) => {
+        fetchRecipeCode(recipeId).then(async (code) => {
           if (!code) {
             resolve({ ok: false, error: 'drag failed; could not fetch recipe code for formula fallback', attempted: ['drag', 'formula'] });
             return;
@@ -877,7 +927,7 @@ const INSERT_DATAPILL_PAGE_FN = `
           const provider = stepNode.provider || '';
           const dp = { pill_type: 'output', provider: provider, line: line, path: path };
           const formula = "=_dp('" + JSON.stringify(dp).replace(/'/g, "\\\\'") + "')";
-          const wrote = writeFormula(wrapper, formula);
+          const wrote = await writeFormula(wrapper, formula);
           if (wrote) {
             resolve({ ok: true, method: 'formula', pill: leafName });
           } else {
@@ -894,7 +944,7 @@ const INSERT_DATAPILL_PAGE_FN = `
   if (!recipeId || !Number.isFinite(recipeId)) {
     return { ok: false, error: 'pill not found for step ' + sourceStep + ' leaf "' + leafName + '" and no recipe_id for formula fallback', attempted: [] };
   }
-  return fetchRecipeCode(recipeId).then((code) => {
+  return fetchRecipeCode(recipeId).then(async (code) => {
     if (!code) return { ok: false, error: 'could not fetch recipe code for formula fallback', attempted: ['formula'] };
     const stepNode = findStepNode(code, sourceStep);
     if (!stepNode) return { ok: false, error: 'step ' + sourceStep + ' not found in recipe code', attempted: ['formula'] };
@@ -902,7 +952,7 @@ const INSERT_DATAPILL_PAGE_FN = `
     const provider = stepNode.provider || '';
     const dp = { pill_type: 'output', provider: provider, line: line, path: path };
     const formula = "=_dp('" + JSON.stringify(dp).replace(/'/g, "\\\\'") + "')";
-    const wrote = writeFormula(wrapper, formula);
+    const wrote = await writeFormula(wrapper, formula);
     if (wrote) return { ok: true, method: 'formula', pill: leafName };
     return { ok: false, error: 'formula fallback could not write to field (no CodeMirror)', attempted: ['formula'] };
   });
