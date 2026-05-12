@@ -1357,10 +1357,19 @@ class WorkatoUiExitEditModeImpl extends BaseBrowserToolExecutor {
 const CREATE_RECIPE_PAGE_FN = `
 (async (name, providedFolderId, projectName, description) => {
   try {
-    const csrfMeta = document.querySelector('meta[name="csrf-token"]');
-    const csrf = csrfMeta && csrfMeta.getAttribute('content');
+    // Workato stores the CSRF token in the XSRF-TOKEN-V2 cookie (URL-encoded).
+    // The <meta name="csrf-token"> tag is NOT present on editor pages.
+    function readCookie(n) {
+      const m = document.cookie.match(new RegExp('(?:^|; )' + n.replace(/[-.+*]/g, '\\\\$&') + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    let csrf = readCookie('XSRF-TOKEN-V2') || readCookie('XSRF-TOKEN') || readCookie('csrf-token');
     if (!csrf) {
-      return { ok: false, stage: 'csrf', error: 'could not find CSRF token; ensure the active tab is a Workato page' };
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      csrf = csrfMeta && csrfMeta.getAttribute('content');
+    }
+    if (!csrf) {
+      return { ok: false, stage: 'csrf', error: 'could not find CSRF token in XSRF-TOKEN-V2 cookie or meta tag; ensure the active tab is a logged-in Workato page' };
     }
 
     let folderId = (typeof providedFolderId === 'number' && Number.isFinite(providedFolderId)) ? providedFolderId : null;
