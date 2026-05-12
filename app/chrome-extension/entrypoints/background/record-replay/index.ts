@@ -291,16 +291,18 @@ export function initRecordReplayListeners() {
       } catch {}
     });
   }
-  chrome.commands.onCommand.addListener(async (command) => {
-    try {
-      const triggers = await listTriggers();
-      const t = triggers.find((x) => x.type === 'command' && (x as any).commandKey === command);
-      if (!t || t.enabled === false) return;
-      const flow = await getFlow(t.flowId);
-      if (!flow) return;
-      await runFlow(flow, { args: t.args || {}, returnLogs: false });
-    } catch {}
-  });
+  if (chrome.commands?.onCommand?.addListener) {
+    chrome.commands.onCommand.addListener(async (command) => {
+      try {
+        const triggers = await listTriggers();
+        const t = triggers.find((x) => x.type === 'command' && (x as any).commandKey === command);
+        if (!t || t.enabled === false) return;
+        const flow = await getFlow(t.flowId);
+        if (!flow) return;
+        await runFlow(flow, { args: t.args || {}, returnLogs: false });
+      } catch {}
+    });
+  }
   chrome.webNavigation.onCommitted.addListener(async (details) => {
     try {
       if (details.frameId !== 0) return;
