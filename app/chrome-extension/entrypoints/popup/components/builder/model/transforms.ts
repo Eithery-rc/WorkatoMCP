@@ -7,9 +7,9 @@ import {
   nodesToSteps as sharedNodesToSteps,
   stepsToNodes as sharedStepsToNodes,
   topoOrder as sharedTopoOrder,
-} from 'chrome-mcp-shared';
-import { STEP_TYPES } from 'chrome-mcp-shared';
-import { EDGE_LABELS } from 'chrome-mcp-shared';
+} from 'workatomcp-shared';
+import { STEP_TYPES } from 'workatomcp-shared';
+import { EDGE_LABELS } from 'workatomcp-shared';
 
 export function newId(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}`;
