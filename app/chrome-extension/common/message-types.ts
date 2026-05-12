@@ -14,15 +14,9 @@ export enum MessageTarget {
 
 // Background script message types
 export const BACKGROUND_MESSAGE_TYPES = {
-  SWITCH_SEMANTIC_MODEL: 'switch_semantic_model',
-  GET_MODEL_STATUS: 'get_model_status',
-  UPDATE_MODEL_STATUS: 'update_model_status',
-  GET_STORAGE_STATS: 'get_storage_stats',
-  CLEAR_ALL_DATA: 'clear_all_data',
   GET_SERVER_STATUS: 'get_server_status',
   REFRESH_SERVER_STATUS: 'refresh_server_status',
   SERVER_STATUS_CHANGED: 'server_status_changed',
-  INITIALIZE_SEMANTIC_ENGINE: 'initialize_semantic_engine',
   // Record & Replay background control and queries
   RR_START_RECORDING: 'rr_start_recording',
   RR_STOP_RECORDING: 'rr_stop_recording',
@@ -92,10 +86,6 @@ export const BACKGROUND_MESSAGE_TYPES = {
 
 // Offscreen message types
 export const OFFSCREEN_MESSAGE_TYPES = {
-  SIMILARITY_ENGINE_INIT: 'similarityEngineInit',
-  SIMILARITY_ENGINE_COMPUTE: 'similarityEngineCompute',
-  SIMILARITY_ENGINE_BATCH_COMPUTE: 'similarityEngineBatchCompute',
-  SIMILARITY_ENGINE_STATUS: 'similarityEngineStatus',
   // GIF encoding
   GIF_ADD_FRAME: 'gifAddFrame',
   GIF_FINISH: 'gifFinish',
@@ -151,9 +141,6 @@ export const TOOL_MESSAGE_TYPES = {
   // Wait helper
   WAIT_FOR_TEXT: 'waitForText',
 
-  // Semantic similarity engine
-  SIMILARITY_ENGINE_INIT: 'similarityEngineInit',
-  SIMILARITY_ENGINE_COMPUTE_BATCH: 'similarityEngineComputeBatch',
   // Record & Replay content script bridge
   RR_RECORDER_CONTROL: 'rr_recorder_control',
   RR_RECORDER_EVENT: 'rr_recorder_event',
@@ -213,10 +200,6 @@ export enum SendMessageType {
 
   // Keyboard event related message types
   SimulateKeyboard = 'simulateKeyboard',
-
-  // Semantic similarity engine related message types
-  SimilarityEngineInit = 'similarityEngineInit',
-  SimilarityEngineComputeBatch = 'similarityEngineComputeBatch',
 }
 
 // ============================================================
