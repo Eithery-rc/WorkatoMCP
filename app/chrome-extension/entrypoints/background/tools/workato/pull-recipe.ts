@@ -113,11 +113,25 @@ async function pullInPage(recipeId: number): Promise<InPageResult> {
     };
   }
 
+  const versionNo = Number(flow.version_no);
+  if (!Number.isFinite(versionNo) || versionNo <= 0) {
+    return {
+      ok: false,
+      failure: {
+        stage: 'shape',
+        body_excerpt: JSON.stringify({ version_no: flow.version_no }).slice(0, 1024),
+        message:
+          `result.recipe_data.flow.version_no is not a positive finite number ` +
+          `(got ${JSON.stringify(flow.version_no)}). Workato API may have drifted.`,
+      },
+    };
+  }
+
   return {
     ok: true,
     code: parsedCode,
     version: {
-      version_no: Number(flow.version_no),
+      version_no: versionNo,
       name: String(flow.name ?? ''),
       folder_id: Number(flow.folder_id),
       config: typeof flow.config === 'string' ? flow.config : JSON.stringify(flow.config ?? {}),
