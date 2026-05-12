@@ -204,7 +204,14 @@ Batch variant:
 - `input.type` is always `"compound"`. `input.operand` joins conditions (`"and"`/`"or"`).
 - Each condition: `{ lhs, operand, rhs, uuid }`. `lhs`/`rhs` are literals or `#{_dp(...)}` (interpolated) / `=_dp(...)` (formula).
 - Observed operands: `equals_to`, `blank`, `greater_than`, `less_than`. Documented but TODO: `not_equals_to`, `contains`, `present`, `starts_with`, `ends_with`.
-- **`elsif`/`else` are siblings of `if` in the parent's block** — they share consecutive `number`s. The `else.block` contains the else-branch steps.
+- **`elsif`/`else` are NESTED CHILDREN of `if.block`** — they go INSIDE the if's own `block` array, at the END, after the if-branch steps. Verified by parent-search on AOF (recipe 72652236) on 2026-05-12: every if-with-else has its else as the last entry of `if.block`, never as a sibling.
+  ```
+  if (cond):
+    block:
+      - <if-branch steps>
+      - elsif (cond): block: [<elsif-branch steps>]    ← nested INSIDE if.block
+      - else: block: [<else-branch steps>]              ← nested INSIDE if.block
+  ```
 
 ### Repeat + while_condition — `keyword:"repeat"`
 
@@ -244,34 +251,33 @@ Batch variant:
 
 There is **no `repeat_while` keyword**. The loop is `keyword:"repeat"`; its first child is the `while_condition` predicate (no `block`, no `as`). Use `_dp(...,provider:"repeat",line:"<repeat as>",path:["index"])` for the 0-based counter and `["is_first"]` for first-iteration boolean.
 
-### Try / Catch — sibling pair
+### Try / Catch — catch nests inside try.block
+
+`catch` is the **LAST entry inside `try.block`**, not a sibling of `try`. Verified by parent-search on AOF (recipe 72652236) on 2026-05-12: `try.block` ends with `..., 'catch'` in every case.
 
 ```json
 {
   "keyword": "try",
-  "number": 1,
+  "number": 3,
   "input": {},
   "block": [
-    /* monitored steps */
+    ,
+    /* monitored steps */ {
+      "as": "ca7c4e10",
+      "keyword": "catch",
+      "number": 6,
+      "input": { "max_retry_count": "0", "retry_interval": "3" },
+      "block": [
+        /* error-handling steps */
+      ]
+    }
   ]
 }
 ```
 
-```json
-{
-  "as": "29ffdd5f",
-  "keyword": "catch",
-  "number": 135,
-  "input": { "max_retry_count": "0", "retry_interval": "3" },
-  "block": [
-    /* error-handling steps */
-  ]
-}
-```
-
-- `catch.as` exposes error datapills: `provider:"catch", line:"<as>", path:["error_message"]` or `["error_type"]`.
-- `max_retry_count="0"` means no retry. `retry_interval` is seconds.
-- Try and catch are **siblings in the parent block**, not nested.
+- `catch.as` is required.
+- `max_retry_count="0"` means no retry. `retry_interval` is seconds (string).
+- **Catch output field names are NOT `error_message`/`error_type`** — those are the documented names but Workato rejects them with `"Unknown data field 'Error message'"` on validation. The actual output schema is unknown — TODO, verify via the UI once Workato shows the catch's datapill picker. For now, write static catch-side log messages without referencing the catch's output, OR add an `extended_output_schema` declaring whatever fields you want to use (Workato will accept the names you declare).
 
 ### Stop — `keyword:"stop"`
 
@@ -704,7 +710,8 @@ Common mistakes:
 - Putting `source` inside `foreach.input` (it goes at root).
 - Inlining `=['a','b','c']` as foreach `source` instead of using a Variables `declare_list` + datapill reference.
 - Using `keyword:"repeat_while"` (there's no such thing — use `repeat` with a `while_condition` first child).
-- Treating `else` as nested inside `if` (they're siblings).
+- **Treating `else`/`elsif` as siblings of `if`** — they NEST inside `if.block` at the end. Same for `catch`: nests as the last entry inside `try.block`.
+- **Trusting documented catch field names `error_message`/`error_type`** — Workato rejects those. The real catch output schema is undocumented; either skip catch-output references or declare your own via `extended_output_schema`.
 - **Using a non-hex `as`** (e.g. `"caller00"`, `"declare1"`). Must be `/^[0-9a-f]{8}$/`.
 - **Omitting `extended_output_schema`** on a step whose output is referenced by a downstream datapill — the reference fails validation.
 - **Omitting `extended_input_schema`** when writing structured `input` fields (arrays, nested objects) — Workato silently drops them on save. Symptom: `code_errors:[]` but `pull_recipe` shows the data is gone.
