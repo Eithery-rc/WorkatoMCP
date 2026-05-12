@@ -10,8 +10,6 @@ export default defineConfig({
       // Match WXT's path aliases from .wxt/tsconfig.json
       '@': rootDir,
       '~': rootDir,
-      // Mock hnswlib-wasm-static to avoid native module issues in tests
-      'hnswlib-wasm-static': `${rootDir}/tests/__mocks__/hnswlib-wasm-static.ts`,
     },
   },
   test: {
