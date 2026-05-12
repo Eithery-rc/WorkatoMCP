@@ -12,7 +12,7 @@ import type {
   AgentStatusEvent,
   AgentCliPreference,
   AgentUsageStats,
-} from 'chrome-mcp-shared';
+} from 'workatomcp-shared';
 
 /**
  * Request lifecycle state.
