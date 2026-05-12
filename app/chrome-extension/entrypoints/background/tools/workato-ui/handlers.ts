@@ -46,6 +46,7 @@ import type {
   ListStepsArgs,
   OpenRecipeArgs,
   SaveRecipeArgs,
+  SaveRecipeCodeArgs,
   SetFieldArgs,
   StepInfo,
 } from './types';
@@ -1543,6 +1544,157 @@ class WorkatoUiCreateRecipeImpl extends BaseBrowserToolExecutor {
 }
 
 // ---------------------------------------------------------------------------
+// workato_save_recipe_code
+// ---------------------------------------------------------------------------
+
+/**
+ * Page-side helper that PUTs to /recipes/<id>.json with a new code tree.
+ * Same auth pattern as create_recipe: cookie session + CSRF from cookie.
+ *
+ * Body shape (captured verbatim from a real browser save):
+ *   {"flow": {
+ *     "code": "<JSON-stringified code tree>",
+ *     "config": "<JSON-stringified config array>",
+ *     "name": "...",
+ *     "description": "..."
+ *   }}
+ *
+ * Browser sends gzip; we send plain JSON (works the same per create_recipe).
+ *
+ * Returns: { ok: true, version_no, code_errors? } | { ok: false, error, stage }
+ */
+const SAVE_RECIPE_CODE_PAGE_FN = `
+(async (recipeId, code, config, name, description) => {
+  try {
+    function readCookie(n) {
+      const m = document.cookie.match(new RegExp('(?:^|; )' + n.replace(/[-.+*]/g, '\\\\$&') + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    let csrf = readCookie('XSRF-TOKEN-V2') || readCookie('XSRF-TOKEN') || readCookie('csrf-token');
+    if (!csrf) {
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      csrf = csrfMeta && csrfMeta.getAttribute('content');
+    }
+    if (!csrf) {
+      return { ok: false, stage: 'csrf', error: 'could not find CSRF token; ensure the active tab is a logged-in Workato page' };
+    }
+
+    const flow = {};
+    flow.code = typeof code === 'string' ? code : JSON.stringify(code);
+    if (config !== undefined && config !== null) {
+      flow.config = typeof config === 'string' ? config : JSON.stringify(config);
+    }
+    if (typeof name === 'string' && name.length > 0) flow.name = name;
+    if (typeof description === 'string') flow.description = description;
+
+    const res = await fetch('/recipes/' + recipeId + '.json', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'x-csrf-token': csrf,
+        'x-requested-with': 'XMLHttpRequest',
+        'accept': 'application/json',
+      },
+      body: JSON.stringify({ flow: flow }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      return { ok: false, stage: 'http', error: 'PUT /recipes/' + recipeId + '.json failed: HTTP ' + res.status + ' ' + t.slice(0, 500) };
+    }
+    const json = await res.json().catch(() => null);
+    const result = json && json.result && json.result.flow;
+    if (!result) {
+      return { ok: false, stage: 'parse', error: 'save response missing result.flow: ' + JSON.stringify(json).slice(0, 400) };
+    }
+    return {
+      ok: true,
+      recipe_id: recipeId,
+      version_no: result.version_no,
+      updated_at: result.updated_at,
+      code_errors: Array.isArray(result.code_errors) ? result.code_errors : [],
+    };
+  } catch (e) {
+    return { ok: false, stage: 'exception', error: String(e && e.message || e) };
+  }
+})
+`;
+
+class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_UI.SAVE_RECIPE_CODE;
+
+  async execute(args: SaveRecipeCodeArgs): Promise<ToolResult> {
+    console.log('[workato-ui] save_recipe_code requested:', { ...args, code: '<omitted>' });
+    try {
+      if (typeof args?.recipe_id !== 'number' || !Number.isFinite(args.recipe_id)) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': recipe_id (number) is required',
+        );
+      }
+      if (args.code === undefined || args.code === null) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': code (object or JSON string) is required',
+        );
+      }
+
+      const tabId = await resolveTabId(args);
+      await ensureAttached(tabId);
+
+      const url = await getTabUrl(tabId);
+      if (!/workato\.(com|is)/.test(url)) {
+        return createErrorResponse(
+          `workato_ui_save_recipe_code: active tab is not a Workato page (url=${url}).`,
+        );
+      }
+
+      const expr = `(${SAVE_RECIPE_CODE_PAGE_FN})(${JSON.stringify(args.recipe_id)}, ${JSON.stringify(
+        args.code,
+      )}, ${JSON.stringify(args.config ?? null)}, ${JSON.stringify(
+        args.name ?? null,
+      )}, ${JSON.stringify(args.description ?? null)})`;
+
+      const result = await evaluateInPage<{
+        ok: boolean;
+        stage?: string;
+        error?: string;
+        recipe_id?: number;
+        version_no?: number;
+        updated_at?: string;
+        code_errors?: unknown[];
+      }>(tabId, expr, { awaitPromise: true });
+
+      if (!result?.ok) {
+        return createErrorResponse(
+          `workato_ui_save_recipe_code: ${result?.error ?? 'unknown error'}` +
+            (result?.stage ? ` (stage=${result.stage})` : ''),
+        );
+      }
+
+      const errCount = Array.isArray(result.code_errors) ? result.code_errors.length : 0;
+      const text =
+        `saved recipe ${result.recipe_id} (version ${result.version_no}` +
+        (errCount > 0 ? `, ${errCount} validation error${errCount === 1 ? '' : 's'}` : '') +
+        `)\n` +
+        JSON.stringify({
+          recipe_id: result.recipe_id,
+          version_no: result.version_no,
+          updated_at: result.updated_at,
+          code_errors: result.code_errors,
+        });
+      return {
+        content: [{ type: 'text', text }],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-ui] save_recipe_code failed:', error);
+      return createErrorResponse(
+        `workato_ui_save_recipe_code failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Exports — runtime instances (tools/index.ts reads `.name`).
 // ---------------------------------------------------------------------------
 
@@ -1563,3 +1715,4 @@ export const WorkatoUiInsertDatapillTool = new WorkatoUiInsertDatapillImpl();
 export const WorkatoUiSaveRecipeTool = new WorkatoUiSaveRecipeImpl();
 export const WorkatoUiExitEditModeTool = new WorkatoUiExitEditModeImpl();
 export const WorkatoUiCreateRecipeTool = new WorkatoUiCreateRecipeImpl();
+export const WorkatoUiSaveRecipeCodeTool = new WorkatoUiSaveRecipeCodeImpl();

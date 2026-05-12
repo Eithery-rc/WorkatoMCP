@@ -63,6 +63,14 @@ export interface CreateRecipeArgs extends TabTargetArgs {
   description?: string;
 }
 
+export interface SaveRecipeCodeArgs extends TabTargetArgs {
+  recipe_id: number;
+  code: object | string;
+  config?: unknown[] | string;
+  name?: string;
+  description?: string;
+}
+
 export interface StepInfo {
   number: number;
   label: string;

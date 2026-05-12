@@ -69,6 +69,7 @@ export const TOOL_NAMES = {
     SAVE_RECIPE: 'workato_ui_save_recipe',
     EXIT_EDIT_MODE: 'workato_ui_exit_edit_mode',
     CREATE_RECIPE: 'workato_ui_create_recipe',
+    SAVE_RECIPE_CODE: 'workato_ui_save_recipe_code',
   },
 };
 
@@ -2084,6 +2085,40 @@ export const TOOL_SCHEMAS: Tool[] = [
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['name'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_UI.SAVE_RECIPE_CODE,
+    description:
+      'Save a complete recipe code tree directly via the Workato REST API (PUT /recipes/<id>.json). ' +
+      'Bypasses the UI entirely — no need to enter edit mode, focus steps, or drive the editor. ' +
+      'Pair with workato_pull_recipe to fetch the current code, mutate it client-side, then save. ' +
+      'Returns the new version_no plus any validation errors Workato emits about the saved tree. ' +
+      'Prerequisite: the active tab must be a logged-in Workato page (for CSRF + session cookies).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'Numeric Workato recipe id.' },
+        code: {
+          description:
+            'Recipe code tree. Either a plain object (will be JSON.stringified) or an already-stringified JSON string. Same shape as workato_pull_recipe returns under .code.',
+        },
+        config: {
+          description:
+            'Optional config array (apps/connections used by the recipe). Either an array (will be JSON.stringified) or a stringified JSON.',
+        },
+        name: {
+          type: 'string',
+          description: 'Optional new recipe name. Omit to leave unchanged.',
+        },
+        description: {
+          type: 'string',
+          description: 'Optional description. Omit to leave unchanged.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['recipe_id', 'code'],
     },
   },
 ];

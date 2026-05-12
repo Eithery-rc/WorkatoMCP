@@ -9,4 +9,5 @@ export {
   WorkatoUiSaveRecipeTool,
   WorkatoUiExitEditModeTool,
   WorkatoUiCreateRecipeTool,
+  WorkatoUiSaveRecipeCodeTool,
 } from './handlers';
