@@ -696,7 +696,7 @@
      Loading Animation - Shimmer Text & Scribble Icon
      ============================================================ */
 
-  /* 文案 shimmer 渐变动画 - 光从左到右扫过效果 */
+  /* Shimmer gradient animation sweeping left to right */
   .agent-theme .text-shimmer {
     display: inline-block;
     background: linear-gradient(
@@ -725,7 +725,7 @@
     }
   }
 
-  /* 螺旋图标 - 笔迹重绘动画 */
+  /* Scribble icon redraw animation */
   .agent-theme .loading-scribble path {
     stroke-dasharray: 300;
     stroke-dashoffset: 300;

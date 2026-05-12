@@ -1,12 +1,11 @@
 import { createApp } from 'vue';
 import { NativeMessageType } from 'workatomcp-shared';
 import './style.css';
-// 引入AgentChat主题样式
 import '@/shared/agent-theme/agent-chat.css';
 import { preloadAgentTheme } from '@/shared/agent-theme/useAgentTheme';
 import App from './App.vue';
 
-// 在Vue挂载前预加载主题，防止主题闪烁
+// Preload theme before Vue mounts to prevent flash of unstyled content.
 preloadAgentTheme().then(() => {
   // Trigger ensure native connection (fire-and-forget, don't block UI mounting)
   void chrome.runtime.sendMessage({ type: NativeMessageType.ENSURE_NATIVE }).catch(() => {
