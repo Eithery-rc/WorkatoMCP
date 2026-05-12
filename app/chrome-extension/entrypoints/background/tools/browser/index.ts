@@ -27,3 +27,10 @@ export {
   performanceAnalyzeInsightTool,
 } from './performance';
 export { gifRecorderTool } from './gif-recorder';
+export {
+  SnapshotTool,
+  SnapshotClickTool,
+  SnapshotFillTool,
+  SnapshotHoverTool,
+  SnapshotWaitForTool,
+} from './snapshot/handlers';
