@@ -3,7 +3,6 @@ import { type Tool } from '@modelcontextprotocol/sdk/types.js';
 export const TOOL_NAMES = {
   BROWSER: {
     GET_WINDOWS_AND_TABS: 'get_windows_and_tabs',
-    SEARCH_TABS_CONTENT: 'search_tabs_content',
     NAVIGATE: 'chrome_navigate',
     SCREENSHOT: 'chrome_screenshot',
     CLOSE_TABS: 'chrome_close_tabs',
@@ -765,21 +764,6 @@ export const TOOL_SCHEMAS: Tool[] = [
       required: [],
     },
   },
-  // {
-  //   name: TOOL_NAMES.BROWSER.SEARCH_TABS_CONTENT,
-  //   description:
-  //     'search for related content from the currently open tab and return the corresponding web pages.',
-  //   inputSchema: {
-  //     type: 'object',
-  //     properties: {
-  //       query: {
-  //         type: 'string',
-  //         description: 'the query to search for related content.',
-  //       },
-  //     },
-  //     required: ['query'],
-  //   },
-  // },
   // {
   //   name: TOOL_NAMES.BROWSER.INJECT_SCRIPT,
   //   description:
