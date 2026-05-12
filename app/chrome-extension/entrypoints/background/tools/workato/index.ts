@@ -4,3 +4,5 @@ export { workatoSearchRecipesTool } from './search-recipes';
 export { workatoSearchConnectionsTool } from './search-connections';
 export { workatoGetConnectionTool } from './get-connection';
 export { workatoListJobsTool } from './list-jobs';
+export { workatoRunQueryTool } from './run-query';
+export { workatoCallActionTool } from './call-action';
