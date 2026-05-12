@@ -102,102 +102,6 @@
             </button>
           </div>
         </div>
-
-        <!-- 管理入口卡片 -->
-        <div class="section">
-          <h2 class="section-title">管理入口</h2>
-          <div class="entry-card">
-            <button class="entry-item" @click="openAgentSidepanel">
-              <div class="entry-icon agent">
-                <svg
-                  viewBox="0 0 24 24"
-                  width="20"
-                  height="20"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                  />
-                </svg>
-              </div>
-              <div class="entry-content">
-                <span class="entry-title">智能助手</span>
-                <span class="entry-desc">AI Agent 对话与任务</span>
-              </div>
-              <svg
-                class="entry-arrow"
-                viewBox="0 0 24 24"
-                width="16"
-                height="16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-            <button class="entry-item entry-item-coming-soon" @click="openWorkflowSidepanel">
-              <div class="entry-icon workflow">
-                <WorkflowIcon />
-              </div>
-              <div class="entry-content">
-                <span class="entry-title">
-                  工作流管理
-                  <span class="coming-soon-badge">Coming Soon</span>
-                </span>
-                <span class="entry-desc">录制与回放自动化流程</span>
-              </div>
-              <svg
-                class="entry-arrow"
-                viewBox="0 0 24 24"
-                width="16"
-                height="16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-            <button class="entry-item" @click="openElementMarkerSidepanel">
-              <div class="entry-icon marker">
-                <svg
-                  viewBox="0 0 24 24"
-                  width="20"
-                  height="20"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
-                  />
-                </svg>
-              </div>
-              <div class="entry-content">
-                <span class="entry-title">元素标注管理</span>
-                <span class="entry-desc">管理页面元素标注</span>
-              </div>
-              <svg
-                class="entry-arrow"
-                viewBox="0 0 24 24"
-                width="16"
-                height="16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          </div>
-        </div>
       </div>
 
       <div class="footer">
@@ -255,13 +159,12 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { BACKGROUND_MESSAGE_TYPES } from '@/common/message-types';
 import { LINKS } from '@/common/constants';
 import { getMessage } from '@/utils/i18n';
-import { useAgentTheme } from '../sidepanel/composables/useAgentTheme';
+import { useAgentTheme } from '@/shared/agent-theme/useAgentTheme';
 
 import {
   BoltIcon,
   RecordIcon,
   StopIcon,
-  WorkflowIcon,
   RefreshIcon,
   EditIcon,
   MarkerIcon,
@@ -458,43 +361,6 @@ const getStatusClass = () => {
     return 'bg-gray-500';
   }
 };
-
-// Open sidepanel and close popup
-async function openSidepanelAndClose(tab: string) {
-  try {
-    const current = await chrome.windows.getCurrent();
-    if ((chrome.sidePanel as any)?.setOptions) {
-      await (chrome.sidePanel as any).setOptions({
-        path: `sidepanel.html?tab=${tab}`,
-        enabled: true,
-      });
-    }
-    if (chrome.sidePanel && (chrome.sidePanel as any).open) {
-      await (chrome.sidePanel as any).open({ windowId: current.id! });
-    }
-    // Close popup after opening sidepanel
-    window.close();
-  } catch (e) {
-    console.warn(`Failed to open sidepanel (${tab}):`, e);
-  }
-}
-
-// Open sidepanel from popup for workflow management
-function openWorkflowSidepanel() {
-  // TODO: 工作流功能开发中，暂时拦截
-  showComingSoonToast('工作流管理');
-  // openSidepanelAndClose('workflows');
-}
-
-// Open sidepanel for element marker management
-function openElementMarkerSidepanel() {
-  openSidepanelAndClose('element-markers');
-}
-
-// Open sidepanel for agent chat
-function openAgentSidepanel() {
-  openSidepanelAndClose('agent-chat');
-}
 
 async function toggleWebEditor() {
   try {

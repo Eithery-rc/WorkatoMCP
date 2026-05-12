@@ -27,7 +27,6 @@ import {
   type QuickPanelSendToAIResponse,
 } from '@/common/message-types';
 import { acquireKeepalive } from '../keepalive-manager';
-import { openAgentChatSidepanel } from '../utils/sidepanel';
 
 // ============================================================
 // Constants
@@ -477,10 +476,9 @@ function isRequestStillActive(request: ActiveRequest): boolean {
  * Flow:
  * 1. Ensure native server is running
  * 2. Validate session exists
- * 3. Open sidepanel (best-effort)
- * 4. Start SSE subscription (wait for connection)
- * 5. Fire act request
- * 6. Let SSE handle event forwarding and cleanup
+ * 3. Start SSE subscription (wait for connection)
+ * 4. Fire act request
+ * 5. Let SSE handle event forwarding and cleanup
  *
  * @remarks
  * Guards are placed after each async operation to handle cancellation races.
@@ -505,17 +503,12 @@ async function startRequest(request: ActiveRequest): Promise<void> {
         createErrorEvent(
           request.sessionId,
           request.requestId,
-          'Selected Agent session is not available. Please open AgentChat and select a valid session.',
+          'Selected Agent session is not available. Please select a valid session via the MCP server.',
         ),
       );
-      // Open sidepanel without deep-linking to invalid session
-      openAgentChatSidepanel(request.tabId, request.windowId).catch(() => {});
       cleanupRequest(request.requestId, 'session_invalid');
       return;
     }
-
-    // Best-effort: open sidepanel deep-linked to current session
-    openAgentChatSidepanel(request.tabId, request.windowId, request.sessionId).catch(() => {});
 
     // Start SSE subscription BEFORE sending act request to avoid missing early events
     const sse = createSseSubscription(request);
@@ -601,12 +594,11 @@ async function handleSendToAI(
   const sessionId = normalizeString(stored?.[STORAGE_KEY_SELECTED_SESSION]).trim();
 
   if (!sessionId) {
-    // No session selected: open sidepanel for user to select/create one
-    openAgentChatSidepanel(tabId, windowId).catch(() => {});
+    // No session selected. Surface error to caller; sidepanel UI no longer exists.
     return {
       success: false,
       error:
-        'No Agent session selected. Please open AgentChat, select or create a session, then try again.',
+        'No Agent session selected. Please select or create a session via the MCP server, then try again.',
     };
   }
 

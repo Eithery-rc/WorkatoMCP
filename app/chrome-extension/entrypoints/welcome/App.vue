@@ -2,7 +2,7 @@
 import { ref } from 'vue';
 import { LINKS, NATIVE_HOST } from '@/common/constants';
 
-import '../sidepanel/styles/agent-chat.css';
+import '@/shared/agent-theme/agent-chat.css';
 
 const COMMANDS = {
   npmInstall: 'npm install -g mcp-chrome-bridge',
