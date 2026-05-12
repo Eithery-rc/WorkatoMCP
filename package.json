@@ -1,8 +1,8 @@
 {
-  "name": "mcp-chrome-bridge-monorepo",
-  "version": "1.0.0",
+  "name": "workatomcp",
+  "version": "1.3.0",
   "private": true,
-  "author": "hangye",
+  "author": "Roman Chikalenko <chikalenkor@gmail.com>",
   "type": "module",
   "scripts": {
     "build:shared": "pnpm --filter workatomcp-shared build",
