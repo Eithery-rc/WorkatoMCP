@@ -1,5 +1,4 @@
 import { initNativeHostListener } from './native-host';
-import { initStorageManagerListener } from './storage-manager';
 import { initRecordReplayListeners } from './record-replay';
 import { initElementMarkerListeners } from './element-marker';
 import { initWebEditorListeners } from './web-editor';
@@ -33,7 +32,6 @@ export default defineBackground(() => {
 
   // Initialize core services
   initNativeHostListener();
-  initStorageManagerListener();
   // Record & Replay V1/V2 listeners
   initRecordReplayListeners();
 
