@@ -17,16 +17,19 @@ Two endpoints reverse-engineered for the `workato_search_recipes` and `workato_l
 
 ### Query parameters
 
-| Param           | Type   | Behavior                                                                                                                                                                                |
-| --------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `text`          | string | Name substring search across the workspace. Empty / omitted returns all. `text=Roman` → 1 hit; `text=zzzqqq` → 0 hits.                                                                  |
-| `folder_id`     | number | Scope results to one folder. Omit for workspace-wide.                                                                                                                                   |
-| `page`          | number | 1-based pagination. Default 1.                                                                                                                                                          |
-| `sort_term`     | string | UI sends `latest_activity`. Other values not probed yet.                                                                                                                                |
-| `asset_types[]` | string | E.g. `asset_types[]=recipe`. Accepted (HTTP 200) but in our test the unfiltered result was already all recipes — needs a mixed-folder probe to confirm filter actually narrows the set. |
-| `per_page`      | number | **Accepted but ignored** — server always returned 20 items per page in our probes. To get more results, advance `page=`.                                                                |
+| Param        | Type   | Behavior                                                                                                                                                                                                               |
+| ------------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `text`       | string | Name substring search across the workspace. Empty / omitted returns all. `text=Roman` → 1 hit; `text=zzzqqq` → 0 hits.                                                                                                 |
+| `folder_id`  | number | Scope results to one folder. Omit for workspace-wide.                                                                                                                                                                  |
+| `asset_type` | string | **Singular.** `asset_type=recipe` → 2044 recipes; `asset_type=connection` → 172 connections. Omitting yields the mixed total (2216). Without this filter, sort terms like `updated_at` surface non-recipes first.      |
+| `page`       | number | 1-based pagination. Verified `page=1/2/3` return distinct items. **Use this — cursor params don't work here.**                                                                                                         |
+| `sort_term`  | string | `latest_activity` (default), `name` (alphabetical, verified — first item changes to `[1a] MeteorMulticash Cloud`), `updated_at`, `created_at`, `failed_count`. The last three look like aliases for the same ordering. |
+| `per_page`   | number | **Accepted but silently ignored** — server always returns 20. Advance `page=` to paginate.                                                                                                                             |
 
-Note: jobs.json uses cursor pagination (`offset_job_id`) rather than `page=`. Recipe search may behave the same way — needs a workspace-spanning probe to confirm whether `page=2` actually returns different items vs the same page-1 set.
+**Silently ignored params** (all return HTTP 200 but don't change results — do not use):
+`offset_id`, `offset_asset_id`, `type`, `kind`, `asset_types` (no `[]`), `asset_types[]` (the bracketed form was a guess that doesn't work — singular `asset_type` is the live name), `q[asset_type]`, `state`, `states[]`, `q[state]`, `recipe_state`, `recipe_status`, `running`, `is_running`, `enabled`, `active`, `started`, `flow_state`, `status`, `trigger_application`, `q[trigger_application]`.
+
+**No server-side state filter is exposed.** The response includes `running: boolean` per item, so agents that need only-running or only-stopped recipes must filter client-side after fetching. Verified: in a default page of 20 recipes, 9 were running and 11 were not.
 
 ### Response shape
 
