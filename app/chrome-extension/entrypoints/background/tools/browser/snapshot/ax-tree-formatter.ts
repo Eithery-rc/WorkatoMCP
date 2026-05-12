@@ -26,6 +26,19 @@ const INTERACTIVE_ROLES = new Set<string>([
   'option',
 ]);
 
+// Containers whose direct StaticText children are treated as interactive even
+// though they lack proper ARIA roles. Workato's popovers/menus render menu items
+// as plain divs (Clone/Delete in the "More actions" menu, etc.), so we surface
+// them by context. Cheap heuristic, not a full a11y compute path.
+const INTERACTIVE_CONTAINER_ROLES = new Set<string>([
+  'menu',
+  'menubar',
+  'listbox',
+  'dialog',
+  'tooltip',
+  'tablist',
+]);
+
 const SKIP_RENDER_ROLES = new Set<string>(['generic', 'none', 'presentation', 'InlineTextBox']);
 
 const MAX_NAME_LEN = 80;
@@ -38,6 +51,16 @@ function truncateName(s: string): string {
 
 function isInteractive(role: string): boolean {
   return INTERACTIVE_ROLES.has(role);
+}
+
+function normalizeRole(role: AXNode['role']): string {
+  if (typeof role === 'string') return role;
+  return role?.value ?? '';
+}
+
+function normalizeName(name: AXNode['name']): string {
+  if (typeof name === 'string') return name;
+  return (name?.value ?? '').toString();
 }
 
 export interface FormatResult {
@@ -73,44 +96,53 @@ export function formatAxTree(nodes: AXNode[]): FormatResult {
   let uidCounter = 0;
   let nodesRendered = 0;
   const lines: string[] = [];
+  let totalChars = 0;
   let truncated = false;
   let truncatedCount = 0;
 
   const visited = new Set<string>();
 
-  const walk = (node: AXNode, depth: number): void => {
+  const walk = (node: AXNode, depth: number, parentRole: string): void => {
     if (!node || visited.has(node.nodeId)) return;
     visited.add(node.nodeId);
 
     const ignored = node.ignored === true;
-    const roleRaw = node.role?.value ?? '';
-    const name = (node.name?.value ?? '').toString();
-    const trimmedName = truncateName(name.replace(/\s+/g, ' ').trim());
+    const roleRaw = normalizeRole(node.role);
+    const trimmedName = truncateName(normalizeName(node.name).replace(/\s+/g, ' ').trim());
+
+    // Treat StaticText inside a popover/menu container as interactive-by-context
+    // — Workato's "More actions" menu items render this way.
+    const interactiveByContext =
+      roleRaw === 'StaticText' &&
+      INTERACTIVE_CONTAINER_ROLES.has(parentRole) &&
+      trimmedName.length > 0 &&
+      typeof node.backendDOMNodeId === 'number';
+
+    const isInteractiveNode = isInteractive(roleRaw) || interactiveByContext;
 
     // Decide whether to render this node.
-    const skipForReadability =
-      !ignored && SKIP_RENDER_ROLES.has(roleRaw) && !isInteractive(roleRaw); // interactive roles never get skipped by this rule
+    const skipForReadability = !ignored && SKIP_RENDER_ROLES.has(roleRaw) && !isInteractiveNode;
     const skipEmpty =
-      !isInteractive(roleRaw) && trimmedName.length === 0 && !SKIP_RENDER_ROLES.has(roleRaw)
-        ? // also drop empty non-interactive nodes (per plan)
-          true
-        : false;
+      !isInteractiveNode && trimmedName.length === 0 && !SKIP_RENDER_ROLES.has(roleRaw);
 
     const renderable = !ignored && !skipForReadability && !skipEmpty && roleRaw !== '';
 
     if (renderable) {
-      if (lines.join('\n').length > MAX_OUTPUT_CHARS) {
+      if (totalChars > MAX_OUTPUT_CHARS) {
         truncated = true;
         truncatedCount += 1;
       } else {
         const indent = '  '.repeat(depth);
-        if (isInteractive(roleRaw) && typeof node.backendDOMNodeId === 'number') {
+        let line: string;
+        if (isInteractiveNode && typeof node.backendDOMNodeId === 'number') {
           uidCounter += 1;
           uidMap.set(uidCounter, node.backendDOMNodeId);
-          lines.push(`${indent}${roleRaw} "${trimmedName}" [uid=${uidCounter}]`);
+          line = `${indent}${roleRaw} "${trimmedName}" [uid=${uidCounter}]`;
         } else {
-          lines.push(`${indent}${roleRaw} "${trimmedName}"`);
+          line = `${indent}${roleRaw} "${trimmedName}"`;
         }
+        lines.push(line);
+        totalChars += line.length + 1; // +1 for the joining '\n'
         nodesRendered += 1;
       }
     }
@@ -119,15 +151,16 @@ export function formatAxTree(nodes: AXNode[]): FormatResult {
       // Children render at depth+1 if this node was rendered, otherwise carry depth
       // so skipped wrappers don't artificially indent the visible tree.
       const childDepth = renderable ? depth + 1 : depth;
+      const childParentRole = renderable ? roleRaw : parentRole;
       for (const cid of node.childIds) {
         const child = byId.get(cid);
-        if (child) walk(child, childDepth);
+        if (child) walk(child, childDepth, childParentRole);
       }
     }
   };
 
   for (const root of startNodes) {
-    walk(root, 0);
+    walk(root, 0, '');
   }
 
   let text = lines.join('\n');

@@ -37,7 +37,7 @@ interface SnapshotClickArgs extends TabTargetArgs {
 }
 interface SnapshotFillArgs extends TabTargetArgs {
   uid: number;
-  value: string | number | boolean;
+  value: string;
 }
 interface SnapshotHoverArgs extends TabTargetArgs {
   uid: number;
@@ -56,8 +56,11 @@ function newSnapshotId(): string {
 
 function detectMac(): boolean {
   try {
-    // navigator.platform is deprecated but still works in service workers in MV3
-    return navigator.platform.toLowerCase().includes('mac');
+    const uaPlatform = (navigator as any)?.userAgentData?.platform;
+    if (typeof uaPlatform === 'string' && uaPlatform.length > 0) {
+      return uaPlatform.toLowerCase().includes('mac');
+    }
+    return (navigator.platform ?? '').toLowerCase().includes('mac');
   } catch {
     return false;
   }
@@ -66,12 +69,7 @@ function detectMac(): boolean {
 /**
  * Resolve target tab from args. Throws on missing.
  */
-async function resolveTabId(tool: BaseBrowserToolExecutor, args: TabTargetArgs): Promise<number> {
-  // BaseBrowserToolExecutor methods are protected; call via any-cast since we're
-  // working from a free helper function. Each tool method below uses the protected
-  // methods directly to avoid that.
-  const _ = tool;
-  void _;
+async function resolveTabId(args: TabTargetArgs): Promise<number> {
   const explicit = typeof args.tabId === 'number' ? await safeGetTab(args.tabId) : null;
   if (explicit && typeof explicit.id === 'number') return explicit.id;
   const tabs = await chrome.tabs.query(
@@ -126,7 +124,7 @@ class SnapshotToolImpl extends BaseBrowserToolExecutor {
   async execute(args: SnapshotArgs): Promise<ToolResult> {
     console.log(`[snapshot] capture requested:`, args);
     try {
-      const tabId = await resolveTabId(this, args || {});
+      const tabId = await resolveTabId(args ?? {});
       const { snapshotId, text, uidCount } = await captureSnapshot(tabId);
       const header = `Snapshot ${snapshotId} — ${uidCount} interactive elements\n\n`;
       return {
@@ -157,7 +155,7 @@ class SnapshotClickToolImpl extends BaseBrowserToolExecutor {
           ERROR_MESSAGES.INVALID_PARAMETERS + ': uid (number) is required',
         );
       }
-      const tabId = await resolveTabId(this, args);
+      const tabId = await resolveTabId(args);
       await ensureAttached(tabId);
       const backendNodeId = resolveUid(tabId, args.uid);
 
@@ -180,11 +178,22 @@ class SnapshotClickToolImpl extends BaseBrowserToolExecutor {
           `chrome_snapshot_click: could not resolve uid=${args.uid} to a JS object`,
         );
       }
-      await sendCommand(tabId, 'Runtime.callFunctionOn', {
+      const callResult = await sendCommand<{
+        result?: { type?: string };
+        exceptionDetails?: { text?: string; exception?: { description?: string } };
+      }>(tabId, 'Runtime.callFunctionOn', {
         objectId,
-        functionDeclaration: 'function(){ this.click(); }',
+        functionDeclaration:
+          'function(){ if (typeof this.click !== "function") throw new Error("target is not clickable (not an HTMLElement)"); this.click(); }',
         awaitPromise: false,
       });
+      if (callResult?.exceptionDetails) {
+        const detail =
+          callResult.exceptionDetails.exception?.description ??
+          callResult.exceptionDetails.text ??
+          'unknown JS exception';
+        return createErrorResponse(`chrome_snapshot_click failed at uid=${args.uid}: ${detail}`);
+      }
 
       return {
         content: [{ type: 'text', text: `clicked uid=${args.uid}` }],
@@ -218,36 +227,90 @@ class SnapshotFillToolImpl extends BaseBrowserToolExecutor {
         return createErrorResponse(ERROR_MESSAGES.INVALID_PARAMETERS + ': value is required');
       }
 
-      const tabId = await resolveTabId(this, args);
+      const tabId = await resolveTabId(args);
       await ensureAttached(tabId);
       const backendNodeId = resolveUid(tabId, args.uid);
+      const value = String(args.value);
 
-      // Focus first
+      // Resolve so we can introspect the target element and do contenteditable
+      // fallback via a single round-trip.
+      const resolved = await sendCommand<{ object: { objectId: string } }>(
+        tabId,
+        'DOM.resolveNode',
+        { backendNodeId },
+      );
+      const objectId = resolved?.object?.objectId;
+      if (!objectId) {
+        return createErrorResponse(
+          `chrome_snapshot_fill: could not resolve uid=${args.uid} to a JS object`,
+        );
+      }
+
+      // Inspect kind: 'input' (INPUT/TEXTAREA), 'contenteditable', or 'unsupported'.
+      const kindResult = await sendCommand<{
+        result?: { value?: 'input' | 'contenteditable' | 'unsupported' };
+        exceptionDetails?: { text?: string };
+      }>(tabId, 'Runtime.callFunctionOn', {
+        objectId,
+        functionDeclaration:
+          'function(){ if (!(this instanceof Element)) return "unsupported"; const tn = this.tagName; if (tn === "INPUT" || tn === "TEXTAREA") return "input"; if (this.isContentEditable) return "contenteditable"; return "unsupported"; }',
+        returnByValue: true,
+        awaitPromise: false,
+      });
+      const kind = kindResult?.result?.value ?? 'unsupported';
+      if (kind === 'unsupported') {
+        return createErrorResponse(
+          `chrome_snapshot_fill: uid=${args.uid} is not a fillable element (not INPUT/TEXTAREA/contenteditable)`,
+        );
+      }
+
       await sendCommand(tabId, 'DOM.focus', { backendNodeId });
 
-      // Select-all so subsequent insertText replaces existing content.
-      const isMac = detectMac();
-      const modifiers = isMac ? 4 /* Meta */ : 2; /* Ctrl */
-      // KeyA
-      await sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'keyDown',
-        modifiers,
-        key: 'a',
-        code: 'KeyA',
-        windowsVirtualKeyCode: 65,
-        nativeVirtualKeyCode: 65,
-      });
-      await sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'keyUp',
-        modifiers,
-        key: 'a',
-        code: 'KeyA',
-        windowsVirtualKeyCode: 65,
-        nativeVirtualKeyCode: 65,
-      });
-
-      // Now insert the new text.
-      await sendCommand(tabId, 'Input.insertText', { text: String(args.value) });
+      if (kind === 'contenteditable') {
+        // `Input.insertText` is a no-op for contenteditable in modern Chrome.
+        // Use execCommand for the clear+insert path — fires the same input/beforeinput
+        // events that frameworks like ProseMirror, Lexical, CodeMirror watch for.
+        const editResult = await sendCommand<{ exceptionDetails?: { text?: string } }>(
+          tabId,
+          'Runtime.callFunctionOn',
+          {
+            objectId,
+            functionDeclaration:
+              'function(v){ this.focus(); const sel = window.getSelection(); const range = document.createRange(); range.selectNodeContents(this); sel.removeAllRanges(); sel.addRange(range); document.execCommand("insertText", false, v); }',
+            arguments: [{ value }],
+            awaitPromise: false,
+          },
+        );
+        if (editResult?.exceptionDetails) {
+          return createErrorResponse(
+            `chrome_snapshot_fill (contenteditable): ${editResult.exceptionDetails.text ?? 'unknown error'}`,
+          );
+        }
+      } else {
+        // INPUT / TEXTAREA: select-all via key event then insertText.
+        // The `text` field must be set on keyDown for Chrome to act on Ctrl/Cmd+A
+        // (the text-editing subsystem ignores synthetic modifier+key without it).
+        const isMac = detectMac();
+        const modifiers = isMac ? 4 /* Meta */ : 2; /* Ctrl */
+        await sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'keyDown',
+          modifiers,
+          key: 'a',
+          code: 'KeyA',
+          text: '\x01',
+          windowsVirtualKeyCode: 65,
+          nativeVirtualKeyCode: 65,
+        });
+        await sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'keyUp',
+          modifiers,
+          key: 'a',
+          code: 'KeyA',
+          windowsVirtualKeyCode: 65,
+          nativeVirtualKeyCode: 65,
+        });
+        await sendCommand(tabId, 'Input.insertText', { text: value });
+      }
 
       return {
         content: [{ type: 'text', text: `filled uid=${args.uid}` }],
@@ -277,10 +340,14 @@ class SnapshotHoverToolImpl extends BaseBrowserToolExecutor {
           ERROR_MESSAGES.INVALID_PARAMETERS + ': uid (number) is required',
         );
       }
-      const tabId = await resolveTabId(this, args);
+      const tabId = await resolveTabId(args);
       await ensureAttached(tabId);
       const backendNodeId = resolveUid(tabId, args.uid);
 
+      // scrollIntoViewIfNeeded returns when the CDP command is issued, not when
+      // a smooth-scroll animation settles. For elements in smoothly-scrolled
+      // containers, getContentQuads below may still return empty quads — the
+      // model can retry hover after a short wait_for.
       try {
         await sendCommand(tabId, 'DOM.scrollIntoViewIfNeeded', { backendNodeId });
       } catch (e) {
@@ -344,7 +411,7 @@ class SnapshotWaitForToolImpl extends BaseBrowserToolExecutor {
           : 10_000;
       const pollIntervalMs = 250;
 
-      const tabId = await resolveTabId(this, args);
+      const tabId = await resolveTabId(args);
 
       const start = Date.now();
       let lastError: unknown = null;
@@ -395,13 +462,21 @@ class SnapshotWaitForToolImpl extends BaseBrowserToolExecutor {
   }
 }
 
+function axRole(node: AXNode): string {
+  return typeof node.role === 'string' ? node.role : (node.role?.value ?? '');
+}
+
+function axName(node: AXNode): string {
+  return typeof node.name === 'string' ? node.name : (node.name?.value ?? '').toString();
+}
+
 function matches(nodes: AXNode[], role?: string, text?: string): boolean {
   const roleLower = role ? role.toLowerCase() : null;
   const textLower = text ? text.toLowerCase() : null;
   for (const n of nodes) {
     if (n.ignored) continue;
-    const nodeRole = (n.role?.value || '').toLowerCase();
-    const nodeName = (n.name?.value || '').toString().toLowerCase();
+    const nodeRole = axRole(n).toLowerCase();
+    const nodeName = axName(n).toLowerCase();
     if (roleLower && textLower) {
       if (nodeRole === roleLower && nodeName.includes(textLower)) return true;
     } else if (roleLower) {
