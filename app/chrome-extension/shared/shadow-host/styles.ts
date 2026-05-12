@@ -1,20 +1,13 @@
 /**
- * Quick Panel AI Chat Styles
+ * Shadow Host Styles
  *
- * This stylesheet is injected into the Quick Panel's Shadow DOM (content script).
- * It intentionally reuses AgentChat token names (--ac-*) to maintain visual consistency
- * with the sidepanel AgentChat component.
- *
- * Design System:
- * - Source of truth: app/chrome-extension/entrypoints/sidepanel/styles/agent-chat.css
- * - This file extracts a minimal token + utility subset for content script use
- * - Liquid Glass styling follows quick-panel-prd.md V6 spec
- *
- * Note: Content Script Shadow DOM cannot directly import sidepanel CSS (not web_accessible).
- * We maintain a synced subset here to balance visual consistency with bundle size.
+ * Stylesheet injected into the content-script Shadow DOM used by the
+ * Element Picker (and previously Quick Panel). CSS class names retain the
+ * `qp-*` prefix and `--qp-*` / `--ac-*` token names for historical reasons —
+ * the consumer (element-picker controller) uses these identifiers.
  */
 
-export const QUICK_PANEL_STYLES = /* css */ `
+export const SHADOW_HOST_STYLES = /* css */ `
   /* ============================================================
    * Reset & Box Sizing
    * ============================================================ */
