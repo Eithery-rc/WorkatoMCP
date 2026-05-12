@@ -24,7 +24,9 @@ Two endpoints reverse-engineered for the `workato_search_recipes` and `workato_l
 | `page`          | number | 1-based pagination. Default 1.                                                                                                                                                          |
 | `sort_term`     | string | UI sends `latest_activity`. Other values not probed yet.                                                                                                                                |
 | `asset_types[]` | string | E.g. `asset_types[]=recipe`. Accepted (HTTP 200) but in our test the unfiltered result was already all recipes — needs a mixed-folder probe to confirm filter actually narrows the set. |
-| `per_page`      | number | **Accepted but ignored** — server always returned 20 items per page in our probes. If pagination is needed, advance `page=` instead.                                                    |
+| `per_page`      | number | **Accepted but ignored** — server always returned 20 items per page in our probes. To get more results, advance `page=`.                                                                |
+
+Note: jobs.json uses cursor pagination (`offset_job_id`) rather than `page=`. Recipe search may behave the same way — needs a workspace-spanning probe to confirm whether `page=2` actually returns different items vs the same page-1 set.
 
 ### Response shape
 
