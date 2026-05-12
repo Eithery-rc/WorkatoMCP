@@ -110,15 +110,18 @@ Pass `full: true` for the raw `result` object including all 24 per-item keys.
 
 ### Query parameters
 
-| Param        | Type   | Behavior                                                                                               |
-| ------------ | ------ | ------------------------------------------------------------------------------------------------------ |
-| `per_page`   | number | Default 25. Works as expected (verified by setting `per_page=3` → returned exactly 3).                 |
-| `offset`     | number | **Accepted but ignored** in our probes (always returned same first jobs). Param name may be different. |
-| `page`       | number | Accepted but ignored in our probes.                                                                    |
-| `statuses[]` | string | E.g. `statuses[]=failed`. Accepted but didn't actually filter in our test.                             |
-| `since_id`   | string | Accepted but didn't filter.                                                                            |
+| Param                                                    | Type    | Behavior                                                                                                                                                                             |
+| -------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `per_page`                                               | number  | Default 25. Verified `per_page=3` → returned 3.                                                                                                                                      |
+| `offset_job_id`                                          | string  | **Cursor pagination.** Pass the `id` of the last job in the previous page. Server returns the next slice (older jobs). Pair with `prev=false` (forward) or `prev=true` (backward).   |
+| `prev`                                                   | boolean | Direction for `offset_job_id`. `prev=false` advances forward (older jobs), `prev=true` backward (newer).                                                                             |
+| `status`                                                 | string  | **Singular.** `status=failed` → returns only failed jobs, with `job_scope_count` reflecting the filtered total (e.g. 2 of 52). `statuses[]=` and `job_status=` are silently ignored. |
+| `group_by_master_job`                                    | boolean | Collapse retry chains under their master job when `true`. UI default is `false`.                                                                                                     |
+| `started_at`                                             | string  | Time window. UI sends `30.days`; `7.days` and `all` also accepted. Filter not yet observed firing (test dataset was within the smallest window).                                     |
+| `query`                                                  | string  | Full-text search against job title/error. Empty is a no-op; `query=anything` returned `scope=0`, confirming the filter is live. Match semantics not yet characterized.               |
+| `offset`, `page`, `since_id`, `statuses[]`, `job_status` | —       | **Accepted but silently ignored.** Use the params above instead.                                                                                                                     |
 
-**Caveat:** pagination + filter param surface needs deeper probing. For v1.1 `workato_list_jobs` returning "recent N jobs," `per_page=N` alone is sufficient.
+**Pagination algorithm:** request `?per_page=25`, read `jobs[]`. If `jobs.length < per_page`, you've reached the end. Otherwise take the last job's `id` and re-fetch with `?per_page=25&offset_job_id=<that_id>&prev=false`. Repeat. `job_count` is the total (unfiltered) and `job_scope_count` is the total under the current filter — use the latter to compute total pages. Verified end-to-end against a 52-job recipe: 25 + 25 + 2 = 52 ✓.
 
 ### Response shape
 
