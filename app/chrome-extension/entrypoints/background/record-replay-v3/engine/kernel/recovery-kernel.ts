@@ -1,10 +1,9 @@
 /**
- * @fileoverview 支持崩溃恢复的 ExecutionKernel 实现 (P3-06)
- * @description
- * 提供 ExecutionKernel 的恢复增强实现，支持 `recover()` 方法。
- * 通过委托给 RecoveryCoordinator 实现崩溃恢复。
+ * @fileoverview Crash-recovery-capable ExecutionKernel implementation (P3-06).
  *
- * 其他执行方法（startRun, pauseRun 等）暂未实现，将在后续阶段完成。
+ * Wraps RecoveryCoordinator to provide the `recover()` method.
+ * Other execution methods (startRun, pauseRun, etc.) are not yet implemented
+ * and will be completed in later phases.
  */
 
 import type { UnixMillis } from '../../domain/json';
@@ -20,28 +19,26 @@ import type { ExecutionKernel, RunStartRequest, RunStatusInfo } from './kernel';
 // ==================== Types ====================
 
 /**
- * 支持恢复的 Kernel 依赖
+ * Dependencies for the recovery-enabled kernel.
  */
 export interface RecoveryEnabledKernelDeps {
-  /** 存储层 */
+  /** Storage layer. */
   storage: StoragePort;
-  /** 事件总线 */
+  /** Events bus. */
   events: EventsBus;
-  /** 当前 Service Worker 的 ownerId */
+  /** Service Worker owner ID. */
   ownerId: string;
-  /** 时间源 */
+  /** Time source. */
   now?: () => UnixMillis;
-  /** 日志器 */
+  /** Logger. */
   logger?: Pick<Console, 'debug' | 'info' | 'warn' | 'error'>;
 }
 
 // ==================== Factory ====================
 
 /**
- * 创建支持恢复的 ExecutionKernel
- * @description
- * 此实现仅支持 `recover()` 和 `getRunStatus()` 方法。
- * 其他执行方法暂未实现，将在后续阶段完成。
+ * Create an ExecutionKernel that supports `recover()` and `getRunStatus()`.
+ * All other execution methods throw until implemented in later phases.
  */
 export function createRecoveryEnabledKernel(deps: RecoveryEnabledKernelDeps): ExecutionKernel {
   const logger = deps.logger ?? console;

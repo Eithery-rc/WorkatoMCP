@@ -1,53 +1,47 @@
 /**
- * @fileoverview 触发器处理器接口定义
- * @description 定义各类触发器的统一接口
+ * @fileoverview Trigger handler interface definitions.
  */
 
 import type { TriggerSpec, TriggerKind } from '../../domain/triggers';
 
 /**
- * 触发器处理器接口
- * @description 每种触发器类型需要实现此接口
+ * Trigger handler interface — each trigger kind must implement this.
  */
 export interface TriggerHandler<K extends TriggerKind = TriggerKind> {
-  /** 触发器类型 */
+  /** Trigger kind. */
   readonly kind: K;
 
   /**
-   * 安装触发器
-   * @description 注册 chrome API 监听器等
-   * @param trigger 触发器规范
+   * Install the trigger (register chrome API listeners, etc.).
+   * @param trigger Trigger specification.
    */
   install(trigger: Extract<TriggerSpec, { kind: K }>): Promise<void>;
 
   /**
-   * 卸载触发器
-   * @description 移除 chrome API 监听器等
-   * @param triggerId 触发器 ID
+   * Uninstall the trigger (remove chrome API listeners, etc.).
+   * @param triggerId Trigger ID.
    */
   uninstall(triggerId: string): Promise<void>;
 
   /**
-   * 卸载所有触发器
-   * @description 清理所有此类型的触发器
+   * Uninstall all triggers of this kind.
    */
   uninstallAll(): Promise<void>;
 
   /**
-   * 获取已安装的触发器 ID 列表
+   * Return the list of currently installed trigger IDs.
    */
   getInstalledIds(): string[];
 }
 
 /**
- * 触发器触发回调
- * @description TriggerManager 注入给各 Handler 的回调
+ * Trigger fire callback — injected into each handler by the TriggerManager.
  */
 export interface TriggerFireCallback {
   /**
-   * 触发器被触发时调用
-   * @param triggerId 触发器 ID
-   * @param context 触发上下文
+   * Called when a trigger fires.
+   * @param triggerId Trigger ID.
+   * @param context Fire context.
    */
   onFire(
     triggerId: string,
@@ -59,7 +53,7 @@ export interface TriggerFireCallback {
 }
 
 /**
- * 触发器处理器工厂
+ * Factory that creates a TriggerHandler for a specific kind.
  */
 export type TriggerHandlerFactory<K extends TriggerKind> = (
   fireCallback: TriggerFireCallback,

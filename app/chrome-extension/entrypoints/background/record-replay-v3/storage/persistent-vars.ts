@@ -1,6 +1,5 @@
 /**
- * @fileoverview 持久化变量存储
- * @description 实现 $ 前缀变量的持久化，使用 LWW（Last-Write-Wins）策略
+ * @fileoverview Persistent variable storage — persists $-prefixed variables using Last-Write-Wins.
  */
 
 import type { PersistentVarRecord, PersistentVariableName } from '../domain/variables';
@@ -9,7 +8,7 @@ import type { PersistentVarsStore } from '../engine/storage/storage-port';
 import { RR_V3_STORES, withTransaction } from './db';
 
 /**
- * 创建 PersistentVarsStore 实现
+ * Create a PersistentVarsStore implementation.
  */
 export function createPersistentVarsStore(): PersistentVarsStore {
   return {
@@ -28,7 +27,7 @@ export function createPersistentVarsStore(): PersistentVarsStore {
       return withTransaction(RR_V3_STORES.PERSISTENT_VARS, 'readwrite', async (stores) => {
         const store = stores[RR_V3_STORES.PERSISTENT_VARS];
 
-        // 先读取现有记录（用于 version 递增）
+        // Read existing record first (to increment version)
         const existing = await new Promise<PersistentVarRecord | undefined>((resolve, reject) => {
           const request = store.get(key);
           request.onsuccess = () => resolve(request.result as PersistentVarRecord | undefined);
@@ -73,7 +72,7 @@ export function createPersistentVarsStore(): PersistentVarsStore {
           request.onsuccess = () => {
             let results = request.result as PersistentVarRecord[];
 
-            // 如果指定了前缀，过滤结果
+            // Filter by prefix if specified
             if (prefix) {
               results = results.filter((r) => r.key.startsWith(prefix));
             }

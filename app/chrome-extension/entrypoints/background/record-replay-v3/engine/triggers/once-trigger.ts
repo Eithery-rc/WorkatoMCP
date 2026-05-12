@@ -1,11 +1,9 @@
 /**
- * @fileoverview Once Trigger Handler (M3.1)
- * @description
- * 使用 chrome.alarms 的 when 参数实现一次性定时触发。
+ * @fileoverview Once Trigger Handler (M3.1) — uses chrome.alarms `when` for one-shot scheduled firing.
  *
- * 行为：
- * - 每个触发器对应一个一次性 alarm
- * - 触发后自动将触发器禁用 (enabled=false) 并卸载
+ * Behavior:
+ * - Each trigger maps to one one-shot alarm.
+ * - After firing, the trigger is automatically disabled (enabled=false) and uninstalled.
  */
 
 import type { UnixMillis } from '../../domain/json';
@@ -21,8 +19,8 @@ type OnceTriggerSpec = TriggerSpecByKind<'once'>;
 export interface OnceTriggerHandlerDeps {
   logger?: Pick<Console, 'debug' | 'info' | 'warn' | 'error'>;
   /**
-   * 可选：自定义禁用触发器的方法
-   * 如果未提供，将直接更新 TriggerStore
+   * Optional custom method to disable a trigger.
+   * If omitted, the handler updates the TriggerStore directly.
    */
   disableTrigger?: (triggerId: TriggerId) => Promise<void>;
 }
@@ -40,7 +38,7 @@ const ALARM_PREFIX = 'rr_v3_once_';
 // ==================== Utilities ====================
 
 /**
- * 校验并规范化 whenMs
+ * Validate and normalize whenMs.
  */
 function normalizeWhenMs(value: unknown): UnixMillis {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -50,14 +48,14 @@ function normalizeWhenMs(value: unknown): UnixMillis {
 }
 
 /**
- * 生成 alarm 名称
+ * Generate the alarm name for a trigger.
  */
 function alarmNameForTrigger(triggerId: TriggerId): string {
   return `${ALARM_PREFIX}${triggerId}`;
 }
 
 /**
- * 从 alarm 名称解析 triggerId
+ * Parse a triggerId from an alarm name, returning null if the name doesn't match.
  */
 function parseTriggerIdFromAlarmName(name: string): TriggerId | null {
   if (!name.startsWith(ALARM_PREFIX)) return null;
@@ -68,7 +66,7 @@ function parseTriggerIdFromAlarmName(name: string): TriggerId | null {
 // ==================== Handler Implementation ====================
 
 /**
- * 创建 once 触发器处理器工厂
+ * Create a once trigger handler factory.
  */
 export function createOnceTriggerHandlerFactory(
   deps?: OnceTriggerHandlerDeps,
@@ -77,7 +75,7 @@ export function createOnceTriggerHandlerFactory(
 }
 
 /**
- * 创建 once 触发器处理器
+ * Create a once trigger handler.
  */
 export function createOnceTriggerHandler(
   fireCallback: TriggerFireCallback,
@@ -85,7 +83,7 @@ export function createOnceTriggerHandler(
 ): TriggerHandler<'once'> {
   const logger = deps?.logger ?? console;
 
-  // 延迟创建 store，避免在测试环境中出问题
+  // Lazily create the store to avoid issues in test environments
   let triggersStore: ReturnType<typeof createTriggersStore> | null = null;
   const getTriggersStore = () => {
     if (!triggersStore) {
@@ -109,7 +107,7 @@ export function createOnceTriggerHandler(
   let listening = false;
 
   /**
-   * 递增版本号以使挂起的操作失效
+   * Increment the version counter to invalidate pending operations.
    */
   function bumpVersion(triggerId: TriggerId): number {
     const next = (versions.get(triggerId) ?? 0) + 1;
@@ -118,7 +116,7 @@ export function createOnceTriggerHandler(
   }
 
   /**
-   * 清除指定 alarm
+   * Clear the alarm with the given name.
    */
   async function clearAlarmByName(name: string): Promise<void> {
     if (!chrome.alarms?.clear) return;
@@ -130,7 +128,7 @@ export function createOnceTriggerHandler(
   }
 
   /**
-   * 清除所有 once alarms
+   * Clear all once alarms.
    */
   async function clearAllOnceAlarms(): Promise<void> {
     if (!chrome.alarms?.getAll || !chrome.alarms?.clear) return;
@@ -146,7 +144,7 @@ export function createOnceTriggerHandler(
   }
 
   /**
-   * 调度 alarm
+   * Schedule the alarm for a trigger.
    */
   async function schedule(triggerId: TriggerId, expectedVersion: number): Promise<void> {
     if (!chrome.alarms?.create) {
@@ -167,7 +165,7 @@ export function createOnceTriggerHandler(
   }
 
   /**
-   * 内部卸载逻辑（不触发外部 uninstall）
+   * Internal uninstall logic (does not trigger external uninstall).
    */
   async function uninstallInternal(triggerId: TriggerId): Promise<void> {
     bumpVersion(triggerId);
@@ -180,7 +178,7 @@ export function createOnceTriggerHandler(
   }
 
   /**
-   * Alarm 事件处理
+   * Handle an alarm event.
    */
   const onAlarm = (alarm: chrome.alarms.Alarm): void => {
     const triggerId = parseTriggerIdFromAlarmName(alarm?.name ?? '');
@@ -200,9 +198,9 @@ export function createOnceTriggerHandler(
       } catch (e) {
         logger.error(`[OnceTriggerHandler] onFire failed for trigger "${triggerId}":`, e);
       } finally {
-        // 检查版本是否仍然有效
+        // Only proceed if the trigger hasn't been replaced by a newer version
         if (installed.get(triggerId)?.version === expectedVersion) {
-          // 禁用触发器
+          // Disable the trigger
           try {
             await disableTrigger(triggerId);
           } catch (e) {
@@ -212,7 +210,7 @@ export function createOnceTriggerHandler(
             );
           }
 
-          // 卸载触发器
+          // Uninstall the trigger
           try {
             await uninstallInternal(triggerId);
           } catch (e) {
@@ -227,7 +225,7 @@ export function createOnceTriggerHandler(
   };
 
   /**
-   * 确保正在监听 alarm 事件
+   * Start listening for alarm events.
    */
   function ensureListening(): void {
     if (listening) return;
@@ -240,7 +238,7 @@ export function createOnceTriggerHandler(
   }
 
   /**
-   * 停止监听 alarm 事件
+   * Stop listening for alarm events.
    */
   function stopListening(): void {
     if (!listening) return;

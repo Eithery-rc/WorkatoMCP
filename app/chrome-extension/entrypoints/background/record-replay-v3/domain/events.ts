@@ -1,6 +1,5 @@
 /**
- * @fileoverview 事件类型定义
- * @description 定义 Record-Replay V3 中的运行事件和状态
+ * @fileoverview Run event types and state definitions for Record-Replay V3.
  */
 
 import type { JsonObject, JsonValue, UnixMillis } from './json';
@@ -8,28 +7,26 @@ import type { EdgeLabel, FlowId, NodeId, RunId } from './ids';
 import type { RRError } from './errors';
 import type { TriggerFireContext } from './triggers';
 
-/** 取消订阅函数类型 */
+/** Unsubscribe function type. */
 export type Unsubscribe = () => void;
 
-/** Run 状态 */
+/** Run status. */
 export type RunStatus = 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'canceled';
 
 /**
- * 事件基础接口
- * @description 所有事件的公共字段
+ * Base fields shared by all events.
  */
 export interface EventBase {
-  /** 所属 Run ID */
+  /** Owning Run ID. */
   runId: RunId;
-  /** 事件时间戳 */
+  /** Event timestamp. */
   ts: UnixMillis;
-  /** 单调递增序列号 */
+  /** Monotonically increasing sequence number. */
   seq: number;
 }
 
 /**
- * 暂停原因
- * @description 描述 Run 暂停的原因
+ * Reason a run was paused.
  */
 export type PauseReason =
   | { kind: 'breakpoint'; nodeId: NodeId }
@@ -37,35 +34,34 @@ export type PauseReason =
   | { kind: 'command' }
   | { kind: 'policy'; nodeId: NodeId; reason: string };
 
-/** 恢复原因 */
+/** Recovery reason. */
 export type RecoveryReason = 'sw_restart' | 'lease_expired';
 
 /**
- * Run 事件联合类型
- * @description 所有可能的运行时事件
+ * Union of all run-time events.
  */
 export type RunEvent =
-  // ===== Run 生命周期事件 =====
+  // ===== Run lifecycle events =====
   | (EventBase & { type: 'run.queued'; flowId: FlowId })
   | (EventBase & { type: 'run.started'; flowId: FlowId; tabId: number })
   | (EventBase & { type: 'run.paused'; reason: PauseReason; nodeId?: NodeId })
   | (EventBase & { type: 'run.resumed' })
   | (EventBase & {
       type: 'run.recovered';
-      /** 恢复原因 */
+      /** Recovery reason. */
       reason: RecoveryReason;
-      /** 恢复前状态 */
+      /** Status before recovery. */
       fromStatus: 'running' | 'paused';
-      /** 恢复后状态 */
+      /** Status after recovery. */
       toStatus: 'queued';
-      /** 原 ownerId（用于审计） */
+      /** Previous ownerId (for audit). */
       prevOwnerId?: string;
     })
   | (EventBase & { type: 'run.canceled'; reason?: string })
   | (EventBase & { type: 'run.succeeded'; tookMs: number; outputs?: JsonObject })
   | (EventBase & { type: 'run.failed'; error: RRError; nodeId?: NodeId })
 
-  // ===== Node 执行事件 =====
+  // ===== Node execution events =====
   | (EventBase & { type: 'node.queued'; nodeId: NodeId })
   | (EventBase & { type: 'node.started'; nodeId: NodeId; attempt: number })
   | (EventBase & {
@@ -83,7 +79,7 @@ export type RunEvent =
     })
   | (EventBase & { type: 'node.skipped'; nodeId: NodeId; reason: 'disabled' | 'unreachable' })
 
-  // ===== 变量和日志事件 =====
+  // ===== Variable and log events =====
   | (EventBase & {
       type: 'vars.patch';
       patch: Array<{ op: 'set' | 'delete'; name: string; value?: JsonValue }>;
@@ -96,89 +92,88 @@ export type RunEvent =
       data?: JsonValue;
     });
 
-/** Run 事件类型（从联合类型提取） */
+/** Run event type (extracted from the union). */
 export type RunEventType = RunEvent['type'];
 
 /**
- * 分布式 Omit（保留联合类型）
+ * Distributive Omit (preserves union members).
  */
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
 
 /**
- * Run 事件输入类型
- * @description seq 必须由 storage 层原子分配（通过 RunRecordV3.nextSeq）
- * ts 可选，默认为 Date.now()
+ * Run event input type.
+ * seq must be assigned atomically by the storage layer (via RunRecordV3.nextSeq).
+ * ts is optional and defaults to Date.now().
  */
 export type RunEventInput = DistributiveOmit<RunEvent, 'seq' | 'ts'> & {
   ts?: UnixMillis;
 };
 
-/** Run Schema 版本 */
+/** Run schema version. */
 export const RUN_SCHEMA_VERSION = 3 as const;
 
 /**
- * Run 记录 V3
- * @description 存储在 IndexedDB 中的 Run 摘要记录
+ * Run record V3 — the summary stored in IndexedDB.
  */
 export interface RunRecordV3 {
-  /** Schema 版本 */
+  /** Schema version. */
   schemaVersion: typeof RUN_SCHEMA_VERSION;
-  /** Run 唯一标识符 */
+  /** Run unique identifier. */
   id: RunId;
-  /** 关联的 Flow ID */
+  /** Associated Flow ID. */
   flowId: FlowId;
 
-  /** 当前状态 */
+  /** Current status. */
   status: RunStatus;
-  /** 创建时间 */
+  /** Creation time. */
   createdAt: UnixMillis;
-  /** 最后更新时间 */
+  /** Last updated time. */
   updatedAt: UnixMillis;
 
-  /** 开始执行时间 */
+  /** Execution start time. */
   startedAt?: UnixMillis;
-  /** 结束时间 */
+  /** Finish time. */
   finishedAt?: UnixMillis;
-  /** 总耗时（毫秒） */
+  /** Total elapsed time (ms). */
   tookMs?: number;
 
-  /** 绑定的 Tab ID（每 Run 独占） */
+  /** Bound tab ID (one tab per run). */
   tabId?: number;
-  /** 起始节点 ID（如果不是默认入口） */
+  /** Start node ID (if not the default entry). */
   startNodeId?: NodeId;
-  /** 当前执行节点 ID */
+  /** Currently executing node ID. */
   currentNodeId?: NodeId;
 
-  /** 当前尝试次数 */
+  /** Current attempt number. */
   attempt: number;
-  /** 最大尝试次数 */
+  /** Maximum number of attempts. */
   maxAttempts: number;
 
-  /** 运行参数 */
+  /** Run arguments. */
   args?: JsonObject;
-  /** 触发器上下文 */
+  /** Trigger context. */
   trigger?: TriggerFireContext;
-  /** 调试配置 */
+  /** Debug configuration. */
   debug?: { breakpoints?: NodeId[]; pauseOnStart?: boolean };
 
-  /** 错误信息（如果失败） */
+  /** Error (if failed). */
   error?: RRError;
-  /** 输出结果 */
+  /** Output results. */
   outputs?: JsonObject;
 
-  /** 下一个事件序列号（缓存字段） */
+  /** Next event sequence number (cached field). */
   nextSeq: number;
 }
 
 /**
- * 判断 Run 是否已终止
+ * Whether a run status is terminal.
  */
 export function isTerminalStatus(status: RunStatus): boolean {
   return status === 'succeeded' || status === 'failed' || status === 'canceled';
 }
 
 /**
- * 判断 Run 是否正在执行
+ * Whether a run status is active (running or paused).
  */
 export function isActiveStatus(status: RunStatus): boolean {
   return status === 'running' || status === 'paused';
