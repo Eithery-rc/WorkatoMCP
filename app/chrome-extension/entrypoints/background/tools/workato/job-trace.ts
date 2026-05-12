@@ -22,57 +22,64 @@ interface InPageResult {
   };
 }
 
-async function tracePageFn(recipeId: number, jobId: string | number): Promise<InPageResult> {
-  async function getJson(
-    url: string,
-  ): Promise<{ status: number; bodyText: string; json: unknown }> {
-    const r = await fetch(url, {
-      credentials: 'include',
-      headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' },
-    });
-    const bodyText = await r.text();
-    let json: unknown = null;
-    try {
-      json = JSON.parse(bodyText);
-    } catch {
-      /* swallow */
-    }
-    return { status: r.status, bodyText, json };
-  }
-
-  const meta = await getJson(`/web_api/recipes/${recipeId}/jobs/${jobId}`);
-  if (meta.status < 200 || meta.status >= 300) {
-    return {
-      ok: false,
-      failure: {
-        stage: 'meta',
-        status: meta.status,
-        body_excerpt: meta.bodyText.slice(0, 1024),
-        message: `GET /web_api/recipes/${recipeId}/jobs/${jobId} returned HTTP ${meta.status}`,
-      },
-    };
-  }
-
-  const trace = await getJson(
-    `/web_api/recipes/${recipeId}/jobs/${jobId}/line_details?stringify_big_numbers=true`,
-  );
-  if (trace.status < 200 || trace.status >= 300) {
-    return {
-      ok: false,
-      failure: {
-        stage: 'line_details',
-        status: trace.status,
-        body_excerpt: trace.bodyText.slice(0, 1024),
-        message: `GET /web_api/recipes/${recipeId}/jobs/${jobId}/line_details returned HTTP ${trace.status}`,
-      },
-    };
-  }
-
-  return {
-    ok: true,
-    meta: meta.json as RawMetaResponse,
-    lineDetails: trace.json as RawLineDetailsResponse,
+/**
+ * In-page function. See pull-recipe.ts for why this MUST NOT use async/await.
+ */
+function tracePageFn(recipeId: number, jobId: string | number): Promise<InPageResult> {
+  const fetchOpts: RequestInit = {
+    credentials: 'include',
+    headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' },
   };
+  const fetchAndParse = (
+    url: string,
+  ): Promise<{ status: number; bodyText: string; json: unknown }> =>
+    fetch(url, fetchOpts).then((r) =>
+      r.text().then((bodyText) => {
+        let json: unknown = null;
+        try {
+          json = JSON.parse(bodyText);
+        } catch {
+          /* swallow */
+        }
+        return { status: r.status, bodyText, json };
+      }),
+    );
+
+  return fetchAndParse(`/web_api/recipes/${recipeId}/jobs/${jobId}`).then((meta) => {
+    if (meta.status < 200 || meta.status >= 300) {
+      return {
+        ok: false,
+        failure: {
+          stage: 'meta' as const,
+          status: meta.status,
+          body_excerpt: meta.bodyText.slice(0, 1024),
+          message: `GET /web_api/recipes/${recipeId}/jobs/${jobId} returned HTTP ${meta.status}`,
+        },
+      };
+    }
+
+    return fetchAndParse(
+      `/web_api/recipes/${recipeId}/jobs/${jobId}/line_details?stringify_big_numbers=true`,
+    ).then((trace) => {
+      if (trace.status < 200 || trace.status >= 300) {
+        return {
+          ok: false,
+          failure: {
+            stage: 'line_details' as const,
+            status: trace.status,
+            body_excerpt: trace.bodyText.slice(0, 1024),
+            message: `GET /web_api/recipes/${recipeId}/jobs/${jobId}/line_details returned HTTP ${trace.status}`,
+          },
+        };
+      }
+
+      return {
+        ok: true,
+        meta: meta.json as RawMetaResponse,
+        lineDetails: trace.json as RawLineDetailsResponse,
+      };
+    });
+  });
 }
 
 class WorkatoJobTraceTool extends BaseBrowserToolExecutor {
