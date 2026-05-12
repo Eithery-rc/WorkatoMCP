@@ -65,6 +65,49 @@ output: { total, scope, succeeded, failed, next_cursor?, jobs: [{ id, status, st
 
 Tool auto-walks Workato's cursor pagination under the hood up to `limit` (default 25, max 100). For more results, pass `cursor: <prev next_cursor>`. Server-side filters: singular `status` (`failed`/`succeeded`/etc.), `query` (full-text against title and error), `started_at` window, `group_by_master_job`.
 
+## v1.2 tools (shipped)
+
+Two more read tools — and one **gated** universal action runner — that close the loop on agent-driven SaaS access via your Workato connections. No separate API tokens. Both require an open Workato tab.
+
+### `workato_run_query`
+
+```
+input:  { connection_id, query, type: 'soql' | 'suiteql' | 'sql', schema_only?, full? }
+output: { type, count, truncated_to_100, schema: [{ name, label, type, control_type }], rows?: [{...}] }
+```
+
+Runs a SQL-style query against any connection backed by an adapter that supports the chosen dialect. Returns a consistent `{schema, rows}` shape regardless of SaaS. **Hard-capped at ~100 rows server-side** — narrow via WHERE clause for more.
+
+- **SOQL:** any trailing `LIMIT N` clause is automatically stripped before sending (Workato auto-appends `LIMIT 100`; user-supplied `LIMIT` would collide).
+- **SuiteQL:** works against both NS REST and NS SOAP connections.
+- **SQL:** depends on adapter — some support, some don't. Tool surfaces "Connector doesn't support SQL to schema" via `WorkatoConnectorError` if not.
+- `schema_only: true` returns only field metadata, no rows.
+- `full: true` returns the raw Workato `result` envelope.
+
+### `workato_call_action`
+
+```
+input:  { connection_id, action_name, input, allow_writes?, full? }
+output (slim): { action_name, result: <native SaaS response shape> }
+output (full=true): the entire {result|error} envelope
+```
+
+**MOST POWERFUL TOOL IN THE KIT — CAN MUTATE SAAS DATA.** Backed by `POST /connections/<id>/test_action.json` — the same endpoint the recipe editor's Test button uses. With the right `action_name` and `input`, this can invoke any connector action, including writes.
+
+**Safety gate.** By default, only read-shaped actions are allowed. An action is considered read-only if any of:
+
+- `action_name` starts with `search_`, `get_`, `list_`, `query_`, `find_`, `describe_`, `read_`, `fetch_`
+- `action_name` is exactly `execute_suiteql`
+- `action_name` is exactly `__adhoc_http_action` AND `input.verb` is `get`, `head`, or `options`
+
+Anything else (e.g. `add_record`, `upsert_record`, `delete_record`, `__adhoc_http_action` with `verb: 'post'`) is rejected with `WorkatoUnsafeAction` unless caller explicitly passes `allow_writes: true`. The override exists for legitimate write use cases — use it deliberately; it can create, modify, or delete real production records.
+
+**Discovering `action_name` values.** Every step in a recipe has a `name` field that's a valid `action_name`. Pull a representative recipe with `workato_pull_recipe` and read its step structure. Common confirmed names:
+
+- `__adhoc_http_action` — arbitrary HTTP via any HTTP-capable connector (SFDC, NS REST, SAP, etc.). Input: `{verb, path, response_type, request_headers?, inspect?}`.
+- `execute_suiteql` — SuiteQL query on NetSuite. Input: `{query}`.
+- `search_sobjects_soql_v2` — SOQL search on Salesforce. Input: `{query, output_schema, ...}`.
+
 ## Install (dev)
 
 1. `pnpm install`
@@ -115,6 +158,18 @@ Run after the v1 smoke test passes:
 15. **list_jobs cursor resume** — call `workato_list_jobs({ recipe_id, limit: 25 })`, take its `next_cursor`, then `workato_list_jobs({ recipe_id, limit: 25, cursor: <that> })` → verify the second call returns the next 25 jobs (distinct ids from the first call).
 16. **Provider denylist audit** — for each adapter present in your workspace (run `workato_search_connections({ sort: 'updated_at' })` and collect distinct `provider` values), call `workato_get_connection({ connection_id: <one id per provider> })` and run the secret-shape grep from step 10. Zero matches across all providers.
 
+### v1.2 smoke test additions
+
+Run after the v1.1 smoke tests pass:
+
+17. **run_query SOQL** — `workato_run_query({ type: 'soql', query: 'SELECT Id, Name FROM Account', connection_id: <SFDC id> })` → verify `schema[]` includes `Id` and `Name` fields, `rows[]` returns ≤100 Salesforce account records, `truncated_to_100` set when count === 100.
+18. **run_query SuiteQL** — `workato_run_query({ type: 'suiteql', query: 'SELECT id, tranid FROM transaction WHERE rownum < 5', connection_id: <NS id> })` → verify `rows[]` has up to 4 transactions with `id` and `tranid`.
+19. **run_query schema_only** — same query with `schema_only: true` → verify `rows` is absent, `schema` is present.
+20. **call_action read** — `workato_call_action({ connection_id: <NS id>, action_name: 'execute_suiteql', input: { query: 'SELECT id FROM transaction WHERE rownum < 3' } })` → verify `result.items` is populated, no `WorkatoUnsafeAction` error.
+21. **call_action write blocked** — `workato_call_action({ connection_id: <NS id>, action_name: 'add_record', input: { record_type: 'customer', /* anything */ } })` → expect `WorkatoUnsafeAction` error, no network call to Workato (the gate runs first).
+22. **call_action write override** — same call with `allow_writes: true` → expect Workato to actually attempt the write. **Run in a sandbox connection only.** If you don't have a safe sandbox, skip this step.
+23. **call_action HTTP via SFDC** — `workato_call_action({ connection_id: <SFDC id>, action_name: '__adhoc_http_action', input: { verb: 'get', path: 'services/data', response_type: 'json' } })` → verify `result` contains Salesforce API version array.
+
 ## Tab selection
 
 The tools auto-discover a Workato tab (`*.workato.com` or `*.workato.is`).
@@ -123,15 +178,21 @@ The tools auto-discover a Workato tab (`*.workato.com` or `*.workato.is`).
 - Tabs across multiple distinct hosts (e.g. US + EU at the same time) → `MultipleWorkatoHosts` (close one).
 - One or more tabs on the same host → uses the first.
 
-## Planned v1.1+
+## Planned v1.3+
 
 Documented as stub files under `app/chrome-extension/entrypoints/background/tools/workato/*.stub.ts`:
 
 - `workato_push_recipe` — recipe write (with pull-before-push, last_version_no lock, /edit-tab refusal).
-- `workato_run_soql` — SOQL passthrough via the schema-derivation endpoint.
-- `workato_schema_derive` — schema-only result from the same endpoint.
+- `workato_create_connection` — new connection creation (with secret strip + provider allowlist).
+- `workato_describe_action` — once the `extended_schema.json` endpoint's reliability is understood (it returned empty for `execute_suiteql` during v1.2 recon).
 
-Full design rationale: `docs/superpowers/specs/2026-05-11-workatomcp-design.md`.
+**Note:** v1's `workato_run_soql` and `workato_schema_derive` stubs are superseded by v1.2's `workato_run_query` (generic across SOQL, SuiteQL, and SQL). The stubs remain in the source tree for historical reference.
+
+Full design rationale per release:
+
+- v1: `docs/superpowers/specs/2026-05-11-workatomcp-design.md`
+- v1.1: `docs/superpowers/specs/2026-05-12-workatomcp-v11-design.md`
+- v1.2: `docs/superpowers/specs/2026-05-12-workatomcp-v12-design.md`
 
 ## Upstream typecheck baseline
 
