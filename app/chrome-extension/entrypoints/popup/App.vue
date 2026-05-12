@@ -87,13 +87,6 @@
               <StopIcon />
             </button>
             <button
-              class="rr-icon-btn rr-icon-btn-edit has-tooltip"
-              @click="toggleWebEditor"
-              data-tooltip="开启页面编辑模式"
-            >
-              <EditIcon />
-            </button>
-            <button
               class="rr-icon-btn rr-icon-btn-marker has-tooltip"
               @click="toggleElementMarker"
               data-tooltip="开启元素标注"
@@ -161,14 +154,7 @@ import { LINKS } from '@/common/constants';
 import { getMessage } from '@/utils/i18n';
 import { useAgentTheme } from '@/shared/agent-theme/useAgentTheme';
 
-import {
-  BoltIcon,
-  RecordIcon,
-  StopIcon,
-  RefreshIcon,
-  EditIcon,
-  MarkerIcon,
-} from './components/icons';
+import { BoltIcon, RecordIcon, StopIcon, RefreshIcon, MarkerIcon } from './components/icons';
 
 // AgentChat theme - 从preload中获取，保持与sidepanel一致
 const { theme: agentTheme, initTheme } = useAgentTheme();
@@ -292,23 +278,7 @@ const runFlow = async (flowId: string) => {
       console.warn('回放失败');
       return;
     }
-    // If failed, open builder and focus the failed node
-    try {
-      const result = res.result;
-      if (result && result.success === false) {
-        const logs = result.logs || [];
-        const failed = logs.find((l: any) => l.status === 'failed');
-        if (failed && failed.stepId) {
-          // 打开独立编辑窗口并定位失败节点
-          if (flow) openBuilderWindow(flow.id, String(failed.stepId));
-        }
-      } else if (result && result.success === true) {
-        // If run succeeded but selector fallback was used, suggest updating priorities
-        const logs = result.logs || [];
-        const fb = logs.find((l: any) => l.fallbackUsed && l.fallbackTo);
-        if (fb && flow) openBuilderWindow(flow.id, String(fb.stepId || ''));
-      }
-    } catch {}
+    // Builder window removed: failed/fallback steps are now surfaced via logs only.
   } catch (e) {
     console.error('回放失败:', e);
   }
@@ -362,14 +332,6 @@ const getStatusClass = () => {
   }
 };
 
-async function toggleWebEditor() {
-  try {
-    await chrome.runtime.sendMessage({ type: BACKGROUND_MESSAGE_TYPES.WEB_EDITOR_TOGGLE });
-  } catch (error) {
-    console.warn('切换网页编辑模式失败:', error);
-  }
-}
-
 async function toggleElementMarker() {
   try {
     // 获取当前活动tab
@@ -403,13 +365,6 @@ async function openTroubleshooting() {
   } catch {
     // ignore
   }
-}
-
-function openBuilderWindow(flowId?: string, focusNodeId?: string) {
-  const url = new URL(chrome.runtime.getURL('builder.html'));
-  if (flowId) url.searchParams.set('flowId', flowId);
-  if (focusNodeId) url.searchParams.set('focus', focusNodeId);
-  chrome.windows.create({ url: url.toString(), type: 'popup', width: 1280, height: 800 });
 }
 
 const getStatusText = () => {
