@@ -1,21 +1,20 @@
 /**
- * Quick Panel Shadow Host
+ * Shadow Host
  *
- * Creates an isolated Shadow DOM container for the Quick Panel AI Chat UI.
- * This module runs in a content script context and provides:
+ * Creates an isolated Shadow DOM container for content-script overlays
+ * (currently used by the Element Picker; previously also Quick Panel).
  *
  * - Style isolation via Shadow DOM (no CSS bleed in/out)
  * - Event isolation (UI events don't bubble to the host page)
- * - Theme synchronization with AgentChat (via chrome.storage)
+ * - Theme synchronization with stored `agentTheme` (legacy key kept for compat)
  *
  * Architecture:
  * - Host element attached to documentElement with highest z-index
  * - Shadow root contains styles + UI container
- * - Theme is synced from chrome.storage.local['agentTheme']
  */
 
 import { Disposer } from '@/shared/utils/disposables';
-import { QUICK_PANEL_STYLES } from './styles';
+import { SHADOW_HOST_STYLES } from './styles';
 
 // ============================================================
 // Types
@@ -24,7 +23,7 @@ import { QUICK_PANEL_STYLES } from './styles';
 /**
  * Elements exposed by the shadow host for UI mounting.
  */
-export interface QuickPanelShadowHostElements {
+export interface ShadowHostElements {
   /** The host element attached to the document */
   host: HTMLElement;
   /** The shadow root */
@@ -38,9 +37,9 @@ export interface QuickPanelShadowHostElements {
 /**
  * Manager interface for the shadow host.
  */
-export interface QuickPanelShadowHostManager {
+export interface ShadowHostManager {
   /** Get the current elements (null if disposed) */
-  getElements: () => QuickPanelShadowHostElements | null;
+  getElements: () => ShadowHostElements | null;
   /** Check if a node belongs to this shadow host */
   isOverlayElement: (node: unknown) => boolean;
   /** Check if an event originated from within the shadow host */
@@ -52,7 +51,7 @@ export interface QuickPanelShadowHostManager {
 /**
  * Options for mounting the shadow host.
  */
-export interface QuickPanelShadowHostOptions {
+export interface ShadowHostOptions {
   /** Custom host element ID (default: __mcp_quick_panel_host__) */
   hostId?: string;
   /** Custom z-index (default: 2147483647 - highest possible) */
@@ -203,33 +202,27 @@ function applyThemeId(root: HTMLElement, themeId: string): void {
 // ============================================================
 
 /**
- * Mount the Quick Panel Shadow DOM host.
+ * Mount an isolated Shadow DOM host into the page.
  *
  * @param options - Configuration options
  * @returns Manager interface for the shadow host
  *
  * @example
  * ```typescript
- * const shadowHost = mountQuickPanelShadowHost();
+ * const shadowHost = mountShadowHost();
  * const elements = shadowHost.getElements();
  *
  * if (elements) {
- *   // Mount UI into elements.root
- *   mountQuickPanelAiChatPanel({
- *     mount: elements.root,
- *     agentBridge,
- *   });
+ *   // Mount your overlay UI into elements.root
  * }
  *
  * // Cleanup when done
  * shadowHost.dispose();
  * ```
  */
-export function mountQuickPanelShadowHost(
-  options: QuickPanelShadowHostOptions = {},
-): QuickPanelShadowHostManager {
+export function mountShadowHost(options: ShadowHostOptions = {}): ShadowHostManager {
   const disposer = new Disposer();
-  let elements: QuickPanelShadowHostElements | null = null;
+  let elements: ShadowHostElements | null = null;
 
   const hostId = options.hostId ?? DEFAULT_HOST_ID;
   const zIndex = options.zIndex ?? DEFAULT_Z_INDEX;
@@ -247,7 +240,7 @@ export function mountQuickPanelShadowHost(
   // Create host element
   const host = document.createElement('div');
   host.id = hostId;
-  host.setAttribute('data-mcp-quick-panel', 'true');
+  host.setAttribute('data-mcp-shadow-host', 'true');
 
   // Apply styles with !important to override page styles
   setImportantStyle(host, 'position', 'fixed');
@@ -262,7 +255,7 @@ export function mountQuickPanelShadowHost(
 
   // Inject styles
   const styleEl = document.createElement('style');
-  styleEl.textContent = QUICK_PANEL_STYLES;
+  styleEl.textContent = SHADOW_HOST_STYLES;
   shadowRoot.append(styleEl);
 
   // Create UI container

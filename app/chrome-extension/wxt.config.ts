@@ -63,29 +63,6 @@ export default defineConfig({
       default_popup: 'popup.html',
       default_title: 'WorkatoMCP',
     },
-    // Keyboard shortcuts for quick triggers
-    commands: {
-      // run_quick_trigger_1: {
-      //   suggested_key: { default: 'Ctrl+Shift+1' },
-      //   description: 'Run quick trigger 1',
-      // },
-      // run_quick_trigger_2: {
-      //   suggested_key: { default: 'Ctrl+Shift+2' },
-      //   description: 'Run quick trigger 2',
-      // },
-      // run_quick_trigger_3: {
-      //   suggested_key: { default: 'Ctrl+Shift+3' },
-      //   description: 'Run quick trigger 3',
-      // },
-      // open_workflow_sidepanel: {
-      //   suggested_key: { default: 'Ctrl+Shift+O' },
-      //   description: 'Open workflow sidepanel',
-      // },
-      toggle_quick_panel: {
-        suggested_key: { default: 'Ctrl+Shift+U', mac: 'Command+Shift+U' },
-        description: 'Toggle Quick Panel AI Chat',
-      },
-    },
     web_accessible_resources: [
       {
         resources: ['/inject-scripts/*'],

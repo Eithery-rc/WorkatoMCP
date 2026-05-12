@@ -10,10 +10,10 @@
 
 import { Disposer } from '@/shared/utils/disposables';
 import {
-  mountQuickPanelShadowHost,
-  type QuickPanelShadowHostElements,
-  type QuickPanelShadowHostManager,
-} from '@/shared/quick-panel/ui';
+  mountShadowHost,
+  type ShadowHostElements,
+  type ShadowHostManager,
+} from '@/shared/shadow-host';
 import type { PickedElement } from 'workatomcp-shared';
 
 // ============================================================
@@ -322,8 +322,8 @@ export function createElementPickerController(
 ): ElementPickerController {
   let disposed = false;
 
-  let shadowHost: QuickPanelShadowHostManager | null = null;
-  let elements: QuickPanelShadowHostElements | null = null;
+  let shadowHost: ShadowHostManager | null = null;
+  let elements: ShadowHostElements | null = null;
   let disposer: Disposer | null = null;
   let state: ElementPickerUiState | null = null;
 
@@ -354,7 +354,7 @@ export function createElementPickerController(
   function ensureMounted(): void {
     if (shadowHost && elements) return;
 
-    shadowHost = mountQuickPanelShadowHost({ hostId, zIndex });
+    shadowHost = mountShadowHost({ hostId, zIndex });
     elements = shadowHost.getElements();
     if (!elements) throw new Error('Failed to mount Element Picker shadow host');
 
