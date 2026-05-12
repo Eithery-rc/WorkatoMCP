@@ -51,6 +51,8 @@ export const TOOL_NAMES = {
     SEARCH_CONNECTIONS: 'workato_search_connections',
     GET_CONNECTION: 'workato_get_connection',
     LIST_JOBS: 'workato_list_jobs',
+    RUN_QUERY: 'workato_run_query',
+    CALL_ACTION: 'workato_call_action',
   },
 };
 
@@ -1620,6 +1622,103 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['recipe_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.RUN_QUERY,
+    description:
+      'Run a SQL-style query (SOQL, SuiteQL, or SQL) against any Workato ' +
+      'connection. Returns {schema, rows} in a consistent shape regardless ' +
+      'of underlying SaaS. Hard-capped at ~100 rows server-side; narrow via ' +
+      'WHERE clause for more. SOQL queries: any trailing LIMIT clause is ' +
+      'stripped before sending (Workato auto-appends LIMIT 100, so a ' +
+      'user-supplied LIMIT would collide). connection_id is shared_account_id ' +
+      'from search_connections or recipe.version.config. Read-only — never ' +
+      'treat as a write API. Requires an open Workato tab (*.workato.com or ' +
+      '*.workato.is).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: {
+          type: 'number',
+          description: 'Numeric Workato connection id (shared_account_id).',
+        },
+        query: {
+          type: 'string',
+          description:
+            'The query body. For SOQL, do NOT include a LIMIT clause (Workato adds its own). For SuiteQL use NetSuite Analytics Browser syntax. For SQL, support depends on adapter.',
+        },
+        type: {
+          type: 'string',
+          enum: ['soql', 'suiteql', 'sql'],
+          description:
+            "Query dialect. 'soql' for Salesforce, 'suiteql' for NetSuite, 'sql' for some database adapters (not all support this).",
+        },
+        schema_only: {
+          type: 'boolean',
+          description: 'If true, return only field schema (drop rows). Default false.',
+          default: false,
+        },
+        full: {
+          type: 'boolean',
+          description: 'If true, return the raw Workato result envelope instead of the slim shape.',
+          default: false,
+        },
+      },
+      required: ['connection_id', 'query', 'type'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.CALL_ACTION,
+    description:
+      'Invoke any named connector action with arbitrary input via the same ' +
+      "endpoint Workato's recipe editor uses for the Test button. " +
+      '\n\n**MOST POWERFUL TOOL IN THE KIT — CAN MUTATE SAAS DATA.** ' +
+      'Defaults to a read-only safety gate: action_name must start with ' +
+      'search_/get_/list_/query_/find_/describe_/read_/fetch_, OR be exactly ' +
+      "'execute_suiteql', OR be '__adhoc_http_action' with verb get/head/options. " +
+      'Anything else (add_record, upsert_record, delete_*, POST/PUT/DELETE HTTP ' +
+      'verbs, etc.) is rejected with WorkatoUnsafeAction unless caller passes ' +
+      'allow_writes:true. Use that flag deliberately — it can create, modify, or ' +
+      'delete real records in production SaaS. ' +
+      '\n\nAction names come from inspecting recipe steps: every step in a ' +
+      "recipe's code tree has a 'name' field that is a valid action_name. " +
+      'Pull a representative recipe with workato_pull_recipe and read its ' +
+      'step structure to learn what actions exist on a connector. Common ' +
+      "names: '__adhoc_http_action' (any HTTP connector), 'execute_suiteql' " +
+      "(NetSuite), 'search_sobjects_soql_v2' (Salesforce), 'add_record'/" +
+      "'upsert_record'/'delete_record' (NetSuite — writes).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: {
+          type: 'number',
+          description: 'Numeric Workato connection id.',
+        },
+        action_name: {
+          type: 'string',
+          description:
+            "The action identifier (the 'name' field on a recipe step). E.g. 'execute_suiteql', '__adhoc_http_action', 'search_sobjects_soql_v2'.",
+        },
+        input: {
+          type: 'object',
+          description:
+            "The action's input parameters as a JSON object. Shape is action-specific. For __adhoc_http_action: {verb, path, response_type, request_headers?, inspect?}. For execute_suiteql: {query}. For SOQL search: {query, output_schema, ...}.",
+        },
+        allow_writes: {
+          type: 'boolean',
+          description:
+            'Required (true) for actions that look like writes. Default false. Loudly enables potentially destructive operations.',
+          default: false,
+        },
+        full: {
+          type: 'boolean',
+          description:
+            'If true, return the full Workato response envelope instead of just the result.',
+          default: false,
+        },
+      },
+      required: ['connection_id', 'action_name', 'input'],
     },
   },
 ];
