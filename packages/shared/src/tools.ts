@@ -71,6 +71,11 @@ export const TOOL_NAMES = {
     CREATE_RECIPE: 'workato_ui_create_recipe',
     SAVE_RECIPE_CODE: 'workato_ui_save_recipe_code',
   },
+  WORKATO_RECIPE: {
+    ADD_STEP: 'workato_recipe_add_step',
+    SET_STEP_INPUT: 'workato_recipe_set_step_input',
+    MAP_DATAPILL: 'workato_recipe_map_datapill',
+  },
 };
 
 export const TOOL_SCHEMAS: Tool[] = [
@@ -2119,6 +2124,114 @@ export const TOOL_SCHEMAS: Tool[] = [
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['recipe_id', 'code'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_RECIPE.ADD_STEP,
+    description:
+      'Insert a new step into a Workato recipe via a single GET-mutate-PUT round-trip ' +
+      '(GET /recipes/<id>/code.json then PUT /recipes/<id>.json). This is the high-level mutator that ' +
+      'sits on top of workato_pull_recipe + workato_ui_save_recipe_code: one call per logical change, ' +
+      'no manual code-tree manipulation. Generates a fresh `as` (8-char hex) and `uuid`, renumbers the ' +
+      'block sequentially, deduplicates the `config` array of providers, and returns the new step number. ' +
+      'Prerequisite: the active tab must be a logged-in Workato page (for CSRF + session cookies).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'Numeric Workato recipe id.' },
+        after_step: {
+          type: 'number',
+          description:
+            'Insert the new step after this step number. Use 0 to insert as the first action right after the trigger.',
+        },
+        provider: {
+          type: 'string',
+          description:
+            'Connector/provider name, e.g. "logger", "salesforce", "netsuite". Becomes the step.provider field and is added to the recipe `config` array.',
+        },
+        action_name: {
+          type: 'string',
+          description:
+            'Action name within the provider, e.g. "log_message", "search_sobjects_soql_v2". Becomes step.name.',
+        },
+        input: {
+          type: 'object',
+          description:
+            'Optional initial field values for the new step (becomes step.input). Defaults to an empty object.',
+        },
+        keyword: {
+          type: 'string',
+          enum: ['action', 'if', 'repeat_each', 'stop', 'return_result'],
+          description: 'Step keyword. Defaults to "action".',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['recipe_id', 'after_step', 'provider', 'action_name'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_RECIPE.SET_STEP_INPUT,
+    description:
+      'Set a single input field on an existing recipe step (GET /recipes/<id>/code.json, mutate, ' +
+      'PUT /recipes/<id>.json). Targets the trigger when step_number is 0, otherwise the action with ' +
+      'matching `number` in the block. Preserves all other fields on the step. ' +
+      'Prerequisite: the active tab must be a logged-in Workato page (for CSRF + session cookies).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'Numeric Workato recipe id.' },
+        step_number: {
+          type: 'number',
+          description:
+            'Step to modify. 0 targets the trigger; 1+ targets an action by its `number`.',
+        },
+        field: { type: 'string', description: 'Input field name to set (e.g. "message").' },
+        value: {
+          description:
+            'Literal value to write into step.input[field]. Accepts string, number, or boolean.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['recipe_id', 'step_number', 'field', 'value'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_RECIPE.MAP_DATAPILL,
+    description:
+      "Map a target step field to a datapill from another step's output (GET /recipes/<id>/code.json, " +
+      'mutate, PUT /recipes/<id>.json). Builds the canonical Workato `=_dp(...)` formula from the source ' +
+      "step's `as` (line id) and `provider`, then writes it into target.input[target_field]. " +
+      'Source step 0 references the trigger; otherwise the source step is matched by its `number`. ' +
+      'Prerequisite: the active tab must be a logged-in Workato page (for CSRF + session cookies).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'Numeric Workato recipe id.' },
+        target_step: {
+          type: 'number',
+          description: 'Step where the field being mapped lives. 0 for trigger; 1+ for an action.',
+        },
+        target_field: {
+          type: 'string',
+          description: 'Field name on the target step that will hold the datapill formula.',
+        },
+        source_step: {
+          type: 'number',
+          description:
+            'Step whose output is being referenced. 0 for trigger; 1+ for an action. Must already have an `as` and `provider`.',
+        },
+        path: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Path into the source step output, e.g. ["records"] or ["body", "id"]. Empty array references the root output.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['recipe_id', 'target_step', 'target_field', 'source_step', 'path'],
     },
   },
 ];

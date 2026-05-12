@@ -3,12 +3,14 @@ import { ERROR_MESSAGES } from '@/common/constants';
 import * as browserTools from './browser';
 import * as workatoTools from './workato';
 import * as workatoUiTools from './workato-ui';
+import * as workatoRecipeTools from './workato-recipe';
 import { flowRunTool, listPublishedFlowsTool } from './record-replay';
 
 const tools = {
   ...browserTools,
   ...workatoTools,
   ...workatoUiTools,
+  ...workatoRecipeTools,
   flowRunTool,
   listPublishedFlowsTool,
 } as any;
