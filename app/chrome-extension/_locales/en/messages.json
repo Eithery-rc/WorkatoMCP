@@ -1,11 +1,11 @@
 {
   "extensionName": {
-    "message": "chrome-mcp-server",
-    "description": "Extension name"
+    "message": "WorkatoMCP",
+    "description": "Extension display name"
   },
   "extensionDescription": {
-    "message": "Exposes browser capabilities with your own chrome",
-    "description": "Extension description"
+    "message": "Chrome extension that exposes the user's Workato session as MCP tools for AI agents.",
+    "description": "Extension description shown in chrome://extensions"
   },
   "nativeServerConfigLabel": {
     "message": "Native Server Configuration",
