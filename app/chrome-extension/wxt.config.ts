@@ -18,10 +18,8 @@ const IS_DEV = process.env.NODE_ENV !== 'production' && process.env.MODE !== 'pr
 export default defineConfig({
   modules: ['@wxt-dev/module-vue'],
   runner: {
-    // 方案1: 禁用自动启动（推荐）
     disabled: true,
 
-    // 方案2: 如果要启用自动启动并使用现有配置，取消注释下面的配置
     // chromiumArgs: [
     //   '--user-data-dir=' + homedir() + (process.platform === 'darwin'
     //     ? '/Library/Application Support/Google/Chrome'
@@ -69,8 +67,7 @@ export default defineConfig({
         matches: ['<all_urls>'],
       },
     ],
-    // 注意：以下安全策略在开发环境会阻断 dev server 的资源加载，
-    // 只在生产环境启用，开发环境交由 WXT 默认策略处理。
+    // CSP is production-only: dev server assets are blocked by strict CSP in dev mode.
     ...(IS_DEV
       ? {}
       : {
@@ -116,13 +113,9 @@ export default defineConfig({
       }) as any,
     ],
     build: {
-      // 我们的构建产物需要兼容到es6
       target: 'es2015',
-      // 非生产环境下生成sourcemap
       sourcemap: env.mode !== 'production',
-      // 禁用gzip 压缩大小报告，因为压缩大型文件可能会很慢
       reportCompressedSize: false,
-      // chunk大小超过1500kb是触发警告
       chunkSizeWarningLimit: 1500,
       minify: false,
     },

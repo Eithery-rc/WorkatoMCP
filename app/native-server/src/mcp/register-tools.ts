@@ -117,14 +117,13 @@ const handleToolCall = async (name: string, args: any): Promise<CallToolResult> 
         };
       }
     }
-    // 发送请求到Chrome扩展并等待响应
     const response = await nativeMessagingHostInstance.sendRequestToExtensionAndWait(
       {
         name,
         args,
       },
       NativeMessageType.CALL_TOOL,
-      120000, // 延长到 120 秒，避免性能分析等长任务超时
+      120000,
     );
     if (response.status === 'success') {
       return response.data;
