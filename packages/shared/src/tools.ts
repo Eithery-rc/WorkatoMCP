@@ -1703,7 +1703,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         input: {
           type: 'object',
           description:
-            "The action's input parameters as a JSON object. Shape is action-specific. For __adhoc_http_action: {verb, path, response_type, request_headers?, inspect?}. For execute_suiteql: {query}. For SOQL search: {query, output_schema, ...}.",
+            "The action's input parameters as a JSON object. Shape is action-specific. For __adhoc_http_action: {mnemonic:'Custom action', verb, path, response_type:'json', inspect:true, request_headers?} — both `mnemonic` and `inspect:true` are REQUIRED; Workato rejects with \"'Action name' must be present\" if either is omitted. For execute_suiteql: {query}. For SOQL search: {query, output_schema, ...}.",
         },
         allow_writes: {
           type: 'boolean',
