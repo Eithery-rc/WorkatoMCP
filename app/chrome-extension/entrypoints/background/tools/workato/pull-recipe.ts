@@ -31,116 +31,125 @@ interface InPageResult {
 }
 
 /**
- * Function executed in the Workato tab's MAIN world. Self-contained — no captures.
+ * Function executed in the Workato tab's MAIN world. MUST be self-contained
+ * and MUST NOT use `async`/`await` — WXT/Vite rewrites async function
+ * declarations into a sync wrapper that calls a hoisted `_<name>` helper.
+ * Only the wrapper survives `Function.prototype.toString()`, so the helper
+ * reference dangles in the page context ("ReferenceError: _pullInPage is not
+ * defined"). Promise chains pass through the bundler untouched.
  */
-async function pullInPage(recipeId: number): Promise<InPageResult> {
-  async function getJson(
-    url: string,
-  ): Promise<{ status: number; bodyText: string; json: unknown }> {
-    const r = await fetch(url, {
-      credentials: 'include',
-      headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' },
-    });
-    const bodyText = await r.text();
-    let json: unknown = null;
-    try {
-      json = JSON.parse(bodyText);
-    } catch {
-      /* keep raw body for diagnostics */
-    }
-    return { status: r.status, bodyText, json };
-  }
-
-  const meta = await getJson(`/recipes/${recipeId}.json?error_format=json`);
-  if (meta.status < 200 || meta.status >= 300) {
-    return {
-      ok: false,
-      failure: {
-        stage: 'meta',
-        status: meta.status,
-        body_excerpt: meta.bodyText.slice(0, 1024),
-        message: `GET /recipes/${recipeId}.json returned HTTP ${meta.status}`,
-      },
-    };
-  }
-
-  const code = await getJson(
-    `/recipes/${recipeId}/code.json?mode=view&hideHeader=false&noBorderRadius=false&banHotkeys=false`,
-  );
-  if (code.status < 200 || code.status >= 300) {
-    return {
-      ok: false,
-      failure: {
-        stage: 'code',
-        status: code.status,
-        body_excerpt: code.bodyText.slice(0, 1024),
-        message: `GET /recipes/${recipeId}/code.json returned HTTP ${code.status}`,
-      },
-    };
-  }
-
-  // Shape: meta.result.recipe_data.flow.{version_no,name,folder_id,config,...}
-  //        code.result === "<stringified JSON of code tree>"
-  const flow = (meta.json as any)?.result?.recipe_data?.flow;
-  const codeStr = (code.json as any)?.result;
-  if (!flow || typeof codeStr !== 'string') {
-    return {
-      ok: false,
-      failure: {
-        stage: 'shape',
-        body_excerpt: JSON.stringify({
-          meta_keys: Object.keys((meta.json as any) ?? {}),
-          code_keys: Object.keys((code.json as any) ?? {}),
-        }).slice(0, 1024),
-        message:
-          'Unexpected response shape — missing result.recipe_data.flow or result string. ' +
-          'Workato API may have drifted; check SKILL.md.',
-      },
-    };
-  }
-
-  let parsedCode: unknown;
-  try {
-    parsedCode = JSON.parse(codeStr);
-  } catch (e) {
-    return {
-      ok: false,
-      failure: {
-        stage: 'shape',
-        body_excerpt: codeStr.slice(0, 1024),
-        message: `JSON.parse(code.result) failed: ${e instanceof Error ? e.message : String(e)}`,
-      },
-    };
-  }
-
-  const versionNo = Number(flow.version_no);
-  if (!Number.isFinite(versionNo) || versionNo <= 0) {
-    return {
-      ok: false,
-      failure: {
-        stage: 'shape',
-        body_excerpt: JSON.stringify({ version_no: flow.version_no }).slice(0, 1024),
-        message:
-          `result.recipe_data.flow.version_no is not a positive finite number ` +
-          `(got ${JSON.stringify(flow.version_no)}). Workato API may have drifted.`,
-      },
-    };
-  }
-
-  return {
-    ok: true,
-    code: parsedCode,
-    version: {
-      version_no: versionNo,
-      name: String(flow.name ?? ''),
-      folder_id: Number(flow.folder_id),
-      config: typeof flow.config === 'string' ? flow.config : JSON.stringify(flow.config ?? {}),
-      visibility_private: Boolean(flow.visibility_private),
-      description: String(flow.description ?? ''),
-      worker_concurrency: Number(flow.worker_concurrency ?? 1),
-      job_data_retention_policy: String(flow.job_data_retention_policy ?? 'default'),
-    },
+function pullInPage(recipeId: number): Promise<InPageResult> {
+  const fetchOpts: RequestInit = {
+    credentials: 'include',
+    headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' },
   };
+  const fetchAndParse = (
+    url: string,
+  ): Promise<{ status: number; bodyText: string; json: unknown }> =>
+    fetch(url, fetchOpts).then((r) =>
+      r.text().then((bodyText) => {
+        let json: unknown = null;
+        try {
+          json = JSON.parse(bodyText);
+        } catch {
+          /* keep raw body for diagnostics */
+        }
+        return { status: r.status, bodyText, json };
+      }),
+    );
+
+  return fetchAndParse(`/recipes/${recipeId}.json?error_format=json`).then((meta) => {
+    if (meta.status < 200 || meta.status >= 300) {
+      return {
+        ok: false,
+        failure: {
+          stage: 'meta' as const,
+          status: meta.status,
+          body_excerpt: meta.bodyText.slice(0, 1024),
+          message: `GET /recipes/${recipeId}.json returned HTTP ${meta.status}`,
+        },
+      };
+    }
+
+    return fetchAndParse(
+      `/recipes/${recipeId}/code.json?mode=view&hideHeader=false&noBorderRadius=false&banHotkeys=false`,
+    ).then((code) => {
+      if (code.status < 200 || code.status >= 300) {
+        return {
+          ok: false,
+          failure: {
+            stage: 'code' as const,
+            status: code.status,
+            body_excerpt: code.bodyText.slice(0, 1024),
+            message: `GET /recipes/${recipeId}/code.json returned HTTP ${code.status}`,
+          },
+        };
+      }
+
+      // Shape: meta.result.recipe_data.flow.{version_no,name,folder_id,config,...}
+      //        code.result === "<stringified JSON of code tree>"
+      const flow = (meta.json as any)?.result?.recipe_data?.flow;
+      const codeStr = (code.json as any)?.result;
+      if (!flow || typeof codeStr !== 'string') {
+        return {
+          ok: false,
+          failure: {
+            stage: 'shape' as const,
+            body_excerpt: JSON.stringify({
+              meta_keys: Object.keys((meta.json as any) ?? {}),
+              code_keys: Object.keys((code.json as any) ?? {}),
+            }).slice(0, 1024),
+            message:
+              'Unexpected response shape — missing result.recipe_data.flow or result string. ' +
+              'Workato API may have drifted; check SKILL.md.',
+          },
+        };
+      }
+
+      let parsedCode: unknown;
+      try {
+        parsedCode = JSON.parse(codeStr);
+      } catch (e) {
+        return {
+          ok: false,
+          failure: {
+            stage: 'shape' as const,
+            body_excerpt: codeStr.slice(0, 1024),
+            message: `JSON.parse(code.result) failed: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        };
+      }
+
+      const versionNo = Number(flow.version_no);
+      if (!Number.isFinite(versionNo) || versionNo <= 0) {
+        return {
+          ok: false,
+          failure: {
+            stage: 'shape' as const,
+            body_excerpt: JSON.stringify({ version_no: flow.version_no }).slice(0, 1024),
+            message:
+              `result.recipe_data.flow.version_no is not a positive finite number ` +
+              `(got ${JSON.stringify(flow.version_no)}). Workato API may have drifted.`,
+          },
+        };
+      }
+
+      return {
+        ok: true,
+        code: parsedCode,
+        version: {
+          version_no: versionNo,
+          name: String(flow.name ?? ''),
+          folder_id: Number(flow.folder_id),
+          config: typeof flow.config === 'string' ? flow.config : JSON.stringify(flow.config ?? {}),
+          visibility_private: Boolean(flow.visibility_private),
+          description: String(flow.description ?? ''),
+          worker_concurrency: Number(flow.worker_concurrency ?? 1),
+          job_data_retention_policy: String(flow.job_data_retention_policy ?? 'default'),
+        },
+      };
+    });
+  });
 }
 
 class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
