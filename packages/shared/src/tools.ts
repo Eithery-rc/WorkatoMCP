@@ -58,6 +58,17 @@ export const TOOL_NAMES = {
     RUN_QUERY: 'workato_run_query',
     CALL_ACTION: 'workato_call_action',
   },
+  WORKATO_UI: {
+    OPEN_RECIPE: 'workato_ui_open_recipe',
+    ENTER_EDIT_MODE: 'workato_ui_enter_edit_mode',
+    LIST_STEPS: 'workato_ui_list_steps',
+    FOCUS_STEP: 'workato_ui_focus_step',
+    ADD_STEP: 'workato_ui_add_step',
+    SET_FIELD: 'workato_ui_set_field',
+    INSERT_DATAPILL: 'workato_ui_insert_datapill',
+    SAVE_RECIPE: 'workato_ui_save_recipe',
+    EXIT_EDIT_MODE: 'workato_ui_exit_edit_mode',
+  },
 };
 
 export const TOOL_SCHEMAS: Tool[] = [
@@ -1835,6 +1846,203 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description: 'Window ID to select active tab from (when tabId is omitted).',
         },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_UI.OPEN_RECIPE,
+    description:
+      'Open a Workato recipe by ID. If a tab is already on this recipe, activates it; otherwise navigates the active Workato tab. ' +
+      'Set mode="edit" to open directly in the editor (URL gets /edit suffix). ' +
+      'Waits for the recipe toolbar to appear before returning.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'Workato recipe ID (integer).' },
+        mode: {
+          type: 'string',
+          enum: ['view', 'edit'],
+          description: 'Open in view or edit mode (default: view).',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: {
+          type: 'number',
+          description: 'Window ID to select active tab from (when tabId is omitted).',
+        },
+      },
+      required: ['recipe_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_UI.ENTER_EDIT_MODE,
+    description:
+      'Click the toolbar "Edit" button to enter the recipe editor. No-op if the URL is already /edit. ' +
+      'Waits up to 8s for the "Save" button to appear before returning. ' +
+      'Prerequisite: workato_ui_open_recipe must have been called (or a Workato recipe page is otherwise loaded).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_UI.LIST_STEPS,
+    description:
+      'List all steps on the currently open recipe as JSON: {number, app, action}. ' +
+      'Useful right after workato_ui_open_recipe or after workato_ui_add_step to discover the newest step number. ' +
+      'Works in both view and edit mode.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_UI.FOCUS_STEP,
+    description:
+      'Click the step bubble with the given number to open its config panel on the right. ' +
+      'Required before workato_ui_set_field / workato_ui_insert_datapill, which operate on the focused step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        step_number: { type: 'number', description: 'Step number to focus (1-indexed).' },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['step_number'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_UI.ADD_STEP,
+    description:
+      'Insert a new step after step `after_step`. For kind="action" (default), drives the full picker chain: ' +
+      '"Add step" -> "Action in app" -> select app -> select action. For other kinds (if/repeat/stop/handle_errors), ' +
+      'only the menuitem click is performed. Returns the new step number. ' +
+      'Prerequisite: recipe must be in edit mode (call workato_ui_enter_edit_mode first).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        after_step: {
+          type: 'number',
+          description:
+            'Step number to insert after (1-indexed; uses 1 to insert after the trigger).',
+        },
+        app: {
+          type: 'string',
+          description:
+            'App display name as shown in Workato (e.g. "Logger by Workato", "Salesforce", "NetSuite SOAP"). Case-insensitive substring match.',
+        },
+        action: {
+          type: 'string',
+          description:
+            'Action display name within the chosen app. Case-insensitive substring match.',
+        },
+        kind: {
+          type: 'string',
+          enum: ['action', 'if', 'repeat', 'stop', 'handle_errors'],
+          description: 'Step kind (default: action).',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['after_step', 'app', 'action'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_UI.SET_FIELD,
+    description:
+      'Set a field value on the currently focused step. Matches the field by visible label first (e.g. "Message"), ' +
+      'then falls back to internal data-field-id (e.g. "message"). Handles CodeMirror, plain inputs, textareas, ' +
+      'and contenteditable. Optional mode="formula"/"text" toggles the formula switcher. ' +
+      'Prerequisite: caller must have focused the relevant step first via workato_ui_focus_step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        field: {
+          type: 'string',
+          description: 'Field label (visible) or internal data-field-id. Label is tried first.',
+        },
+        value: { type: 'string', description: 'Value to write into the field.' },
+        mode: {
+          type: 'string',
+          enum: ['text', 'formula'],
+          description: 'Optionally toggle the text/formula switcher before writing.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['field', 'value'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_UI.INSERT_DATAPILL,
+    description:
+      'Insert a datapill from `source_step` into the named field. First tries HTML5 drag emulation; if the field value ' +
+      'does not change within 300ms, falls back to formula injection (=_dp(...)) by fetching the recipe code and ' +
+      "reading the source step's line id + provider. " +
+      'Prerequisite: caller must have focused the relevant step first via workato_ui_focus_step. ' +
+      'NOTE: HTML5 synthetic drag is unreliable across Chrome versions — formula fallback is the production path.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        field: {
+          type: 'string',
+          description: 'Target field (label or data-field-id) on the currently focused step.',
+        },
+        source_step: {
+          type: 'number',
+          description: 'Step number whose output tree provides the pill.',
+        },
+        path: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Path through the source step\'s output tree to the leaf (e.g. ["body","id"]).',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['field', 'source_step', 'path'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_UI.SAVE_RECIPE,
+    description:
+      'Click "Save" and wait until the recipe\'s ng-dirty count drops to 0 (verified via DOM poll). ' +
+      'Returns an error if validation errors appear or if dirty state does not clear within 10s. ' +
+      'Prerequisite: recipe must be in edit mode with pending changes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_UI.EXIT_EDIT_MODE,
+    description:
+      'Click "Exit". If Workato pops a "Unsaved changes" confirm dialog, the `discard` flag picks which button to press: ' +
+      'true -> discard/leave; false (default) -> cancel/stay. ' +
+      'Prerequisite: recipe must be in edit mode.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        discard: {
+          type: 'boolean',
+          description:
+            'If a confirm dialog appears, true=discard changes, false=stay (default false).',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: [],
     },
