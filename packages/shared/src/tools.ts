@@ -47,6 +47,10 @@ export const TOOL_NAMES = {
   WORKATO: {
     PULL_RECIPE: 'workato_pull_recipe',
     JOB_TRACE: 'workato_job_trace',
+    SEARCH_RECIPES: 'workato_search_recipes',
+    SEARCH_CONNECTIONS: 'workato_search_connections',
+    GET_CONNECTION: 'workato_get_connection',
+    LIST_JOBS: 'workato_list_jobs',
   },
 };
 
@@ -1447,6 +1451,170 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['recipe_id', 'job_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.SEARCH_RECIPES,
+    description:
+      'Search Workato recipes by name. Returns a paginated list of recipes ' +
+      '(20 per page, server-capped). Optional folder_id scopes the search. ' +
+      'Optional text does a name substring match across the workspace. ' +
+      'Pass full=true for the raw 24-key Workato response shape. ' +
+      'Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: {
+          type: 'string',
+          description: 'Name substring search. Omit or empty for all recipes.',
+        },
+        folder_id: {
+          type: 'number',
+          description: 'Numeric folder id to scope the search.',
+        },
+        page: {
+          type: 'number',
+          description:
+            '1-based page number. Default 1. Workato returns 20 items per page (server-capped).',
+          default: 1,
+        },
+        sort: {
+          type: 'string',
+          enum: ['latest_activity', 'name', 'updated_at', 'created_at'],
+          description: 'Sort order. Default latest_activity.',
+          default: 'latest_activity',
+        },
+        full: {
+          type: 'boolean',
+          description: 'If true, return the raw Workato response shape instead of the slim shape.',
+          default: false,
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.SEARCH_CONNECTIONS,
+    description:
+      'Search Workato connections by name. Same paginated endpoint as ' +
+      'workato_search_recipes but filters to connections. Note: text= ' +
+      'matches connection NAMES, not the provider field. To find all ' +
+      'salesforce connections, either search a name pattern or page through ' +
+      'all and filter client-side on the per-item provider field. Requires ' +
+      'an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: {
+          type: 'string',
+          description: 'Connection name substring search.',
+        },
+        folder_id: {
+          type: 'number',
+          description: 'Numeric folder id to scope the search.',
+        },
+        page: {
+          type: 'number',
+          description: '1-based page number. Default 1. 20 items per page.',
+          default: 1,
+        },
+        sort: {
+          type: 'string',
+          enum: ['latest_activity', 'name', 'updated_at'],
+          description: 'Sort order. Default latest_activity.',
+          default: 'latest_activity',
+        },
+        full: {
+          type: 'boolean',
+          description: 'If true, return raw Workato shape instead of slim shape.',
+          default: false,
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.GET_CONNECTION,
+    description:
+      'Fetch a single Workato connection by id. Returns metadata ' +
+      '(id, name, provider, recipe_count, authorization_status, ' +
+      'dates) plus a config object containing per-provider settings ' +
+      'with secret-shaped keys/values stripped (auth tokens, passwords, ' +
+      'API keys, JWTs, long opaque tokens). The strip applies even with ' +
+      'full=true — there is no escape hatch for secrets. Requires an ' +
+      'open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: {
+          type: 'number',
+          description: 'Numeric Workato connection id.',
+        },
+        full: {
+          type: 'boolean',
+          description:
+            'If true, return the secret-stripped raw response instead of the slim metadata+config shape.',
+          default: false,
+        },
+      },
+      required: ['connection_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.LIST_JOBS,
+    description:
+      "List jobs for a Workato recipe. Tool auto-walks Workato's cursor " +
+      'pagination under the hood up to `limit` (default 25, max 100). ' +
+      'Supports server-side filters: status (singular), query (full-text ' +
+      'against title/error), started_at window, group_by_master_job. ' +
+      'For paging past `limit`, pass cursor (the next_cursor from the ' +
+      'previous response). Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description: 'Numeric Workato recipe id.',
+        },
+        limit: {
+          type: 'number',
+          description:
+            'Max jobs to return. 1..100, default 25. Tool auto-walks Workato pagination cursor to fulfill.',
+          default: 25,
+          minimum: 1,
+          maximum: 100,
+        },
+        status: {
+          type: 'string',
+          description:
+            "Server-side status filter. Use 'failed', 'succeeded', 'pending', etc. SINGULAR — statuses[] is silently ignored.",
+        },
+        query: {
+          type: 'string',
+          description: 'Full-text search against job title and error message.',
+        },
+        started_at: {
+          type: 'string',
+          enum: ['7.days', '30.days', 'all'],
+          description: 'Time window for job start time. Default behavior is server-defined.',
+        },
+        group_by_master_job: {
+          type: 'boolean',
+          description: 'Collapse retry chains under their master job.',
+          default: false,
+        },
+        cursor: {
+          type: 'string',
+          description:
+            'Job id to resume from. Pass the next_cursor from a previous response to page forward.',
+        },
+        full: {
+          type: 'boolean',
+          description: 'If true, return raw concatenated pages instead of the slim shape.',
+          default: false,
+        },
+      },
+      required: ['recipe_id'],
     },
   },
 ];
