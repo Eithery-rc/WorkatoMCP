@@ -38,6 +38,11 @@ export const TOOL_NAMES = {
     PERFORMANCE_STOP_TRACE: 'performance_stop_trace',
     PERFORMANCE_ANALYZE_INSIGHT: 'performance_analyze_insight',
     GIF_RECORDER: 'chrome_gif_recorder',
+    SNAPSHOT: 'chrome_snapshot',
+    SNAPSHOT_CLICK: 'chrome_snapshot_click',
+    SNAPSHOT_FILL: 'chrome_snapshot_fill',
+    SNAPSHOT_HOVER: 'chrome_snapshot_hover',
+    SNAPSHOT_WAIT_FOR: 'chrome_snapshot_wait_for',
   },
   RECORD_REPLAY: {
     FLOW_RUN: 'record_replay_flow_run',
@@ -1703,6 +1708,135 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['connection_id', 'action_name', 'input'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.SNAPSHOT,
+    description:
+      'Capture an accessibility-tree snapshot of a tab and tag every interactive element with a [uid=N] marker. ' +
+      'You MUST call this before chrome_snapshot_click/_fill/_hover — those tools resolve UIDs against the latest snapshot of the same tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: {
+          type: 'number',
+          description: 'Target tab ID. If omitted, uses the current active tab.',
+        },
+        windowId: {
+          type: 'number',
+          description: 'Window ID to select active tab from (when tabId is omitted).',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.SNAPSHOT_CLICK,
+    description:
+      'Click an element identified by a UID from the latest chrome_snapshot of this tab. ' +
+      'Call chrome_snapshot first to obtain UIDs; stale UIDs will fail with an error asking you to re-snapshot.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        uid: {
+          type: 'number',
+          description: 'Element UID from the latest chrome_snapshot of this tab.',
+        },
+        tabId: {
+          type: 'number',
+          description: 'Target tab ID. If omitted, uses the current active tab.',
+        },
+        windowId: {
+          type: 'number',
+          description: 'Window ID to select active tab from (when tabId is omitted).',
+        },
+      },
+      required: ['uid'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.SNAPSHOT_FILL,
+    description:
+      'Focus an element by UID (from the latest chrome_snapshot of this tab), select-all + clear its current value, then insert the provided text. ' +
+      'UIDs come from chrome_snapshot. Call chrome_snapshot first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        uid: {
+          type: 'number',
+          description: 'Element UID from the latest chrome_snapshot of this tab.',
+        },
+        value: {
+          type: 'string',
+          description: 'Text to insert into the focused element after clearing it.',
+        },
+        tabId: {
+          type: 'number',
+          description: 'Target tab ID. If omitted, uses the current active tab.',
+        },
+        windowId: {
+          type: 'number',
+          description: 'Window ID to select active tab from (when tabId is omitted).',
+        },
+      },
+      required: ['uid', 'value'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.SNAPSHOT_HOVER,
+    description:
+      'Hover the mouse over an element identified by a UID from the latest chrome_snapshot of this tab. ' +
+      'Useful for surfacing hover-triggered menus/tooltips before a subsequent click. Call chrome_snapshot first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        uid: {
+          type: 'number',
+          description: 'Element UID from the latest chrome_snapshot of this tab.',
+        },
+        tabId: {
+          type: 'number',
+          description: 'Target tab ID. If omitted, uses the current active tab.',
+        },
+        windowId: {
+          type: 'number',
+          description: 'Window ID to select active tab from (when tabId is omitted).',
+        },
+      },
+      required: ['uid'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.SNAPSHOT_WAIT_FOR,
+    description:
+      'Poll the accessibility tree until an element matching the given role and/or text appears (or timeout). ' +
+      'On success, returns a fresh chrome_snapshot of the tab so you immediately have new UIDs to act on. ' +
+      'Provide at least one of `role` or `text`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: {
+          type: 'string',
+          description: 'Substring (case-insensitive) to match against accessible names.',
+        },
+        role: {
+          type: 'string',
+          description: 'Exact ARIA role to match (case-insensitive), e.g. "button", "link".',
+        },
+        timeoutMs: {
+          type: 'number',
+          description: 'Maximum time to wait in milliseconds (default 10000, max 120000).',
+        },
+        tabId: {
+          type: 'number',
+          description: 'Target tab ID. If omitted, uses the current active tab.',
+        },
+        windowId: {
+          type: 'number',
+          description: 'Window ID to select active tab from (when tabId is omitted).',
+        },
+      },
+      required: [],
     },
   },
 ];
