@@ -10,7 +10,6 @@ import {
   type WebEditorCancelExecutionPayload,
   type WebEditorCancelExecutionResponse,
 } from '@/common/web-editor-types';
-import { openAgentChatSidepanel } from '../utils/sidepanel';
 
 const CONTEXT_MENU_ID = 'web_editor_toggle';
 const COMMAND_KEY = 'toggle_web_editor';
@@ -1223,7 +1222,6 @@ export function initWebEditorListeners(): void {
         const payload = normalizeApplyBatchPayload(message.payload);
         (async () => {
           const senderTabId = (_sender as chrome.runtime.MessageSender)?.tab?.id;
-          const senderWindowId = (_sender as chrome.runtime.MessageSender)?.tab?.windowId;
 
           // Read storage for server port and selected session
           const stored = await chrome.storage.local.get([
@@ -1238,21 +1236,14 @@ export function initWebEditorListeners(): void {
 
           const sessionId = normalizeString(stored?.[STORAGE_KEY_SELECTED_SESSION]).trim();
 
-          // Best-effort: open AgentChat sidepanel so user can see the session
-          // Pass sessionId for deep linking directly to chat view
-          if (typeof senderTabId === 'number') {
-            openAgentChatSidepanel(senderTabId, senderWindowId, sessionId || undefined).catch(
-              () => {},
-            );
-          }
-
           if (!sessionId) {
-            // No session selected - sidepanel is already being opened (best-effort)
-            // User needs to select or create a session manually
+            // No session selected.
+            // (Previously this would open the AgentChat sidepanel; the sidepanel
+            // entrypoint has been removed — surface the error to the caller.)
             sendResponse({
               success: false,
               error:
-                'No Agent session selected. Please select or create a session in AgentChat, then try Apply again.',
+                'No Agent session selected. Please select or create a session via the MCP server, then try Apply again.',
             });
             return;
           }

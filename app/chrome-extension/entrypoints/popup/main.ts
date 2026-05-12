@@ -2,8 +2,8 @@ import { createApp } from 'vue';
 import { NativeMessageType } from 'workatomcp-shared';
 import './style.css';
 // 引入AgentChat主题样式
-import '../sidepanel/styles/agent-chat.css';
-import { preloadAgentTheme } from '../sidepanel/composables/useAgentTheme';
+import '@/shared/agent-theme/agent-chat.css';
+import { preloadAgentTheme } from '@/shared/agent-theme/useAgentTheme';
 import App from './App.vue';
 
 // 在Vue挂载前预加载主题，防止主题闪烁
