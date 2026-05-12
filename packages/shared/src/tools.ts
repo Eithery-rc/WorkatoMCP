@@ -1459,8 +1459,10 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Search Workato recipes by name. Returns a paginated list of recipes ' +
       '(20 per page, server-capped). Optional folder_id scopes the search. ' +
       'Optional text does a name substring match across the workspace. ' +
-      'Pass full=true for the raw 24-key Workato response shape. ' +
-      'Requires an open Workato tab.',
+      'Slim response includes `count` (total matches across all pages) so ' +
+      'you can decide whether to advance `page=`. Pass full=true for the ' +
+      'raw 24-key Workato response shape. Requires an open Workato tab ' +
+      '(*.workato.com or *.workato.is).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1500,8 +1502,10 @@ export const TOOL_SCHEMAS: Tool[] = [
       'workato_search_recipes but filters to connections. Note: text= ' +
       'matches connection NAMES, not the provider field. To find all ' +
       'salesforce connections, either search a name pattern or page through ' +
-      'all and filter client-side on the per-item provider field. Requires ' +
-      'an open Workato tab.',
+      'all and filter client-side on the per-item provider field. Slim ' +
+      'response includes `count` for pagination decisions. Pass full=true ' +
+      'for the raw 18-key per-item Workato shape. Requires an open Workato ' +
+      'tab (*.workato.com or *.workato.is).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1564,11 +1568,12 @@ export const TOOL_SCHEMAS: Tool[] = [
     name: TOOL_NAMES.WORKATO.LIST_JOBS,
     description:
       "List jobs for a Workato recipe. Tool auto-walks Workato's cursor " +
-      'pagination under the hood up to `limit` (default 25, max 100). ' +
-      'Supports server-side filters: status (singular), query (full-text ' +
-      'against title/error), started_at window, group_by_master_job. ' +
-      'For paging past `limit`, pass cursor (the next_cursor from the ' +
-      'previous response). Requires an open Workato tab.',
+      'pagination under the hood up to `limit` (default 25, max 100). When ' +
+      '`cursor` is supplied, auto-walk begins from that job id (useful for ' +
+      'resuming a previous fetch). Supports server-side filters: status ' +
+      '(singular), query (full-text against title/error), started_at ' +
+      'window, group_by_master_job. Pass full=true for raw page responses ' +
+      'instead of the slim shape. Requires an open Workato tab.',
     inputSchema: {
       type: 'object',
       properties: {
