@@ -15,6 +15,11 @@ import { clear as clearUidStore } from './uid-store';
 const OWNER_TAG = 'snapshot';
 const IDLE_TIMEOUT_MS = 60_000;
 
+// Module-level state is wiped on MV3 service-worker restart, but Chrome keeps
+// the underlying debugger session alive. cdpSessionManager.attach() reconciles
+// via chrome.debugger.getTargets() and adopts the existing attachment, so a
+// post-restart ensureAttached() call re-populates attachedTabs without
+// re-running DOM.enable / Accessibility.enable (already enabled in Chrome).
 const attachedTabs = new Set<number>();
 const idleTimers = new Map<number, ReturnType<typeof setTimeout>>();
 

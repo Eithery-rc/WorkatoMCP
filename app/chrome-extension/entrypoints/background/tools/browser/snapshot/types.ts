@@ -26,9 +26,12 @@ export interface SnapshotResult {
  */
 export interface AXNode {
   nodeId: string;
+  parentId?: string;
   backendDOMNodeId?: number;
-  role?: { value: string };
-  name?: { value: string };
+  // CDP normally returns { value: string }, but some Chrome versions emit a flat
+  // string — keep the type defensive so the formatter can normalize.
+  role?: { value: string } | string;
+  name?: { value: string } | string;
   childIds?: string[];
   ignored?: boolean;
   properties?: Array<{ name: string; value: { value: any } }>;
