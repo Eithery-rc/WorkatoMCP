@@ -200,7 +200,7 @@ Full design rationale per release:
 
 ```powershell
 pnpm --filter workatomcp-shared exec tsc --noEmit
-pnpm --filter chrome-mcp-server exec tsc --noEmit 2>&1 | Select-String "workato"
+pnpm --filter workatomcp-extension exec tsc --noEmit 2>&1 | Select-String "workato"
 ```
 
 ## Repo layout

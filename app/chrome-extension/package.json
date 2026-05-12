@@ -1,7 +1,7 @@
 {
-  "name": "chrome-mcp-server",
-  "description": "a chrome extension to use your own chrome as a mcp server",
-  "author": "hangye",
+  "name": "workatomcp-extension",
+  "description": "Chrome extension that exposes the user's Workato session as MCP tools for AI agents.",
+  "author": "Roman Chikalenko <chikalenkor@gmail.com>",
   "private": true,
   "version": "1.0.0",
   "type": "module",
