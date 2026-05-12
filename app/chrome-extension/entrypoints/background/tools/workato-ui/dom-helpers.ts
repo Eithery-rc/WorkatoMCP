@@ -241,80 +241,52 @@ export async function getTabUrl(tabId: number): Promise<string> {
 
 /**
  * Snippet that walks the recipe canvas DOM and returns step metadata.
- * Returns an array of {number, app, action, hasConnection?} or [] on error.
+ * Returns an array of {number, label} or [] on error.
  *
- * We try multiple selectors because Workato's component names have drifted
- * over time. The numbered bubble (button with name = "1", "2", ...) is the
- * most reliable anchor.
+ * Real Workato DOM structure (verified live):
+ *   W-RECIPE-STEP class="recipe-action-step__step"
+ *     DIV.recipe-step.recipe-step-draggable...
+ *       SPAN.recipe-step__number
+ *         BUTTON.recipe-step__number-button  textContent="3"
+ *       DIV.recipe-step__title-container       (action description text)
+ *
+ * We anchor on .recipe-step__number-button for the number and pull the
+ * description from .recipe-step__title-container. The previous heuristic
+ * tried generic class patterns (description/title/action-name) that don't
+ * exist in the current Workato build, so all fields came back empty.
  */
 export const LIST_STEPS_SNIPPET = `
 (() => {
   try {
-    // Step bubbles render as buttons whose visible text content is the step
-    // number. Workato wraps them in w-recipe-step / w-step elements, but
-    // the safest anchor is the button itself.
-    const buttons = Array.from(document.querySelectorAll('button'));
-    const numbered = buttons
-      .map((btn) => {
-        const txt = (btn.textContent || '').trim();
-        // Step bubbles have only a number as their visible label (e.g. "1", "2").
-        if (!/^\\d+$/.test(txt)) return null;
-        const n = parseInt(txt, 10);
-        if (!Number.isFinite(n) || n < 1) return null;
-        // Climb up to the step container — try a few likely tag names.
-        let container = btn.closest('w-recipe-step, w-step, [class*="recipe-step"], [class*="step-card"]');
-        if (!container) {
-          // Fallback: walk up until we find something that looks like a step row.
-          let p = btn.parentElement;
-          let depth = 0;
-          while (p && depth < 8) {
-            if (p.querySelectorAll && p.querySelectorAll('img, [class*="provider"]').length > 0) {
-              container = p;
-              break;
-            }
-            p = p.parentElement;
-            depth++;
-          }
-        }
-        let app = '';
-        let action = '';
-        if (container) {
-          // Look for image alt text (provider icon) as the app label.
-          const img = container.querySelector('img[alt]');
-          if (img && img.getAttribute('alt')) app = img.getAttribute('alt').trim();
-          // Workato often renders the action description as the first
-          // visible text node after the bubble. Pull a short string.
-          const descNodes = container.querySelectorAll('[class*="description"], [class*="title"], [class*="action-name"]');
-          for (const dn of descNodes) {
-            const t = (dn.textContent || '').trim();
-            if (t && t !== txt) {
-              if (!action) action = t;
-              if (!app && /\\bin\\s+/.test(t)) {
-                // pattern: "Send message in Slack"
-                const m = t.match(/\\bin\\s+(.+)$/);
-                if (m) app = m[1].trim();
-              }
-            }
-          }
-          if (!action) {
-            // Last-ditch: concatenated text minus the step number.
-            const all = (container.textContent || '').replace(txt, '').trim();
-            action = all.split(/\\s{2,}|\\n/)[0].trim().slice(0, 80);
-          }
-        }
-        return { number: n, app, action };
-      })
-      .filter(Boolean);
-    // De-dupe by step number (keep first occurrence).
-    const seen = new Set();
+    const cards = Array.from(document.querySelectorAll('w-recipe-step, [class*="recipe-action-step__step"], .recipe-step'));
+    const seenCards = new Set();
     const out = [];
-    for (const s of numbered) {
-      if (seen.has(s.number)) continue;
-      seen.add(s.number);
-      out.push(s);
+    for (const card of cards) {
+      // Each W-RECIPE-STEP wraps a single .recipe-step card; if the iterator
+      // hits both, dedupe by the inner card element.
+      const inner = card.matches && card.matches('.recipe-step') ? card : card.querySelector('.recipe-step');
+      if (!inner || seenCards.has(inner)) continue;
+      seenCards.add(inner);
+      const btn = inner.querySelector('.recipe-step__number-button');
+      if (!btn) continue;
+      const txt = (btn.textContent || '').trim();
+      if (!/^\\d+$/.test(txt)) continue;
+      const n = parseInt(txt, 10);
+      if (!Number.isFinite(n) || n < 1) continue;
+      const titleEl = inner.querySelector('.recipe-step__title-container');
+      const label = titleEl ? (titleEl.textContent || '').replace(/\\s+/g, ' ').trim() : '';
+      out.push({ number: n, label: label });
     }
     out.sort((a, b) => a.number - b.number);
-    return out;
+    // De-dupe by step number (keep first occurrence).
+    const seenN = new Set();
+    const final = [];
+    for (const s of out) {
+      if (seenN.has(s.number)) continue;
+      seenN.add(s.number);
+      final.push(s);
+    }
+    return final;
   } catch (e) {
     return { __error: String(e && e.message || e) };
   }

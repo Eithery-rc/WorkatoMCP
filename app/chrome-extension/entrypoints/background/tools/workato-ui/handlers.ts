@@ -37,6 +37,8 @@ import {
 } from './dom-helpers';
 import type {
   AddStepArgs,
+  AXNode,
+  CreateRecipeArgs,
   EnterEditModeArgs,
   ExitEditModeArgs,
   FocusStepArgs,
@@ -255,6 +257,42 @@ class WorkatoUiListStepsImpl extends BaseBrowserToolExecutor {
 // workato_ui_focus_step
 // ---------------------------------------------------------------------------
 
+/**
+ * Page-side click helper for focus_step. Given a step number, walks up from the
+ * .recipe-step__number-button (26px bubble) to the .recipe-step card, then
+ * clicks the .recipe-step__title-container (418px title div) with the full
+ * mouse sequence (mousedown+mouseup+click — Workato listens for mousedown).
+ * Returns { ok: true, cmCountBefore } or { ok: false, error }.
+ */
+const FOCUS_STEP_PAGE_FN = `
+((stepNumber) => {
+  try {
+    const buttons = Array.from(document.querySelectorAll('.recipe-step__number-button'));
+    let bubble = null;
+    for (const b of buttons) {
+      const txt = (b.textContent || '').trim();
+      if (txt === String(stepNumber)) { bubble = b; break; }
+    }
+    if (!bubble) return { ok: false, error: 'no .recipe-step__number-button with text=' + stepNumber };
+    const card = bubble.closest('.recipe-step');
+    if (!card) return { ok: false, error: 'could not walk from bubble up to .recipe-step card' };
+    const title = card.querySelector('.recipe-step__title-container');
+    if (!title) return { ok: false, error: 'no .recipe-step__title-container inside the step card' };
+    const r = title.getBoundingClientRect();
+    const cx = r.x + r.width / 2;
+    const cy = r.y + r.height / 2;
+    for (const t of ['mousedown', 'mouseup', 'click']) {
+      title.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: 1, detail: 1 }));
+    }
+    return { ok: true, cmCountBefore: document.querySelectorAll('.CodeMirror').length };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+})
+`;
+
+const CM_COUNT_SNIPPET = `document.querySelectorAll('.CodeMirror').length`;
+
 class WorkatoUiFocusStepImpl extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.WORKATO_UI.FOCUS_STEP;
 
@@ -269,6 +307,9 @@ class WorkatoUiFocusStepImpl extends BaseBrowserToolExecutor {
       const tabId = await resolveTabId(args);
       await ensureAttached(tabId);
 
+      // Locate via AX tree first to verify the step bubble exists with the
+      // expected number — but click the .recipe-step__title-container (not the
+      // bubble button, which doesn't open the panel for saved steps).
       const nodes = await getAxTree(tabId);
       const candidates = findAllAxNodes(nodes, {
         role: 'button',
@@ -280,17 +321,31 @@ class WorkatoUiFocusStepImpl extends BaseBrowserToolExecutor {
         );
       }
 
-      await clickByAxNode(tabId, candidates[0]);
+      const expr = `(${FOCUS_STEP_PAGE_FN})(${JSON.stringify(args.step_number)})`;
+      const clickResult = await evaluateInPage<{
+        ok: boolean;
+        cmCountBefore?: number;
+        error?: string;
+      }>(tabId, expr);
+      if (!clickResult?.ok) {
+        return createErrorResponse(
+          `workato_ui_focus_step: ${clickResult?.error ?? 'unknown error clicking title'}`,
+        );
+      }
 
-      // Wait for a config-panel heading to appear (heuristic: any role=heading
-      // after the click). Tighter heuristics depend on knowing the action name,
-      // which the caller can verify itself via list_steps.
-      const before = Date.now();
-      await pollUntil(
+      // Verify the config panel opened: poll for CodeMirror count > 0 (and
+      // ideally greater than the pre-click count). Saved-step panels always
+      // surface at least one CodeMirror editor for the action's primary input.
+      const cmBefore = clickResult.cmCountBefore ?? 0;
+      const start = Date.now();
+      const settled = await pollUntil(
         async () => {
           try {
-            const ns = await getAxTree(tabId);
-            return findAxNode(ns, { role: 'heading' }) !== null;
+            const count = await evaluateInPage<number>(tabId, CM_COUNT_SNIPPET);
+            if (typeof count === 'number' && count > 0 && count >= cmBefore) {
+              return { elapsedMs: Date.now() - start, count };
+            }
+            return false;
           } catch {
             return false;
           }
@@ -298,11 +353,17 @@ class WorkatoUiFocusStepImpl extends BaseBrowserToolExecutor {
         { timeoutMs: 3000, intervalMs: 200 },
       );
 
+      if (!settled) {
+        return createErrorResponse(
+          `workato_ui_focus_step: clicked title for step ${args.step_number} but no CodeMirror panel appeared within 3s`,
+        );
+      }
+
       return {
         content: [
           {
             type: 'text',
-            text: `focused step ${args.step_number} (panel settled in ${Date.now() - before}ms)`,
+            text: `focused step ${args.step_number} (panel settled in ${settled.elapsedMs}ms, CodeMirror count=${settled.count})`,
           },
         ],
         isError: false,
@@ -447,6 +508,16 @@ class WorkatoUiAddStepImpl extends BaseBrowserToolExecutor {
       await sendCommand(tabId, 'Input.insertText', { text: args.app });
       await sleep(400); // let the list filter
 
+      // Snapshot step count + CodeMirror count BEFORE the app click so we can
+      // detect single-action apps (e.g. Logger) where Workato auto-completes
+      // the step the moment the app is picked — no action-button list ever
+      // renders.
+      const stepsBefore = await evaluateInPage<StepInfo[]>(tabId, LIST_STEPS_SNIPPET).catch(
+        () => [] as StepInfo[],
+      );
+      const stepCountBefore = Array.isArray(stepsBefore) ? stepsBefore.length : 0;
+      const cmCountBefore = await evaluateInPage<number>(tabId, CM_COUNT_SNIPPET).catch(() => 0);
+
       // Step 5: click the app button.
       const appNodes = await pollUntil(
         async () => {
@@ -471,45 +542,110 @@ class WorkatoUiAddStepImpl extends BaseBrowserToolExecutor {
       }
       await clickByAxNode(tabId, appNodes[0]);
 
-      // Step 6: wait for action picker — buttons whose names are action names.
-      // The action panel appears in the same side panel. We poll until a
-      // button matching `action` is present.
-      const actionMatches = await pollUntil(
+      // Step 6: poll briefly (~600ms) to see if Workato renders an action
+      // picker. If it never appears in that window, treat this as an
+      // auto-completed single-action app (e.g. Logger) and skip to
+      // verification. Only error if action buttons DO appear but none match.
+      type ActionPollResult =
+        | { kind: 'matched'; nodes: AXNode[] }
+        | { kind: 'no-match'; sample: string[] };
+      const actionPoll = await pollUntil<ActionPollResult>(
         async () => {
           const ns = await getAxTree(tabId);
-          const btns = findAllAxNodes(ns, {
-            role: 'button',
-            nameContains: args.action,
-          });
-          const filtered = btns.filter((b) => {
+          const allBtns = findAllAxNodes(ns, { role: 'button' }).filter((b) => {
             const nm = axName(b).toLowerCase();
-            return !nm.includes('add step') && !nm.includes('search');
+            return nm && !nm.includes('add step') && !nm.includes('search');
           });
-          return filtered.length > 0 ? filtered : null;
+          // Restrict to buttons we'd consider candidates for "action picker
+          // entries". The app-picker app buttons should have already gone away
+          // after the app click; we look for any new button list.
+          const matching = allBtns.filter((b) => {
+            const nm = axName(b).toLowerCase();
+            return nm.includes(args.action.toLowerCase());
+          });
+          if (matching.length > 0) {
+            return { kind: 'matched', nodes: matching };
+          }
+          // If buttons in general appeared but none match, keep polling — but
+          // signal a no-match result so callers can collect a sample.
+          if (allBtns.length > 0) {
+            // Don't return yet; let pollUntil keep trying — many such buttons
+            // are unrelated chrome (sidebar nav etc). We only treat "no match"
+            // as definitive after the poll window ends.
+            return false;
+          }
+          return false;
         },
-        { timeoutMs: 6000, intervalMs: 250 },
+        { timeoutMs: 600, intervalMs: 100 },
       );
-      if (!actionMatches) {
+
+      if (actionPoll && actionPoll.kind === 'matched') {
+        await clickByAxNode(tabId, actionPoll.nodes[0]);
+      } else {
+        // No matching action button surfaced in the 600ms window. Two cases:
+        //   1. Auto-completion (single-action app): no action picker rendered.
+        //   2. Picker rendered but our `action` arg doesn't match any item.
+        // We disambiguate by collecting any action-list buttons that DID
+        // appear, AFTER the poll window.
+        const finalTree = await getAxTree(tabId);
+        const finalBtns = findAllAxNodes(finalTree, { role: 'button' }).filter((b) => {
+          const nm = axName(b).toLowerCase();
+          return nm && !nm.includes('add step') && !nm.includes('search');
+        });
+        const looksLikeActionPicker = finalBtns.some((b) => {
+          // crude heuristic: action picker entries are typically several lines
+          // tall and include verbs like "Get", "Create", "List", "Send", "Log".
+          const nm = axName(b);
+          return /\b(get|create|update|delete|list|search|send|log|trigger|run|fetch|post)\b/i.test(
+            nm,
+          );
+        });
+        if (looksLikeActionPicker) {
+          const sample = finalBtns.slice(0, 8).map((b) => axName(b));
+          return createErrorResponse(
+            `workato_ui_add_step: action picker is visible but no button matches "${args.action}" ` +
+              `(app="${args.app}"). Sample buttons: ${JSON.stringify(sample)}`,
+          );
+        }
+        // Likely auto-completion. Fall through to verification below.
+      }
+
+      // Step 7: verify the step was added — either step count increased OR a
+      // fresh config panel appeared (CodeMirror count went up).
+      await sleep(600);
+      const verified = await pollUntil(
+        async () => {
+          const stepsNow = await evaluateInPage<StepInfo[]>(tabId, LIST_STEPS_SNIPPET).catch(
+            () => [] as StepInfo[],
+          );
+          const stepCountNow = Array.isArray(stepsNow) ? stepsNow.length : 0;
+          const cmCountNow = await evaluateInPage<number>(tabId, CM_COUNT_SNIPPET).catch(() => 0);
+          if (stepCountNow > stepCountBefore || cmCountNow > cmCountBefore) {
+            return { stepsNow, stepCountNow, cmCountNow };
+          }
+          return false;
+        },
+        { timeoutMs: 4000, intervalMs: 250 },
+      );
+
+      if (!verified) {
         return createErrorResponse(
-          `workato_ui_add_step: no action button matching "${args.action}" found after picking app "${args.app}"`,
+          `workato_ui_add_step: app "${args.app}" was clicked but no new step or config panel appeared ` +
+            `(step count stayed at ${stepCountBefore}, CodeMirror count stayed at ${cmCountBefore})`,
         );
       }
-      await clickByAxNode(tabId, actionMatches[0]);
 
-      // Step 7: re-list steps to discover the new step number.
-      await sleep(600);
-      const stepsAfter = await evaluateInPage<StepInfo[]>(tabId, LIST_STEPS_SNIPPET).catch(
-        () => [] as StepInfo[],
-      );
-      const newStepNum = Array.isArray(stepsAfter)
-        ? Math.max(args.after_step + 1, ...stepsAfter.map((s) => s.number))
-        : args.after_step + 1;
+      const stepsAfter = Array.isArray(verified.stepsNow) ? verified.stepsNow : [];
+      const newStepNum =
+        stepsAfter.length > 0
+          ? Math.max(args.after_step + 1, ...stepsAfter.map((s) => s.number))
+          : args.after_step + 1;
 
       return {
         content: [
           {
             type: 'text',
-            text: `added step ${newStepNum} (${args.app} → ${args.action})`,
+            text: `added step ${newStepNum} (${args.app} -> ${args.action})`,
           },
         ],
         isError: false,
@@ -607,6 +743,14 @@ const SET_FIELD_PAGE_FN = `
     // and lazy-instantiates CodeMirror on user interaction. If we see the
     // preview, click to promote it to the live editor, then wait briefly for
     // the .CodeMirror instance to attach.
+    function fireMouseSeq(el) {
+      const r = el.getBoundingClientRect();
+      const cx = r.x + r.width / 2;
+      const cy = r.y + r.height / 2;
+      for (const t of ['mousedown', 'mouseup', 'click']) {
+        el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: 1, detail: 1 }));
+      }
+    }
     const findCmRoot = () =>
       wrapper.classList && wrapper.classList.contains('CodeMirror')
         ? wrapper
@@ -615,11 +759,9 @@ const SET_FIELD_PAGE_FN = `
     if (cmRoot && !cmRoot.CodeMirror) {
       const container = wrapper.closest('w-form-field') || wrapper.closest('[class~="form-field"]') || wrapper.parentElement;
       const preview = container && container.querySelector('w-text-field-preview, [class*="text-field-preview"], [class*="text-field__preview"]');
-      if (preview && typeof preview.click === 'function') {
-        preview.click();
-      } else if (typeof cmRoot.click === 'function') {
-        cmRoot.click();
-      }
+      // Workato listens for mousedown (not click) to promote the preview into a
+      // live CodeMirror instance — dispatch the full mouse sequence.
+      fireMouseSeq(preview || cmRoot);
       // Wait up to 1.5s for the CodeMirror instance to attach.
       const start = Date.now();
       while (Date.now() - start < 1500) {
@@ -822,6 +964,35 @@ const INSERT_DATAPILL_PAGE_FN = `
     }
   }
 
+  function fireMouseSeq(el) {
+    const r = el.getBoundingClientRect();
+    const cx = r.x + r.width / 2;
+    const cy = r.y + r.height / 2;
+    for (const t of ['mousedown', 'mouseup', 'click']) {
+      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: 1, detail: 1 }));
+    }
+  }
+
+  function switchToFormulaMode(wrapper) {
+    // Find the formula switcher tabs ("Text" / "Formula"). When the field is
+    // in Text mode, Workato escapes a leading "=" as a backslash-escape on
+    // save — switching to Formula mode keeps the formula as-is.
+    const container = wrapper.closest('w-form-field') || wrapper.closest('[class~="form-field"]') || wrapper.parentElement;
+    if (!container) return false;
+    const items = Array.from(container.querySelectorAll('.formula-switcher__item, [class*="formula-switcher"] [class*="item"]'));
+    if (items.length === 0) return false;
+    for (const item of items) {
+      const t = (item.textContent || '').trim().toLowerCase();
+      if (!t.startsWith('formula')) continue;
+      const cls = (item.className || '') + '';
+      const isActive = cls.includes('formula-switcher__item_active') || cls.includes('active') || item.getAttribute('aria-selected') === 'true';
+      if (isActive) return true;
+      fireMouseSeq(item);
+      return true;
+    }
+    return false;
+  }
+
   async function writeFormula(wrapper, formula) {
     const findCm = () =>
       wrapper.classList && wrapper.classList.contains('CodeMirror')
@@ -833,8 +1004,8 @@ const INSERT_DATAPILL_PAGE_FN = `
     if (cmRoot && !cmRoot.CodeMirror) {
       const container = wrapper.closest('w-form-field') || wrapper.closest('[class~="form-field"]') || wrapper.parentElement;
       const preview = container && container.querySelector('w-text-field-preview, [class*="text-field-preview"], [class*="text-field__preview"]');
-      if (preview && typeof preview.click === 'function') preview.click();
-      else if (typeof cmRoot.click === 'function') cmRoot.click();
+      // Workato listens for mousedown (not click) to promote the preview.
+      fireMouseSeq(preview || cmRoot);
       const start = Date.now();
       while (Date.now() - start < 1500) {
         await new Promise(r => setTimeout(r, 50));
@@ -842,6 +1013,11 @@ const INSERT_DATAPILL_PAGE_FN = `
         if (cmRoot && cmRoot.CodeMirror) break;
       }
     }
+    // Switch the field into Formula mode so a leading "=" is not escaped on
+    // save. Give Workato a tick to swap the editor in.
+    switchToFormulaMode(wrapper);
+    await new Promise(r => setTimeout(r, 200));
+    cmRoot = findCm();
     if (cmRoot && cmRoot.CodeMirror) {
       cmRoot.CodeMirror.focus();
       cmRoot.CodeMirror.setValue(formula);
@@ -1163,6 +1339,201 @@ class WorkatoUiExitEditModeImpl extends BaseBrowserToolExecutor {
 }
 
 // ---------------------------------------------------------------------------
+// workato_ui_create_recipe
+// ---------------------------------------------------------------------------
+
+/**
+ * Page-side helper that POSTs to /web_api/projects.json and/or /recipes.json
+ * using the active Workato tab's authenticated session. The CSRF token is
+ * read from the page's <meta name="csrf-token"> tag, so the request inherits
+ * the user's cookies + organization context without us re-implementing auth.
+ *
+ * IMPORTANT: do NOT set Content-Encoding: gzip even though the captured
+ * browser request shows it — the body is sent plain. The captured header
+ * is a downstream artifact; sending gzip-encoded body gets rejected.
+ *
+ * Returns: { ok: true, recipe_id, folder_id, name, url } | { ok: false, error, stage }
+ */
+const CREATE_RECIPE_PAGE_FN = `
+(async (name, providedFolderId, projectName, description) => {
+  try {
+    const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    const csrf = csrfMeta && csrfMeta.getAttribute('content');
+    if (!csrf) {
+      return { ok: false, stage: 'csrf', error: 'could not find CSRF token; ensure the active tab is a Workato page' };
+    }
+
+    let folderId = (typeof providedFolderId === 'number' && Number.isFinite(providedFolderId)) ? providedFolderId : null;
+    const desc = (typeof description === 'string') ? description : '';
+
+    if (folderId === null) {
+      if (!projectName || typeof projectName !== 'string') {
+        return { ok: false, stage: 'args', error: 'either folder_id or project_name is required' };
+      }
+      const projRes = await fetch('/web_api/projects.json', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'content-type': 'application/json',
+          'x-csrf-token': csrf,
+          'x-requested-with': 'XMLHttpRequest',
+          'accept': 'application/json',
+        },
+        body: JSON.stringify({ name: projectName, description: desc }),
+      });
+      if (!projRes.ok) {
+        const t = await projRes.text().catch(() => '');
+        return { ok: false, stage: 'create_project', error: 'POST /web_api/projects.json failed: HTTP ' + projRes.status + ' ' + t.slice(0, 400) };
+      }
+      const projJson = await projRes.json().catch(() => null);
+      const r = projJson && projJson.result;
+      if (!r || typeof r.folder_id !== 'number') {
+        return { ok: false, stage: 'create_project', error: 'project response missing result.folder_id: ' + JSON.stringify(projJson).slice(0, 400) };
+      }
+      folderId = r.folder_id;
+    }
+
+    const initialCode = JSON.stringify({
+      number: 0,
+      keyword: 'trigger',
+      input: {},
+      block: [],
+      uuid: (crypto && typeof crypto.randomUUID === 'function')
+        ? crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = (Math.random() * 16) | 0;
+            return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+          }),
+      unfinished: false,
+    });
+
+    const recipeBody = {
+      flow: {
+        name: name,
+        description: '',
+        visibility_private: false,
+        code: initialCode,
+        config: '[]',
+        worker_concurrency: 1,
+        folder_id: folderId,
+      },
+    };
+
+    const recRes = await fetch('/recipes.json', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'x-csrf-token': csrf,
+        'x-requested-with': 'XMLHttpRequest',
+        'accept': 'application/json',
+      },
+      body: JSON.stringify(recipeBody),
+    });
+    if (!recRes.ok) {
+      const t = await recRes.text().catch(() => '');
+      return { ok: false, stage: 'create_recipe', error: 'POST /recipes.json failed: HTTP ' + recRes.status + ' ' + t.slice(0, 400) };
+    }
+    const recJson = await recRes.json().catch(() => null);
+    const flow = recJson && recJson.result && recJson.result.flow;
+    if (!flow || typeof flow.id !== 'number') {
+      return { ok: false, stage: 'create_recipe', error: 'recipe response missing result.flow.id: ' + JSON.stringify(recJson).slice(0, 400) };
+    }
+
+    return {
+      ok: true,
+      recipe_id: flow.id,
+      folder_id: folderId,
+      name: flow.name || name,
+      url: location.origin + '/recipes/' + flow.id + '/edit',
+    };
+  } catch (e) {
+    return { ok: false, stage: 'exception', error: String(e && e.message || e) };
+  }
+})
+`;
+
+class WorkatoUiCreateRecipeImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_UI.CREATE_RECIPE;
+
+  async execute(args: CreateRecipeArgs): Promise<ToolResult> {
+    console.log('[workato-ui] create_recipe requested:', args);
+    try {
+      if (!args?.name || typeof args.name !== 'string') {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': name (string) is required',
+        );
+      }
+      const hasFolderId = typeof args.folder_id === 'number' && Number.isFinite(args.folder_id);
+      const hasProjectName = typeof args.project_name === 'string' && args.project_name.length > 0;
+      if (!hasFolderId && !hasProjectName) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS +
+            ': either folder_id (number) or project_name (string) is required',
+        );
+      }
+
+      const tabId = await resolveTabId(args);
+      // We don't need ensureAttached for this tool — Runtime.evaluate goes via
+      // CDP debugger, but a plain Runtime.evaluate without prior attach would
+      // need DOM/Runtime domains enabled. Reuse the standard path for safety.
+      await ensureAttached(tabId);
+
+      const url = await getTabUrl(tabId);
+      if (!/workato\.(com|is)/.test(url)) {
+        return createErrorResponse(
+          `workato_ui_create_recipe: active tab is not a Workato page (url=${url}). ` +
+            `Open a Workato tab and sign in first.`,
+        );
+      }
+
+      const expr = `(${CREATE_RECIPE_PAGE_FN})(${JSON.stringify(args.name)}, ${JSON.stringify(
+        hasFolderId ? args.folder_id : null,
+      )}, ${JSON.stringify(hasProjectName ? args.project_name : null)}, ${JSON.stringify(
+        args.description ?? '',
+      )})`;
+
+      const result = await evaluateInPage<{
+        ok: boolean;
+        stage?: string;
+        error?: string;
+        recipe_id?: number;
+        folder_id?: number;
+        name?: string;
+        url?: string;
+      }>(tabId, expr, { awaitPromise: true });
+
+      if (!result?.ok) {
+        return createErrorResponse(
+          `workato_ui_create_recipe: ${result?.error ?? 'unknown error'}` +
+            (result?.stage ? ` (stage=${result.stage})` : ''),
+        );
+      }
+
+      const payload = {
+        recipe_id: result.recipe_id,
+        folder_id: result.folder_id,
+        url: result.url,
+      };
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `created recipe ${result.recipe_id} at ${result.url}\n${JSON.stringify(payload)}`,
+          },
+        ],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-ui] create_recipe failed:', error);
+      return createErrorResponse(
+        `workato_ui_create_recipe failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Exports — runtime instances (tools/index.ts reads `.name`).
 // ---------------------------------------------------------------------------
 
@@ -1182,3 +1553,4 @@ export const WorkatoUiSetFieldTool = new WorkatoUiSetFieldImpl();
 export const WorkatoUiInsertDatapillTool = new WorkatoUiInsertDatapillImpl();
 export const WorkatoUiSaveRecipeTool = new WorkatoUiSaveRecipeImpl();
 export const WorkatoUiExitEditModeTool = new WorkatoUiExitEditModeImpl();
+export const WorkatoUiCreateRecipeTool = new WorkatoUiCreateRecipeImpl();
