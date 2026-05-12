@@ -318,29 +318,82 @@ With error:
 
 **This is the missing piece for foreach-over-typed-list workflows.** The `source` of a foreach must be a **list datapill**, not a literal `=['a','b','c']`. To get one, declare a typed list with `declare_list` and (usually) populate via `insert_to_list` or inline `list_items`.
 
-### declare_list — `name:"declare_list"`
+### declare_list — `name:"declare_list"` (verified end-to-end 2026-05-12)
+
+Complete shape — pre-populated list, ready for foreach iteration:
 
 ```json
 {
-  "as": "fd7c15ca",
+  "as": "641f89e1",
   "keyword": "action",
   "name": "declare_list",
   "provider": "workato_variable",
-  "number": 111,
+  "number": 1,
   "input": {
-    "name": "Asset Detail",
-    "list_item_schema_json": "[{\"control_type\":\"text\",\"label\":\"Order Item Number\",\"name\":\"OrderItemNumber\",\"type\":\"string\",\"optional\":true},{\"control_type\":\"text\",\"label\":\"System Id\",\"name\":\"SystemId\",\"type\":\"string\",\"optional\":true}]"
-  }
+    "name": "Items",
+    "list_item_schema_json": "[{\"name\":\"value\",\"type\":\"string\",\"optional\":false,\"control_type\":\"text\",\"label\":\"Value\"}]",
+    "list_items": [{ "value": "apple" }, { "value": "banana" }, { "value": "cherry" }]
+  },
+  "extended_input_schema": [
+    {
+      "label": "Items",
+      "name": "list_items",
+      "of": "object",
+      "optional": true,
+      "properties": [
+        {
+          "control_type": "text",
+          "label": "Value",
+          "name": "value",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "type": "array"
+    }
+  ],
+  "extended_output_schema": [
+    {
+      "label": "Items",
+      "name": "list_items",
+      "of": "object",
+      "optional": false,
+      "properties": [
+        {
+          "control_type": "text",
+          "label": "Value",
+          "name": "value",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "type": "array"
+    }
+  ]
 }
 ```
 
-| Input                   | Required | Notes                                                                                                                                                   |
-| ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                  | yes      | Human label ("Asset Detail")                                                                                                                            |
-| `list_item_schema_json` | yes      | **String-encoded JSON array** of field defs. Each: `{name, type, control_type, label, optional}`. Use `type:"string", control_type:"text"` for strings. |
-| `list_items`            | optional | Inline pre-population. Same shape as `add_row_v4_bulk.rows` (`____source` + per-field mappings). Omit to start empty.                                   |
+| Input                   | Required | Notes                                                                                                                                                               |
+| ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                  | yes      | Human label ("Items")                                                                                                                                               |
+| `list_item_schema_json` | yes      | **String-encoded JSON array** of field defs. Each: `{name, type, control_type, label, optional}`. Use `type:"string", control_type:"text"` for strings.             |
+| `list_items`            | optional | Inline pre-population as a **real JSON array** of objects matching `list_item_schema_json` field names. No `____source` wrapper — just `[{value:"a"},{value:"b"}]`. |
 
-**The list is referenced downstream as `"<declare_list.uuid>:<declare_list.as>"`** (e.g. `"fda41c1c-b715-4c30-8094-5974415c2b40:fd7c15ca"`) — that's the value `insert_to_list.input.name` takes. As a datapill, use `provider:"workato_variable", line:"<as>", path:[...]`.
+**CRITICAL — silent strip risk:** Workato persists `input.list_items` ONLY if you also include `extended_input_schema` declaring a `list_items` array field. Without it, the save reports `code_errors:[]` but the items are SILENTLY DROPPED on readback.
+
+**For foreach to source this list**, you MUST also include `extended_output_schema` with the same `list_items` array shape. Without it, foreach.source fails with `"Unknown data field 'List items' used in source"`.
+
+**Datapill to reference the list** from a downstream foreach:
+
+```
+"#{_dp('{\"pill_type\":\"output\",\"provider\":\"workato_variable\",\"line\":\"<declare_list.as>\",\"path\":[\"list_items\"]}')}"
+```
+
+- `line` is the **`as`** (8 hex chars), NOT the `<uuid>:<as>` composite.
+- `path` is `["list_items"]` (the literal field name from extended_output_schema).
+- Inside the foreach: `provider:"foreach", line:"<foreach.as>", path:["value"]` (or whatever list_item field name).
+
+`insert_to_list` (alternative to inline `list_items`): still uses the `"<declare_list.uuid>:<declare_list.as>"` composite for `input.name` — that's a separate lookup format, not the datapill format.
 
 ### insert_to_list — `name:"insert_to_list"`
 
@@ -567,6 +620,21 @@ Bulk update: `input.object`, `input.csv_data.{csv,csv_columns,col_sep,skip_first
 
 `flow_id` is the target recipe id **as a string**. `parameters` must match the target trigger's `parameters_schema_json`. Outputs available under `provider:"workato_recipe_function", line:"<as>", path:[...]`.
 
+**Silent-strip rule applies here too** — `input.parameters` is dropped on save unless you include the matching `extended_input_schema`:
+
+```json
+"extended_input_schema": [{
+  "label": "Parameters",
+  "name": "parameters",
+  "properties": [
+    { "control_type": "text", "label": "value", "name": "value", "optional": false, "type": "string" }
+  ],
+  "type": "object"
+}]
+```
+
+Each parameter in the target's `parameters_schema_json` becomes one entry in `properties[]`.
+
 ---
 
 ## Common patterns
@@ -587,16 +655,28 @@ Bulk update: `input.object`, `input.csv_data.{csv,csv_columns,col_sep,skip_first
 
 ### `as` and UUID
 
-- `as` is an 8-hex-char id (`"7a8394a3"`) used as the datapill `line`. Required on every node that produces output (triggers, most actions, foreach, repeat, catch, stop).
-- `uuid` is the full UUID; the API tolerates omitting it on simple action shapes but every saved recipe has it. Generate with `crypto.randomUUID()`.
+- `as` is **exactly 8 lowercase hex chars** (`/^[0-9a-f]{8}$/`) — e.g. `"7a8394a3"`, `"641f89e1"`. Required on every node that produces output. Used as the datapill `line`.
+- **Workato silently rejects non-hex `as` values.** E.g. `"declare1"` (contains `l` which is not hex) is treated as an invalid identifier; foreach.source pointing at such an `as` will fail with `"Unknown data field <Capitalized>"`. Always use proper hex like `crypto.randomBytes(4).toString('hex')`.
+- `uuid` is the full UUID v4; the API tolerates omitting it on simple action shapes but every saved recipe has it. Generate with `crypto.randomUUID()`.
 
 ### `version.config` deduplication
 
 Each distinct `provider` used in the recipe gets one entry. System providers (`logger`, `workato_recipe_function`, `workato_variable`, `workato_pub_sub`, `clock`, `csv_parser`, `py_eval`) omit `account_id`; connection-based providers include it.
 
-### Optional metadata keys (safe to omit on creation; Workato re-hydrates)
+### Extended schemas — NOT safe to omit (silent-strip rule)
 
-`title`, `description`, `comment`, `skip`, `dynamicPickListSelection`, `extended_input_schema`, `extended_output_schema`, `visible_config_fields`, `toggleCfg`, `requirements`.
+`extended_input_schema` and `extended_output_schema` are **NOT** universally safe to omit. The rule:
+
+- **`extended_input_schema` is REQUIRED** whenever `input` contains non-trivial structured fields that aren't part of the action's _base_ schema. Examples observed: `declare_list.input.list_items` (array), `call_recipe.input.parameters` (object). Without the matching `extended_input_schema` entry, Workato accepts the save (`code_errors:[]`) but **silently drops those fields** on readback.
+- **`extended_output_schema` is REQUIRED** on any step whose output is referenced by a downstream `_dp(...)` datapill into a non-trivial path. Without it, the referencing step fails validation with `"Unknown data field 'X' used in <field>"`.
+
+Trivial inputs (a single string field on a base-schema field like `logger.input.message`) **don't** need extended schemas. The danger zone is structured/array inputs and any output that gets sourced by foreach/datapill references.
+
+When writing the schema, mirror the shape Workato itself emits: `{label, name, type, of?, properties[], control_type?, optional?, hint?}`. The `name` must match the key under `input` (input schema) or the path segment (output schema).
+
+### Genuinely optional metadata keys (safe to omit on creation)
+
+`title`, `description`, `comment`, `skip`, `dynamicPickListSelection`, `visible_config_fields`, `toggleCfg`, `requirements`.
 
 ### Not observed (TODO)
 
@@ -625,3 +705,6 @@ Common mistakes:
 - Inlining `=['a','b','c']` as foreach `source` instead of using a Variables `declare_list` + datapill reference.
 - Using `keyword:"repeat_while"` (there's no such thing — use `repeat` with a `while_condition` first child).
 - Treating `else` as nested inside `if` (they're siblings).
+- **Using a non-hex `as`** (e.g. `"caller00"`, `"declare1"`). Must be `/^[0-9a-f]{8}$/`.
+- **Omitting `extended_output_schema`** on a step whose output is referenced by a downstream datapill — the reference fails validation.
+- **Omitting `extended_input_schema`** when writing structured `input` fields (arrays, nested objects) — Workato silently drops them on save. Symptom: `code_errors:[]` but `pull_recipe` shows the data is gone.
