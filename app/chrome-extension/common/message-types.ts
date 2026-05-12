@@ -55,26 +55,6 @@ export const BACKGROUND_MESSAGE_TYPES = {
   // Element picker (human-in-the-loop element selection)
   ELEMENT_PICKER_UI_EVENT: 'element_picker_ui_event',
   ELEMENT_PICKER_FRAME_EVENT: 'element_picker_frame_event',
-  // Web editor (in-page visual editing)
-  WEB_EDITOR_TOGGLE: 'web_editor_toggle',
-  WEB_EDITOR_APPLY: 'web_editor_apply',
-  WEB_EDITOR_STATUS_QUERY: 'web_editor_status_query',
-  // Web editor <-> AgentChat integration (Phase 1.1)
-  WEB_EDITOR_APPLY_BATCH: 'web_editor_apply_batch',
-  WEB_EDITOR_TX_CHANGED: 'web_editor_tx_changed',
-  WEB_EDITOR_HIGHLIGHT_ELEMENT: 'web_editor_highlight_element',
-  // Web editor <-> AgentChat integration (Phase 2 - Revert)
-  WEB_EDITOR_REVERT_ELEMENT: 'web_editor_revert_element',
-  // Web editor <-> AgentChat integration - Selection sync
-  WEB_EDITOR_SELECTION_CHANGED: 'web_editor_selection_changed',
-  // Web editor <-> AgentChat integration - Clear selection (sidepanel -> web-editor)
-  WEB_EDITOR_CLEAR_SELECTION: 'web_editor_clear_selection',
-  // Web editor <-> AgentChat integration - Cancel execution
-  WEB_EDITOR_CANCEL_EXECUTION: 'web_editor_cancel_execution',
-  // Web editor props (Phase 7.1.6 early injection)
-  WEB_EDITOR_PROPS_REGISTER_EARLY_INJECTION: 'web_editor_props_register_early_injection',
-  // Web editor props - open source file in VSCode
-  WEB_EDITOR_OPEN_SOURCE: 'web_editor_open_source',
   // Quick Panel <-> AgentChat integration
   QUICK_PANEL_SEND_TO_AI: 'quick_panel_send_to_ai',
   QUICK_PANEL_CANCEL_AI: 'quick_panel_cancel_ai',

@@ -1,7 +1,6 @@
 import { initNativeHostListener } from './native-host';
 import { initRecordReplayListeners } from './record-replay';
 import { initElementMarkerListeners } from './element-marker';
-import { initWebEditorListeners } from './web-editor';
 import { initQuickPanelAgentHandler } from './quick-panel/agent-handler';
 import { initQuickPanelCommands } from './quick-panel/commands';
 import { initQuickPanelTabsHandler } from './quick-panel/tabs-handler';
@@ -48,8 +47,6 @@ export default defineBackground(() => {
 
   // Element marker: context menu + CRUD listeners
   initElementMarkerListeners();
-  // Web editor: toggle edit-mode overlay
-  initWebEditorListeners();
   // Quick Panel: send messages to AgentChat via background-stream bridge
   initQuickPanelAgentHandler();
   // Quick Panel: tabs search bridge for content script UI
