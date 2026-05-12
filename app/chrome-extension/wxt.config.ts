@@ -34,7 +34,7 @@ export default defineConfig({
   manifest: {
     // Use environment variable for the key, fallback to undefined if not set
     key: CHROME_EXTENSION_KEY,
-    default_locale: 'zh_CN',
+    default_locale: 'en',
     name: '__MSG_extensionName__',
     description: '__MSG_extensionDescription__',
     permissions: [
@@ -63,7 +63,7 @@ export default defineConfig({
     },
     action: {
       default_popup: 'popup.html',
-      default_title: 'Chrome MCP Server',
+      default_title: 'WorkatoMCP',
     },
     // Chrome Side Panel entry for workflow management
     // Ref: https://developer.chrome.com/docs/extensions/reference/api/sidePanel
