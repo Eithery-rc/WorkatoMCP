@@ -104,7 +104,7 @@ Anything else (e.g. `add_record`, `upsert_record`, `delete_record`, `__adhoc_htt
 
 **Discovering `action_name` values.** Every step in a recipe has a `name` field that's a valid `action_name`. Pull a representative recipe with `workato_pull_recipe` and read its step structure. Common confirmed names:
 
-- `__adhoc_http_action` — arbitrary HTTP via any HTTP-capable connector (SFDC, NS REST, SAP, etc.). Input: `{verb, path, response_type, request_headers?, inspect?}`.
+- `__adhoc_http_action` — arbitrary HTTP via any HTTP-capable connector (SFDC, NS REST, SAP, etc.). Input: `{mnemonic, verb, path, response_type, inspect, request_headers?}`. **Both `mnemonic: "Custom action"` and `inspect: true` are required** — Workato rejects with `WorkatoConnectorError: 'Action name' must be present` if either is missing.
 - `execute_suiteql` — SuiteQL query on NetSuite. Input: `{query}`.
 - `search_sobjects_soql_v2` — SOQL search on Salesforce. Input: `{query, output_schema, ...}`.
 
