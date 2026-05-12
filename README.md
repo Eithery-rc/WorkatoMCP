@@ -199,7 +199,7 @@ Full design rationale per release:
 `pnpm typecheck` at the root surfaces ~115 pre-existing TypeScript errors in upstream files (`gif-recorder.ts`, `network-capture-web-request.ts`, sidepanel composables, and some `record-replay-v3` test fixtures). These are inherited from `hangwin/mcp-chrome@f48e717` and are not specific to our Workato additions. Our own files (`packages/shared/src/tools.ts`, everything under `app/chrome-extension/entrypoints/background/tools/workato/`) typecheck cleanly. For Workato-only verification use:
 
 ```powershell
-pnpm --filter chrome-mcp-shared exec tsc --noEmit
+pnpm --filter workatomcp-shared exec tsc --noEmit
 pnpm --filter chrome-mcp-server exec tsc --noEmit 2>&1 | Select-String "workato"
 ```
 
