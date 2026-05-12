@@ -1,6 +1,5 @@
 /**
- * @fileoverview 租约管理
- * @description 管理 Run 的租约续约和过期回收
+ * @fileoverview Lease manager — handles run lease heartbeats and expired lease reclamation.
  */
 
 import type { UnixMillis } from '../../domain/json';
@@ -8,57 +7,55 @@ import type { RunId } from '../../domain/ids';
 import type { RunQueue, RunQueueConfig, Lease } from './queue';
 
 /**
- * 租约管理器
- * @description 管理租约续约和过期检测
+ * Manages lease heartbeats and expiry detection.
  */
 export interface LeaseManager {
   /**
-   * 开始心跳
-   * @param ownerId 持有者 ID
+   * Start a heartbeat for the given owner.
+   * @param ownerId Owner ID
    */
   startHeartbeat(ownerId: string): void;
 
   /**
-   * 停止心跳
-   * @param ownerId 持有者 ID
+   * Stop the heartbeat for the given owner.
+   * @param ownerId Owner ID
    */
   stopHeartbeat(ownerId: string): void;
 
   /**
-   * 检查并回收过期租约
-   * @param now 当前时间
-   * @returns 被回收的 Run ID 列表
+   * Reclaim all expired leases and return their run IDs.
+   * @param now Current time
    */
   reclaimExpiredLeases(now: UnixMillis): Promise<RunId[]>;
 
   /**
-   * 判断租约是否过期
+   * Whether a lease has expired.
    */
   isLeaseExpired(lease: Lease, now: UnixMillis): boolean;
 
   /**
-   * 创建新租约
+   * Create a new lease for the given owner.
    */
   createLease(ownerId: string, now: UnixMillis): Lease;
 
   /**
-   * 停止所有心跳
+   * Stop all active heartbeats and release resources.
    */
   dispose(): void;
 }
 
 /**
- * 创建租约管理器
+ * Create a LeaseManager backed by the given RunQueue.
  */
 export function createLeaseManager(queue: RunQueue, config: RunQueueConfig): LeaseManager {
   const heartbeatTimers = new Map<string, ReturnType<typeof setInterval>>();
 
   return {
     startHeartbeat(ownerId: string): void {
-      // 如果已有定时器，先停止
+      // Stop any existing timer first
       this.stopHeartbeat(ownerId);
 
-      // 创建新的心跳定时器
+      // Create a new heartbeat timer
       const timer = setInterval(async () => {
         try {
           await queue.heartbeat(ownerId, Date.now());
@@ -105,8 +102,7 @@ export function createLeaseManager(queue: RunQueue, config: RunQueueConfig): Lea
 }
 
 /**
- * 生成唯一的 owner ID
- * @description 用于标识当前 Service Worker 实例
+ * Generate a unique owner ID to identify the current Service Worker instance.
  */
 export function generateOwnerId(): string {
   return `sw_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;

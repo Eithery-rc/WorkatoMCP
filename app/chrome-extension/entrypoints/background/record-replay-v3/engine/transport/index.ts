@@ -1,5 +1,5 @@
 /**
- * @fileoverview Transport 模块导出入口
+ * @fileoverview Transport module barrel.
  */
 
 export * from './rpc';

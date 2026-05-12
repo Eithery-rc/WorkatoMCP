@@ -1,5 +1,5 @@
 /**
- * @fileoverview Engine Storage 模块导出入口
+ * @fileoverview Engine storage module barrel.
  */
 
 export * from './storage-port';

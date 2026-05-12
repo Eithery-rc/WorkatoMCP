@@ -1,6 +1,5 @@
 /**
- * Selector Locator - 元素定位器
- * 使用选择器候选列表定位 DOM 元素
+ * Selector Locator — locates DOM elements using a prioritized list of selector candidates.
  */
 
 import { TOOL_MESSAGE_TYPES } from '../../common/message-types';
@@ -15,10 +14,6 @@ import {
   type SelectorTarget,
 } from './types';
 import { compareSelectorCandidates, withStability } from './stability';
-
-// ================================
-// 消息类型定义
-// ================================
 
 interface EnsureRefForSelectorRequest {
   action: typeof TOOL_MESSAGE_TYPES.ENSURE_REF_FOR_SELECTOR;
@@ -58,10 +53,6 @@ type VerifyFingerprintResponse =
   | { success: true; match: boolean }
   | { success: false; error?: string };
 
-// ================================
-// 传输层接口
-// ================================
-
 export interface SelectorLocatorTransport {
   sendMessage: (
     tabId: number,
@@ -70,10 +61,6 @@ export interface SelectorLocatorTransport {
   ) => Promise<unknown>;
   getAllFrames?: (tabId: number) => Promise<ReadonlyArray<{ frameId: number; url: string }>>;
 }
-
-// ================================
-// 工具函数
-// ================================
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -212,10 +199,6 @@ function ariaToCssSelectors(role: string | undefined, name: string | undefined):
   return uniqStrings(out);
 }
 
-// ================================
-// SelectorLocator 类
-// ================================
-
 export class SelectorLocator {
   constructor(private readonly transport: SelectorLocatorTransport) {}
 
@@ -261,9 +244,6 @@ export class SelectorLocator {
     return { ref, center: parsed.center, frameId, resolvedBy: 'ref' };
   }
 
-  /**
-   * 验证元素是否匹配给定的指纹
-   */
   private async verifyElementFingerprint(
     tabId: number,
     ref: string,
@@ -286,9 +266,6 @@ export class SelectorLocator {
     }
   }
 
-  /**
-   * 定位元素
-   */
   async locate(
     tabId: number,
     target: SelectorTarget,
@@ -297,13 +274,11 @@ export class SelectorLocator {
     const frameSelector = deriveFrameSelector(target);
     const allowMultiple = options.allowMultiple ?? false;
 
-    // 提取指纹验证配置
     const fingerprintToVerify =
       options.verifyFingerprint === true && typeof target.fingerprint === 'string'
         ? target.fingerprint.trim()
         : undefined;
 
-    // 优先尝试 ref
     if (options.preferRef && target.ref) {
       const byRef = await this.resolveRef(tabId, target.ref, options.frameId);
       if (byRef) return byRef;
@@ -321,7 +296,6 @@ export class SelectorLocator {
         const mappedFrameId = await this.mapHrefToFrameId(tabId, ensured.href);
         const resolvedFrameId = mappedFrameId ?? options.frameId;
 
-        // 指纹验证：不匹配则跳过，继续尝试其他候选
         const fingerprintOk =
           !fingerprintToVerify ||
           (await this.verifyElementFingerprint(
@@ -340,7 +314,6 @@ export class SelectorLocator {
             selectorUsed: sel,
           };
         }
-        // 指纹不匹配，继续尝试候选选择器
       }
     }
 
@@ -358,7 +331,6 @@ export class SelectorLocator {
       );
       if (!resolved) continue;
 
-      // 指纹验证
       if (fingerprintToVerify) {
         const isMatch = await this.verifyElementFingerprint(
           tabId,
@@ -514,13 +486,6 @@ export class SelectorLocator {
   }
 }
 
-// ================================
-// 工厂函数
-// ================================
-
-/**
- * 创建 Chrome 扩展的传输层
- */
 export function createChromeSelectorLocatorTransport(): SelectorLocatorTransport {
   return {
     sendMessage: async (tabId, message, options) => {
@@ -536,9 +501,6 @@ export function createChromeSelectorLocatorTransport(): SelectorLocatorTransport
   };
 }
 
-/**
- * 创建 Chrome 扩展的选择器定位器
- */
 export function createChromeSelectorLocator(): SelectorLocator {
   return new SelectorLocator(createChromeSelectorLocatorTransport());
 }

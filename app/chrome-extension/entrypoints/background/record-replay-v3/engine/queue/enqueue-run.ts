@@ -1,12 +1,12 @@
 /**
- * @fileoverview 共享入队服务
- * @description
- * 提供统一的 Run 入队逻辑，供 RPC Server 和 TriggerManager 共用。
+ * @fileoverview Shared run-enqueue service.
  *
- * 设计理由：
- * - 将原本位于 RpcServer 的入队逻辑抽离为独立服务
- * - 避免 RPC 和 TriggerManager 之间的行为漂移
- * - 统一参数校验、Run 创建、队列入队、事件发布流程
+ * Provides unified enqueue logic used by both RpcServer and TriggerManager.
+ *
+ * Design rationale:
+ * - Extracts enqueue logic out of RpcServer into a standalone service
+ * - Prevents behavioral drift between RPC and TriggerManager
+ * - Centralises argument validation, RunRecord creation, queue insertion, and event publishing
  */
 
 import type { JsonObject, UnixMillis } from '../../domain/json';
@@ -20,38 +20,38 @@ import type { RunScheduler } from './scheduler';
 // ==================== Types ====================
 
 /**
- * 入队服务依赖
+ * Dependencies for the enqueue service.
  */
 export interface EnqueueRunDeps {
-  /** 存储层 (仅需 flows/runs/queue) */
+  /** Storage layer (only flows/runs/queue needed). */
   storage: Pick<StoragePort, 'flows' | 'runs' | 'queue'>;
-  /** 事件总线 */
+  /** Events bus. */
   events: Pick<EventsBus, 'append'>;
-  /** 调度器 (可选) */
+  /** Scheduler (optional — kick is called best-effort). */
   scheduler?: Pick<RunScheduler, 'kick'>;
-  /** RunId 生成器 (用于测试注入) */
+  /** RunId generator (injectable for tests). */
   generateRunId?: () => RunId;
-  /** 时间源 (用于测试注入) */
+  /** Time source (injectable for tests). */
   now?: () => UnixMillis;
 }
 
 /**
- * 入队请求参数
+ * Enqueue request parameters.
  */
 export interface EnqueueRunInput {
-  /** Flow ID (必选) */
+  /** Flow ID (required). */
   flowId: FlowId;
-  /** 起始节点 ID (可选，默认使用 Flow 的 entryNodeId) */
+  /** Start node ID (optional; defaults to the flow's entryNodeId). */
   startNodeId?: NodeId;
-  /** 优先级 (默认 0) */
+  /** Priority (default 0). */
   priority?: number;
-  /** 最大尝试次数 (默认 1) */
+  /** Maximum attempts (default 1). */
   maxAttempts?: number;
-  /** 传递给 Flow 的参数 */
+  /** Arguments passed to the flow. */
   args?: JsonObject;
-  /** 触发上下文 (由 TriggerManager 设置) */
+  /** Trigger context (set by TriggerManager). */
   trigger?: TriggerFireContext;
-  /** 调试选项 */
+  /** Debug options. */
   debug?: {
     breakpoints?: NodeId[];
     pauseOnStart?: boolean;
@@ -59,26 +59,26 @@ export interface EnqueueRunInput {
 }
 
 /**
- * 入队结果
+ * Enqueue result.
  */
 export interface EnqueueRunResult {
-  /** 新创建的 Run ID */
+  /** Newly created Run ID. */
   runId: RunId;
-  /** 在队列中的位置 (1-based) */
+  /** 1-based position in the queue. */
   position: number;
 }
 
 // ==================== Utilities ====================
 
 /**
- * 默认 RunId 生成器
+ * Default RunId generator.
  */
 function defaultGenerateRunId(): RunId {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /**
- * 校验整数参数
+ * Validate and coerce an integer parameter.
  */
 function validateInt(
   value: unknown,
@@ -103,12 +103,8 @@ function validateInt(
 }
 
 /**
- * 计算 Run 在队列中的位置
- * @description 按调度顺序: priority DESC + createdAt ASC
- * @returns 1-based position, or -1 if run not found in queued items
- *
- * Note: Due to race conditions (scheduler may claim the run before this is called),
- * position may be -1. Callers should handle this gracefully.
+ * Compute the run's 1-based position in the queue (scheduling order: priority DESC, createdAt ASC).
+ * Returns -1 if the run is not found (e.g. already claimed by the scheduler).
  */
 async function computeQueuePosition(
   storage: Pick<StoragePort, 'queue'>,
@@ -127,16 +123,16 @@ async function computeQueuePosition(
 // ==================== Main Function ====================
 
 /**
- * 入队执行一个 Run
- * @description
- * 执行步骤：
- * 1. 参数校验
- * 2. 验证 Flow 存在
- * 3. 创建 RunRecordV3 (status=queued)
- * 4. 入队到 RunQueue
- * 5. 发布 run.queued 事件
- * 6. 触发调度 (best-effort)
- * 7. 计算队列位置
+ * Enqueue a run for execution.
+ *
+ * Steps:
+ * 1. Validate arguments
+ * 2. Verify flow exists
+ * 3. Create RunRecordV3 (status=queued)
+ * 4. Enqueue to RunQueue
+ * 5. Publish run.queued event
+ * 6. Trigger scheduling (best-effort)
+ * 7. Compute queue position
  */
 export async function enqueueRun(
   deps: EnqueueRunDeps,
@@ -150,17 +146,17 @@ export async function enqueueRun(
   const now = deps.now ?? (() => Date.now());
   const generateRunId = deps.generateRunId ?? defaultGenerateRunId;
 
-  // 参数校验
+  // Validate integer arguments
   const priority = validateInt(input.priority, 0, 'priority');
   const maxAttempts = validateInt(input.maxAttempts, 1, 'maxAttempts', { min: 1 });
 
-  // 验证 Flow 存在
+  // Verify flow exists
   const flow = await deps.storage.flows.get(flowId);
   if (!flow) {
     throw new Error(`Flow "${flowId}" not found`);
   }
 
-  // 验证 startNodeId 存在于 Flow 中
+  // Verify startNodeId exists in the flow
   if (input.startNodeId) {
     const nodeExists = flow.nodes.some((n) => n.id === input.startNodeId);
     if (!nodeExists) {
@@ -171,7 +167,7 @@ export async function enqueueRun(
   const ts = now();
   const runId = generateRunId();
 
-  // 1. 创建 RunRecordV3
+  // 1. Create RunRecordV3
   const runRecord: RunRecordV3 = {
     schemaVersion: RUN_SCHEMA_VERSION,
     id: runId,
@@ -189,7 +185,7 @@ export async function enqueueRun(
   };
   await deps.storage.runs.save(runRecord);
 
-  // 2. 入队
+  // 2. Enqueue
   await deps.storage.queue.enqueue({
     id: runId,
     flowId,
@@ -200,17 +196,17 @@ export async function enqueueRun(
     debug: input.debug,
   });
 
-  // 3. 发布 run.queued 事件
+  // 3. Publish run.queued event
   await deps.events.append({
     runId,
     type: 'run.queued',
     flowId,
   });
 
-  // 4. 计算队列位置 (在 kick 之前计算，减少竞态条件导致 position=-1 的概率)
+  // 4. Compute queue position before kick (reduces race where position becomes -1)
   const position = await computeQueuePosition(deps.storage, runId);
 
-  // 5. 触发调度 (best-effort, 不阻塞返回)
+  // 5. Trigger scheduling (best-effort, non-blocking)
   if (deps.scheduler) {
     void deps.scheduler.kick();
   }

@@ -1,6 +1,5 @@
 /**
- * @fileoverview RunQueue 持久化
- * @description 实现队列的 CRUD 操作和原子 claim
+ * @fileoverview RunQueue persistence — CRUD operations and atomic claim for the run queue.
  */
 
 import type { RunId } from '../domain/ids';
@@ -24,8 +23,7 @@ const IDB_NUMBER_MIN = -Number.MAX_VALUE;
 const IDB_NUMBER_MAX = Number.MAX_VALUE;
 
 /**
- * 创建 RunQueue 持久化实现
- * @description 实现队列持久化，包括 Phase 3 原子 claim
+ * Create a RunQueue persistence implementation (atomic claim, Phase 3).
  */
 export function createQueueStore(): RunQueue {
   return {
@@ -300,10 +298,9 @@ export function createQueueStore(): RunQueue {
         const adoptedPaused: Array<{ runId: RunId; prevOwnerId?: string }> = [];
 
         /**
-         * 扫描并回收孤儿 running 项
-         * @description
-         * - 孤儿定义：无租约或 lease.ownerId !== currentOwnerId
-         * - 回收策略：status -> queued，清除 lease，保留 attempt
+         * Scan and requeue orphaned running items.
+         * Orphan: no lease, or lease.ownerId !== currentOwnerId.
+         * Strategy: status -> queued, drop lease, preserve attempt.
          */
         const recoverRunningItems = (): Promise<void> =>
           new Promise<void>((resolve, reject) => {
@@ -319,14 +316,14 @@ export function createQueueStore(): RunQueue {
               const item = cursor.value as RunQueueItem;
               const prevOwnerId = item.lease?.ownerId;
 
-              // 非孤儿：lease 存在且属于当前 ownerId
+              // Not an orphan: lease exists and belongs to the current ownerId
               const isOrphan = !item.lease || item.lease.ownerId !== ownerId;
               if (!isOrphan) {
                 cursor.continue();
                 return;
               }
 
-              // 回收：移除 lease，状态改为 queued
+              // Requeue: drop lease, set status to queued
               const { lease: _droppedLease, ...itemWithoutLease } = item;
               const updated: RunQueueItem = {
                 ...itemWithoutLease,
@@ -347,10 +344,9 @@ export function createQueueStore(): RunQueue {
           });
 
         /**
-         * 扫描并接管孤儿 paused 项
-         * @description
-         * - 孤儿定义：无租约或 lease.ownerId !== currentOwnerId
-         * - 接管策略：保持 status=paused，更新 lease.ownerId 为新 ownerId，续约 TTL
+         * Scan and adopt orphaned paused items.
+         * Orphan: no lease, or lease.ownerId !== currentOwnerId.
+         * Strategy: keep status=paused, update lease.ownerId to new ownerId, renew TTL.
          */
         const recoverPausedItems = (): Promise<void> =>
           new Promise<void>((resolve, reject) => {
@@ -366,14 +362,14 @@ export function createQueueStore(): RunQueue {
               const item = cursor.value as RunQueueItem;
               const prevOwnerId = item.lease?.ownerId;
 
-              // 非孤儿：lease 存在且属于当前 ownerId
+              // Not an orphan: lease exists and belongs to the current ownerId
               const isOrphan = !item.lease || item.lease.ownerId !== ownerId;
               if (!isOrphan) {
                 cursor.continue();
                 return;
               }
 
-              // 接管：更新 lease 为新 ownerId，续约 TTL
+              // Adopt: update lease to new ownerId and renew TTL
               const updated: RunQueueItem = {
                 ...item,
                 updatedAt: now,
@@ -395,7 +391,7 @@ export function createQueueStore(): RunQueue {
             };
           });
 
-        // 顺序执行：先处理 running，再处理 paused
+        // Sequential: process running items first, then paused
         await recoverRunningItems();
         await recoverPausedItems();
 
@@ -485,7 +481,7 @@ export function createQueueStore(): RunQueue {
     },
 
     async cancel(runId: RunId, _now: number, _reason?: string): Promise<void> {
-      // 从队列中删除
+      // Remove from queue
       await this.markDone(runId, _now);
     },
 
@@ -505,7 +501,7 @@ export function createQueueStore(): RunQueue {
         const store = stores[RR_V3_STORES.QUEUE];
 
         if (status) {
-          // 使用索引查询
+          // Query using status index
           const index = store.index('status');
           return new Promise<RunQueueItem[]>((resolve, reject) => {
             const request = index.getAll(IDBKeyRange.only(status));
@@ -514,7 +510,7 @@ export function createQueueStore(): RunQueue {
           });
         }
 
-        // 获取所有
+        // Get all items
         return new Promise<RunQueueItem[]>((resolve, reject) => {
           const request = store.getAll();
           request.onsuccess = () => resolve(request.result as RunQueueItem[]);

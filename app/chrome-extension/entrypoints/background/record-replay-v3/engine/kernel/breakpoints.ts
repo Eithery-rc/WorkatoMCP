@@ -1,14 +1,12 @@
 /**
- * @fileoverview 断点管理器
- * @description 管理调试断点的添加、删除和命中检测
+ * @fileoverview Breakpoint manager for Record-Replay V3 debugging.
  */
 
 import type { NodeId, RunId } from '../../domain/ids';
 import type { Breakpoint, DebuggerState } from '../../domain/debug';
 
 /**
- * 断点管理器
- * @description 管理单个 Run 的断点
+ * Manages breakpoints for a single run.
  */
 export class BreakpointManager {
   private breakpoints = new Map<NodeId, Breakpoint>();
@@ -23,21 +21,21 @@ export class BreakpointManager {
   }
 
   /**
-   * 添加断点
+   * Add a breakpoint.
    */
   add(nodeId: NodeId): void {
     this.breakpoints.set(nodeId, { nodeId, enabled: true });
   }
 
   /**
-   * 删除断点
+   * Remove a breakpoint.
    */
   remove(nodeId: NodeId): void {
     this.breakpoints.delete(nodeId);
   }
 
   /**
-   * 设置断点列表（替换所有现有断点）
+   * Replace all breakpoints with the given list.
    */
   setAll(nodeIds: NodeId[]): void {
     this.breakpoints.clear();
@@ -47,7 +45,7 @@ export class BreakpointManager {
   }
 
   /**
-   * 启用断点
+   * Enable a breakpoint.
    */
   enable(nodeId: NodeId): void {
     const bp = this.breakpoints.get(nodeId);
@@ -57,7 +55,7 @@ export class BreakpointManager {
   }
 
   /**
-   * 禁用断点
+   * Disable a breakpoint.
    */
   disable(nodeId: NodeId): void {
     const bp = this.breakpoints.get(nodeId);
@@ -67,7 +65,7 @@ export class BreakpointManager {
   }
 
   /**
-   * 检查节点是否有启用的断点
+   * Whether the node has an enabled breakpoint.
    */
   hasBreakpoint(nodeId: NodeId): boolean {
     const bp = this.breakpoints.get(nodeId);
@@ -75,48 +73,47 @@ export class BreakpointManager {
   }
 
   /**
-   * 检查是否应该在节点处暂停
-   * @description 考虑断点和单步模式
+   * Whether execution should pause at the given node (considering both breakpoints and step mode).
    */
   shouldPauseAt(nodeId: NodeId): boolean {
-    // 如果在单步模式，总是暂停
+    // In step mode, always pause
     if (this.stepMode === 'stepOver') {
       return true;
     }
-    // 否则检查断点
+    // Otherwise check breakpoints
     return this.hasBreakpoint(nodeId);
   }
 
   /**
-   * 获取所有断点
+   * Return all breakpoints.
    */
   getAll(): Breakpoint[] {
     return Array.from(this.breakpoints.values());
   }
 
   /**
-   * 获取启用的断点
+   * Return only enabled breakpoints.
    */
   getEnabled(): Breakpoint[] {
     return this.getAll().filter((bp) => bp.enabled);
   }
 
   /**
-   * 设置单步模式
+   * Set the step mode.
    */
   setStepMode(mode: 'none' | 'stepOver'): void {
     this.stepMode = mode;
   }
 
   /**
-   * 获取单步模式
+   * Get the current step mode.
    */
   getStepMode(): 'none' | 'stepOver' {
     return this.stepMode;
   }
 
   /**
-   * 清除所有断点
+   * Clear all breakpoints and reset step mode.
    */
   clear(): void {
     this.breakpoints.clear();
@@ -125,14 +122,13 @@ export class BreakpointManager {
 }
 
 /**
- * 断点管理器注册表
- * @description 管理多个 Run 的断点管理器
+ * Registry that manages BreakpointManagers for multiple runs.
  */
 export class BreakpointRegistry {
   private managers = new Map<RunId, BreakpointManager>();
 
   /**
-   * 获取或创建断点管理器
+   * Get or create a BreakpointManager for the given run.
    */
   getOrCreate(runId: RunId, initialBreakpoints?: NodeId[]): BreakpointManager {
     let manager = this.managers.get(runId);
@@ -144,32 +140,32 @@ export class BreakpointRegistry {
   }
 
   /**
-   * 获取断点管理器
+   * Get the BreakpointManager for a run (or undefined).
    */
   get(runId: RunId): BreakpointManager | undefined {
     return this.managers.get(runId);
   }
 
   /**
-   * 删除断点管理器
+   * Remove the BreakpointManager for a run.
    */
   remove(runId: RunId): void {
     this.managers.delete(runId);
   }
 
   /**
-   * 清空所有
+   * Remove all managers.
    */
   clear(): void {
     this.managers.clear();
   }
 }
 
-/** 全局断点注册表 */
+/** Module-level singleton breakpoint registry. */
 let globalBreakpointRegistry: BreakpointRegistry | null = null;
 
 /**
- * 获取全局断点注册表
+ * Get the global BreakpointRegistry (creating it on first access).
  */
 export function getBreakpointRegistry(): BreakpointRegistry {
   if (!globalBreakpointRegistry) {
@@ -179,8 +175,8 @@ export function getBreakpointRegistry(): BreakpointRegistry {
 }
 
 /**
- * 重置全局断点注册表
- * @description 主要用于测试
+ * Reset the global BreakpointRegistry.
+ * Primarily used in tests.
  */
 export function resetBreakpointRegistry(): void {
   globalBreakpointRegistry = null;

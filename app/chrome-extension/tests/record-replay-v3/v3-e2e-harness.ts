@@ -1,5 +1,5 @@
 /**
- * @fileoverview Record-Replay V3 service-level E2E test harness
+ * @fileoverview Record-Replay V3 service-level E2E test harness.
  * @description
  * Assembles a complete V3 runtime (IndexedDB storage + scheduler + runner)
  * and drives it through RpcServer.handleRequest() to avoid Port mocking complexity.
@@ -73,37 +73,37 @@ interface TestNodeConfig {
 }
 
 /**
- * E2E Harness 配置选项
+ * E2E Harness configuration options.
  */
 export interface V3E2EHarnessOptions {
-  /** Owner ID（标识调度器实例） */
+  /** Owner ID (identifies the scheduler instance). */
   ownerId?: string;
-  /** 调度器配置覆盖 */
+  /** Scheduler config overrides. */
   schedulerConfig?: Partial<RunQueueConfig>;
-  /** 是否自动启动调度器（默认 true） */
+  /** Whether to auto-start the scheduler (default true). */
   autoStartScheduler?: boolean;
-  /** 时间源（用于测试注入） */
+  /** Time source (injectable for tests). */
   now?: () => number;
-  /** 日志器 */
+  /** Logger. */
   logger?: Logger;
 }
 
 /**
- * RPC 客户端接口
+ * RPC client interface.
  */
 export interface RpcClient {
-  /** 收到的所有消息 */
+  /** All received messages. */
   readonly messages: unknown[];
-  /** 调用 RPC 方法 */
+  /** Call an RPC method. */
   call<T = unknown>(method: string, params?: JsonObject): Promise<T>;
-  /** 清空消息 */
+  /** Clear all received messages. */
   clearMessages(): void;
-  /** 获取流式推送的事件 */
+  /** Return streamed push events. */
   getStreamedEvents(): RunEvent[];
 }
 
 /**
- * E2E Harness 接口
+ * E2E Harness interface.
  */
 export interface V3E2EHarness {
   readonly ownerId: string;
@@ -113,26 +113,26 @@ export interface V3E2EHarness {
   readonly runners: RunnerRegistry;
   readonly rpcServer: RpcServer;
 
-  /** 创建 RPC 客户端 */
+  /** Create an RPC client. */
   createClient(): RpcClient;
 
-  /** 等待特定事件 */
+  /** Wait for a specific event. */
   waitForEvent(
     runId: RunId,
     predicate: (event: RunEvent) => boolean,
     opts?: { timeoutMs?: number },
   ): Promise<RunEvent>;
 
-  /** 等待 Run 到达终态 */
+  /** Wait for a Run to reach a terminal state. */
   waitForTerminal(runId: RunId, opts?: { timeoutMs?: number }): Promise<RunRecordV3>;
 
-  /** 等待队列项被移除 */
+  /** Wait for a queue item to be removed. */
   waitForQueueItemGone(runId: RunId, opts?: { timeoutMs?: number }): Promise<void>;
 
-  /** 列出 Run 的所有事件 */
+  /** List all events for a Run. */
   listEvents(runId: RunId): Promise<RunEvent[]>;
 
-  /** 销毁 harness，释放资源 */
+  /** Dispose the harness and release resources. */
   dispose(): Promise<void>;
 }
 
@@ -186,8 +186,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * 创建测试用 Node 定义
- * @description 一个简单的测试节点，支持成功/失败/延迟
+ * Create a test node definition — a simple node that supports succeed/fail/delay.
  */
 function createTestNodeDefinition(): NodeDefinition<'test', TestNodeConfig> {
   return {
@@ -202,7 +201,7 @@ function createTestNodeDefinition(): NodeDefinition<'test', TestNodeConfig> {
     execute: async (_ctx, node): Promise<NodeExecutionResult> => {
       const cfg = node.config as unknown as TestNodeConfig;
 
-      // 模拟延迟
+      // Simulate delay
       if (cfg.delayMs && cfg.delayMs > 0) {
         await sleep(cfg.delayMs);
       }
@@ -225,8 +224,7 @@ function createTestNodeDefinition(): NodeDefinition<'test', TestNodeConfig> {
 // ==================== Factory ====================
 
 /**
- * 创建 V3 E2E 测试 harness
- * @description 组装完整的 V3 runtime 用于集成测试
+ * Create a V3 E2E test harness — assembles a complete V3 runtime for integration testing.
  */
 export function createV3E2EHarness(options: V3E2EHarnessOptions = {}): V3E2EHarness {
   const logger = options.logger ?? createSilentLogger();
@@ -239,7 +237,7 @@ export function createV3E2EHarness(options: V3E2EHarnessOptions = {}): V3E2EHarn
   // 2) EventsBus
   const events = new StorageBackedEventsBus(storage.events);
 
-  // 3) Plugins - 注册测试节点
+  // 3) Plugins — register test node
   const plugins = new PluginRegistry();
   plugins.registerNode(createTestNodeDefinition());
 
@@ -255,7 +253,7 @@ export function createV3E2EHarness(options: V3E2EHarnessOptions = {}): V3E2EHarn
     artifactService: createNotImplementedArtifactService(),
   });
 
-  // 6) RunExecutor - 连接 scheduler 和 runner
+  // 6) RunExecutor — connects scheduler and runner
   const execute: RunExecutor = createE2EExecutor({
     storage,
     events,
@@ -265,7 +263,7 @@ export function createV3E2EHarness(options: V3E2EHarnessOptions = {}): V3E2EHarn
     logger,
   });
 
-  // 7) Scheduler 配置
+  // 7) Scheduler configuration
   const config: RunQueueConfig = {
     ...DEFAULT_QUEUE_CONFIG,
     maxParallelRuns: 1,
@@ -373,7 +371,7 @@ export function createV3E2EHarness(options: V3E2EHarnessOptions = {}): V3E2EHarn
   ): Promise<RunEvent> {
     const timeoutMs = opts?.timeoutMs ?? 5_000;
 
-    // Fast-path: 检查已持久化的事件
+    // Fast-path: check already-persisted events
     try {
       const existing = await storage.events.list(runId);
       const found = existing.find(predicate);
@@ -406,7 +404,7 @@ export function createV3E2EHarness(options: V3E2EHarnessOptions = {}): V3E2EHarn
   ): Promise<RunRecordV3> {
     const timeoutMs = opts?.timeoutMs ?? 10_000;
 
-    // 先检查当前状态
+    // Check current state first
     const initial = await storage.runs.get(runId);
     if (!initial) {
       throw new Error(`Run "${runId}" not found`);
@@ -415,7 +413,7 @@ export function createV3E2EHarness(options: V3E2EHarnessOptions = {}): V3E2EHarn
       return initial;
     }
 
-    // 等待终态事件
+    // Wait for a terminal event
     await waitForEvent(
       runId,
       (e) => e.type === 'run.succeeded' || e.type === 'run.failed' || e.type === 'run.canceled',
@@ -452,21 +450,21 @@ export function createV3E2EHarness(options: V3E2EHarnessOptions = {}): V3E2EHarn
   }
 
   async function dispose(): Promise<void> {
-    // 取消事件转发
+    // Cancel event forwarding
     try {
       unsubscribeForward();
     } catch {
       // ignore
     }
 
-    // 停止 scheduler
+    // Stop scheduler
     try {
       scheduler.dispose();
     } catch {
       // ignore
     }
 
-    // 释放 lease manager
+    // Release lease manager
     try {
       leaseManager.dispose();
     } catch {
@@ -479,7 +477,7 @@ export function createV3E2EHarness(options: V3E2EHarnessOptions = {}): V3E2EHarn
     }
     clientConnIds.clear();
 
-    // 关闭 IDB 连接
+    // Close IDB connection
     closeRrV3Db();
   }
 
@@ -502,7 +500,7 @@ export function createV3E2EHarness(options: V3E2EHarnessOptions = {}): V3E2EHarn
 // ==================== Internal Helpers ====================
 
 /**
- * 创建 E2E 测试用的 RunExecutor
+ * Create a RunExecutor for E2E testing.
  */
 function createE2EExecutor(deps: {
   storage: StoragePort;
@@ -515,21 +513,21 @@ function createE2EExecutor(deps: {
   return async (item: RunQueueItem): Promise<void> => {
     const runId = item.id;
 
-    // 1. 获取 RunRecord
+    // 1. Fetch RunRecord
     const run = await deps.storage.runs.get(runId);
     if (!run) {
       deps.logger.warn(`[E2E] RunRecord not found for queue item "${runId}", skipping`);
       return;
     }
 
-    // 2. 获取 Flow
+    // 2. Fetch Flow
     const flow = await deps.storage.flows.get(item.flowId);
     if (!flow) {
       await failRun(deps, runId, `Flow "${item.flowId}" not found`);
       return;
     }
 
-    // 3. 同步 attempt/tabId 到 RunRecord
+    // 3. Sync attempt/tabId to RunRecord
     const tabId = item.tabId ?? run.tabId ?? 1;
     try {
       await deps.storage.runs.patch(runId, {
@@ -541,7 +539,7 @@ function createE2EExecutor(deps: {
       // ignore
     }
 
-    // 4. 创建并运行 Runner
+    // 4. Create and run the Runner
     const runner = deps.runnerFactory.create(runId, {
       flow,
       tabId,
@@ -560,7 +558,7 @@ function createE2EExecutor(deps: {
 }
 
 /**
- * 将 Run 标记为失败
+ * Mark a Run as failed.
  */
 async function failRun(
   deps: { storage: StoragePort; events: EventsBus; now: () => number },

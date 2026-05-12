@@ -1,15 +1,15 @@
 /**
- * @fileoverview 触发器管理器
- * @description
- * TriggerManager 负责管理所有触发器 Handler 的生命周期：
- * - 从 TriggerStore 加载触发器并安装
- * - 处理触发器触发事件，调用 enqueueRun
- * - 提供防风暴机制 (cooldown + maxQueued)
+ * @fileoverview TriggerManager — manages the lifecycle of all trigger handlers.
  *
- * 设计理由：
- * - Orchestrator 模式：TriggerManager 不直接实现各类触发器逻辑，而是委托给 per-kind Handler
- * - Handler 工厂模式：TriggerManager 在构造时创建 Handler 实例，注入 fireCallback
- * - 防风暴：cooldown (per-trigger) + maxQueued (global best-effort)
+ * Responsibilities:
+ * - Load triggers from TriggerStore and install them.
+ * - Handle trigger fire events and call enqueueRun.
+ * - Provide storm-protection (cooldown per-trigger + maxQueued global best-effort).
+ *
+ * Design:
+ * - Orchestrator pattern: TriggerManager delegates per-kind logic to individual handlers.
+ * - Handler factory pattern: handlers are created at construction time with an injected fireCallback.
+ * - Storm protection: per-trigger cooldown + global maxQueued (best-effort, not atomic).
  */
 
 import type { UnixMillis } from '../../domain/json';
@@ -24,91 +24,91 @@ import type { TriggerFireCallback, TriggerHandler, TriggerHandlerFactory } from 
 // ==================== Types ====================
 
 /**
- * Handler 工厂映射
+ * Handler factory map.
  */
 export type TriggerHandlerFactories = Partial<{
   [K in TriggerKind]: TriggerHandlerFactory<K>;
 }>;
 
 /**
- * 防风暴配置
+ * Storm-protection configuration.
  */
 export interface TriggerManagerStormControl {
   /**
-   * 同一触发器两次触发之间的最小间隔 (ms)
-   * - 0 或 undefined 表示禁用冷却
+   * Minimum interval between two fires of the same trigger (ms).
+   * 0 or undefined disables cooldown.
    */
   cooldownMs?: number;
 
   /**
-   * 全局最大排队 Run 数量
-   * - 达到上限时拒绝新的触发
-   * - undefined 表示禁用上限检查
-   * - 注意：这是 best-effort 检查，非原子性
+   * Global maximum number of queued runs.
+   * New fires are rejected when this limit is reached.
+   * undefined disables the check.
+   * Note: this is a best-effort check — it is not atomic.
    */
   maxQueued?: number;
 }
 
 /**
- * TriggerManager 依赖
+ * TriggerManager dependencies.
  */
 export interface TriggerManagerDeps {
-  /** 存储层 */
+  /** Storage layer. */
   storage: Pick<StoragePort, 'triggers' | 'flows' | 'runs' | 'queue'>;
-  /** 事件总线 */
+  /** Events bus. */
   events: Pick<EventsBus, 'append'>;
-  /** 调度器 (可选) */
+  /** Scheduler (optional). */
   scheduler?: Pick<RunScheduler, 'kick'>;
-  /** Handler 工厂映射 */
+  /** Handler factory map. */
   handlerFactories: TriggerHandlerFactories;
-  /** 防风暴配置 */
+  /** Storm-protection config. */
   storm?: TriggerManagerStormControl;
-  /** RunId 生成器 (用于测试注入) */
+  /** RunId generator (injectable for tests). */
   generateRunId?: () => RunId;
-  /** 时间源 (用于测试注入) */
+  /** Time source (injectable for tests). */
   now?: () => UnixMillis;
-  /** 日志器 */
+  /** Logger. */
   logger?: Pick<Console, 'debug' | 'info' | 'warn' | 'error'>;
 }
 
 /**
- * TriggerManager 状态
+ * TriggerManager state snapshot.
  */
 export interface TriggerManagerState {
-  /** 是否已启动 */
+  /** Whether the manager has been started. */
   started: boolean;
-  /** 已安装的触发器 ID 列表 */
+  /** List of currently installed trigger IDs. */
   installedTriggerIds: TriggerId[];
 }
 
 /**
- * TriggerManager 接口
+ * TriggerManager interface.
  */
 export interface TriggerManager {
-  /** 启动管理器，加载并安装所有启用的触发器 */
+  /** Start the manager — load and install all enabled triggers. */
   start(): Promise<void>;
-  /** 停止管理器，卸载所有触发器 */
+  /** Stop the manager — uninstall all triggers. */
   stop(): Promise<void>;
-  /** 刷新触发器，重新从存储加载并安装 */
+  /** Refresh triggers — reload from storage and reinstall. */
   refresh(): Promise<void>;
   /**
-   * 手动触发一个触发器
-   * @description 仅供 RPC/UI 调用，用于 manual 触发器
+   * Manually fire a trigger.
+   * Intended for RPC/UI calls on manual triggers.
    */
   fire(
     triggerId: TriggerId,
     context?: { sourceTabId?: number; sourceUrl?: string },
   ): Promise<EnqueueRunResult>;
-  /** 销毁管理器 */
+  /** Dispose the manager. */
   dispose(): Promise<void>;
-  /** 获取当前状态 */
+  /** Return the current state snapshot. */
   getState(): TriggerManagerState;
 }
 
 // ==================== Utilities ====================
 
 /**
- * 校验非负整数
+ * Validate and normalize a non-negative integer.
  */
 function normalizeNonNegativeInt(value: unknown, fallback: number, fieldName: string): number {
   if (value === undefined || value === null) return fallback;
@@ -119,7 +119,7 @@ function normalizeNonNegativeInt(value: unknown, fallback: number, fieldName: st
 }
 
 /**
- * 校验正整数
+ * Validate and normalize a positive integer.
  */
 function normalizePositiveInt(value: unknown, fieldName: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -135,36 +135,36 @@ function normalizePositiveInt(value: unknown, fieldName: string): number {
 // ==================== Implementation ====================
 
 /**
- * 创建 TriggerManager
+ * Create a TriggerManager.
  */
 export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
   const logger = deps.logger ?? console;
   const now = deps.now ?? (() => Date.now());
 
-  // 防风暴参数
+  // Storm-protection parameters
   const cooldownMs = normalizeNonNegativeInt(deps.storm?.cooldownMs, 0, 'storm.cooldownMs');
   const maxQueued =
     deps.storm?.maxQueued === undefined || deps.storm?.maxQueued === null
       ? undefined
       : normalizePositiveInt(deps.storm.maxQueued, 'storm.maxQueued');
 
-  // 状态
+  // State
   const installed = new Map<TriggerId, TriggerSpec>();
   const lastFireAt = new Map<TriggerId, UnixMillis>();
   let started = false;
   let inFlightEnqueues = 0;
 
-  // 防止 refresh 重入
+  // Prevent refresh re-entrancy
   let refreshPromise: Promise<void> | null = null;
   let pendingRefresh = false;
 
-  // Handler 实例
+  // Handler instances
   const handlers = new Map<TriggerKind, TriggerHandler<TriggerKind>>();
 
-  // 触发回调
+  // Fire callback injected into each handler
   const fireCallback: TriggerFireCallback = {
     onFire: async (triggerId, context) => {
-      // 捕获所有异常，避免抛入 chrome API 监听器
+      // Catch all exceptions to avoid propagating into chrome API listeners
       try {
         await handleFire(triggerId as TriggerId, context);
       } catch (e) {
@@ -173,7 +173,7 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
     },
   };
 
-  // 初始化 Handler 实例
+  // Instantiate handlers from factories
   for (const [kind, factory] of Object.entries(deps.handlerFactories) as Array<
     [TriggerKind, TriggerHandlerFactory<TriggerKind> | undefined]
   >) {
@@ -189,9 +189,9 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
   }
 
   /**
-   * 处理触发器触发（内部方法）
-   * @param throwOnDrop 如果为 true，则在 cooldown/maxQueued 等情况下抛出错误
-   * @returns EnqueueRunResult 或 null（静默丢弃）
+   * Handle a trigger fire (internal).
+   * @param throwOnDrop If true, throw instead of silently dropping on cooldown/maxQueued.
+   * @returns EnqueueRunResult or null (silent drop).
    */
   async function handleFire(
     triggerId: TriggerId,
@@ -215,7 +215,7 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
 
     const t = now();
 
-    // Per-trigger cooldown 检查
+    // Per-trigger cooldown check
     const prevLastFireAt = lastFireAt.get(triggerId);
     if (cooldownMs > 0 && prevLastFireAt !== undefined && t - prevLastFireAt < cooldownMs) {
       logger.debug(`[TriggerManager] Dropping trigger "${triggerId}" (cooldown ${cooldownMs}ms)`);
@@ -225,8 +225,8 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
       return null;
     }
 
-    // Global maxQueued 检查 (best-effort)
-    // 注意：在 cooldown 设置前检查，避免因 maxQueued drop 而误设 cooldown
+    // Global maxQueued check (best-effort).
+    // Checked before setting cooldown to avoid incorrectly marking the trigger as fired.
     if (maxQueued !== undefined) {
       const queued = await deps.storage.queue.list('queued');
       if (queued.length + inFlightEnqueues >= maxQueued) {
@@ -240,12 +240,12 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
       }
     }
 
-    // 设置 lastFireAt 以抑制并发触发（在 maxQueued 检查通过后）
+    // Record lastFireAt to suppress concurrent fires (set after maxQueued check passes)
     if (cooldownMs > 0) {
       lastFireAt.set(triggerId, t);
     }
 
-    // 构建触发上下文
+    // Build trigger context
     const triggerContext: TriggerFireContext = {
       triggerId: trigger.id,
       kind: trigger.kind,
@@ -272,7 +272,7 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
       );
       return result;
     } catch (e) {
-      // 入队失败时回滚 cooldown 标记
+      // Roll back cooldown timestamp on enqueue failure
       if (cooldownMs > 0) {
         if (prevLastFireAt === undefined) {
           lastFireAt.delete(triggerId);
@@ -292,8 +292,8 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
   }
 
   /**
-   * 手动触发一个触发器（对外暴露）
-   * @description 用于 RPC/UI 调用，会抛出错误而不是静默丢弃
+   * Manually fire a trigger (public API).
+   * Throws rather than silently dropping — used for RPC/UI calls.
    */
   async function fire(
     triggerId: TriggerId,
@@ -307,14 +307,14 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
   }
 
   /**
-   * 执行刷新
+   * Execute a refresh cycle.
    */
   async function doRefresh(): Promise<void> {
     const triggers = await deps.storage.triggers.list();
     if (!started) return;
 
-    // 先卸载所有，再重新安装 (简单策略，保证一致性)
-    // Best-effort: 单个 handler 卸载失败不影响其他
+    // Uninstall all then reinstall (simple strategy for consistency).
+    // Best-effort: a single handler failure does not affect others.
     for (const handler of handlers.values()) {
       try {
         await handler.uninstallAll();
@@ -324,7 +324,7 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
     }
     installed.clear();
 
-    // 安装启用的触发器
+    // Install enabled triggers
     for (const trigger of triggers) {
       if (!started) return;
       if (!trigger.enabled) continue;
@@ -345,7 +345,7 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
   }
 
   /**
-   * 刷新触发器 (合并并发调用)
+   * Refresh triggers — coalesces concurrent calls.
    */
   async function refresh(): Promise<void> {
     if (!started) {
@@ -368,7 +368,7 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
   }
 
   /**
-   * 启动管理器
+   * Start the manager.
    */
   async function start(): Promise<void> {
     if (started) return;
@@ -377,7 +377,7 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
   }
 
   /**
-   * 停止管理器
+   * Stop the manager.
    */
   async function stop(): Promise<void> {
     if (!started) return;
@@ -385,16 +385,16 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
     started = false;
     pendingRefresh = false;
 
-    // 等待进行中的 refresh 完成
+    // Wait for any in-progress refresh to complete
     if (refreshPromise) {
       try {
         await refreshPromise;
       } catch {
-        // 忽略 refresh 错误
+        // Ignore refresh errors during stop
       }
     }
 
-    // 卸载所有触发器
+    // Uninstall all triggers
     for (const handler of handlers.values()) {
       try {
         await handler.uninstallAll();
@@ -407,14 +407,14 @@ export function createTriggerManager(deps: TriggerManagerDeps): TriggerManager {
   }
 
   /**
-   * 销毁管理器
+   * Dispose the manager.
    */
   async function dispose(): Promise<void> {
     await stop();
   }
 
   /**
-   * 获取状态
+   * Return the current state snapshot.
    */
   function getState(): TriggerManagerState {
     return {

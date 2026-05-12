@@ -1,77 +1,73 @@
 /**
- * @fileoverview 变量类型定义
- * @description 定义 Record-Replay V3 中使用的变量指针和持久化变量
+ * @fileoverview Variable type definitions for Record-Replay V3.
  */
 
 import type { JsonValue, UnixMillis } from './json';
 
-/** 变量名称 */
+/** Variable name. */
 export type VariableName = string;
 
-/** 持久化变量名称（以 $ 开头） */
+/** Persistent variable name (prefixed with $). */
 export type PersistentVariableName = `$${string}`;
 
-/** 变量作用域 */
+/** Variable scope. */
 export type VariableScope = 'run' | 'flow' | 'persistent';
 
 /**
- * 变量指针
- * @description 指向变量的引用，支持 JSON path 访问
+ * Variable pointer — a reference to a variable, with optional JSON-path access.
  */
 export interface VariablePointer {
-  /** 变量作用域 */
+  /** Variable scope. */
   scope: VariableScope;
-  /** 变量名称 */
+  /** Variable name. */
   name: VariableName;
-  /** JSON path（用于访问嵌套属性） */
+  /** JSON path (for accessing nested properties). */
   path?: ReadonlyArray<string | number>;
 }
 
 /**
- * 变量定义
- * @description Flow 中声明的变量
+ * Variable definition — declared within a flow.
  */
 export interface VariableDefinition {
-  /** 变量名称 */
+  /** Variable name. */
   name: VariableName;
-  /** 显示标签 */
+  /** Display label. */
   label?: string;
-  /** 描述 */
+  /** Description. */
   description?: string;
-  /** 是否敏感（不显示/导出） */
+  /** Whether the variable is sensitive (hidden / not exported). */
   sensitive?: boolean;
-  /** 是否必需 */
+  /** Whether the variable is required. */
   required?: boolean;
-  /** 默认值 */
+  /** Default value. */
   default?: JsonValue;
-  /** 作用域（不含 persistent，persistent 通过 $ 前缀判断） */
+  /** Scope (persistent variables are identified by the $ prefix, not this field). */
   scope?: Exclude<VariableScope, 'persistent'>;
 }
 
 /**
- * 持久化变量记录
- * @description 存储在 IndexedDB 中的持久化变量
+ * Persistent variable record — stored in IndexedDB.
  */
 export interface PersistentVarRecord {
-  /** 变量键（以 $ 开头） */
+  /** Variable key (starts with $). */
   key: PersistentVariableName;
-  /** 变量值 */
+  /** Variable value. */
   value: JsonValue;
-  /** 最后更新时间 */
+  /** Last updated time. */
   updatedAt: UnixMillis;
-  /** 版本号（单调递增，用于 LWW 和调试） */
+  /** Version number (monotonically increasing, used for LWW and debugging). */
   version: number;
 }
 
 /**
- * 判断变量名是否为持久化变量
+ * Whether a variable name refers to a persistent variable.
  */
 export function isPersistentVariable(name: string): name is PersistentVariableName {
   return name.startsWith('$');
 }
 
 /**
- * 解析变量指针字符串
+ * Parse a variable pointer string.
  * @example "$user.name" -> { scope: 'persistent', name: '$user', path: ['name'] }
  */
 export function parseVariablePointer(ref: string): VariablePointer | null {
@@ -89,7 +85,7 @@ export function parseVariablePointer(ref: string): VariablePointer | null {
     };
   }
 
-  // 默认为 run 作用域
+  // Default to run scope
   return {
     scope: 'run',
     name,
