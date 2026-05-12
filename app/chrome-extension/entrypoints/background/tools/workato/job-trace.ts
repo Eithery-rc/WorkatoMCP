@@ -63,7 +63,7 @@ async function tracePageFn(recipeId: number, jobId: string | number): Promise<In
         stage: 'line_details',
         status: trace.status,
         body_excerpt: trace.bodyText.slice(0, 1024),
-        message: `GET /line_details returned HTTP ${trace.status}`,
+        message: `GET /web_api/recipes/${recipeId}/jobs/${jobId}/line_details returned HTTP ${trace.status}`,
       },
     };
   }
@@ -83,13 +83,19 @@ class WorkatoJobTraceTool extends BaseBrowserToolExecutor {
       if (typeof args?.recipe_id !== 'number' || !Number.isFinite(args.recipe_id)) {
         return createErrorResponse('Param [recipe_id] must be a finite number');
       }
-      if (args?.job_id === undefined || args.job_id === null) {
-        return createErrorResponse('Param [job_id] is required');
+      const jobId = args?.job_id;
+      if (
+        jobId === undefined ||
+        jobId === null ||
+        (typeof jobId === 'string' && jobId.trim() === '') ||
+        (typeof jobId === 'number' && !Number.isFinite(jobId))
+      ) {
+        return createErrorResponse('Param [job_id] must be a non-empty string or finite number');
       }
       const full = args.full === true;
 
       const tab = await findWorkatoTab();
-      const result = await runInWorkatoTab(tab.tabId, tracePageFn, [args.recipe_id, args.job_id]);
+      const result = await runInWorkatoTab(tab.tabId, tracePageFn, [args.recipe_id, jobId]);
 
       if (!result.ok) {
         return createErrorResponse(
@@ -101,8 +107,8 @@ class WorkatoJobTraceTool extends BaseBrowserToolExecutor {
       }
 
       const payload = full
-        ? { job_id: args.job_id, meta: result.meta, line_details: result.lineDetails }
-        : buildSlimTrace(args.job_id, result.meta!, result.lineDetails!);
+        ? { job_id: jobId, meta: result.meta, line_details: result.lineDetails }
+        : buildSlimTrace(jobId, result.meta!, result.lineDetails!);
 
       return {
         content: [{ type: 'text', text: JSON.stringify(payload) }],

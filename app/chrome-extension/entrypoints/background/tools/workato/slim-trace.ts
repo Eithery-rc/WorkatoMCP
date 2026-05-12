@@ -11,7 +11,12 @@ const SUMMARY_LIMIT = 500;
 function summarize(value: unknown): string {
   let s: string;
   try {
-    s = typeof value === 'string' ? value : JSON.stringify(value);
+    if (typeof value === 'string') {
+      s = value;
+    } else {
+      const stringified = JSON.stringify(value);
+      s = stringified === undefined ? String(value) : stringified;
+    }
   } catch {
     s = String(value);
   }
@@ -89,8 +94,9 @@ export function buildSlimTrace(
 
   const started = job.started_at ?? '';
   const finished = job.completed_at ?? '';
-  const duration_ms =
+  const rawDuration =
     started && finished ? new Date(finished).getTime() - new Date(started).getTime() : 0;
+  const duration_ms = Number.isFinite(rawDuration) ? rawDuration : 0;
 
   return {
     job_id: jobId,
