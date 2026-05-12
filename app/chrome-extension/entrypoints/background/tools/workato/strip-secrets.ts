@@ -37,6 +37,13 @@ const SECRET_EXACT_KEYS = new Set<string>([
   'ssh_key',
   'totp_secret',
   'mfa_secret',
+  // Database / cloud-storage connection URIs that embed credentials
+  // (e.g. `postgresql://user:pass@host/db`, Azure blob SAS strings).
+  'connection_string',
+  'connection_uri',
+  'dsn',
+  'uri',
+  'url',
 ]);
 
 const SECRET_SUFFIXES = [
@@ -75,17 +82,30 @@ function isSecretShapedString(value: unknown): boolean {
 }
 
 export function stripConnectionSecrets(value: unknown): unknown {
+  return stripWithSeen(value, new WeakSet<object>());
+}
+
+/**
+ * Internal recursive worker. The `seen` WeakSet guards against cyclic
+ * references; cycles are reported as the sentinel string '[Circular]'
+ * rather than crashing with a stack-overflow RangeError.
+ */
+function stripWithSeen(value: unknown, seen: WeakSet<object>): unknown {
   if (value === null || typeof value !== 'object') {
     return value;
   }
+  if (seen.has(value as object)) {
+    return '[Circular]';
+  }
+  seen.add(value as object);
   if (Array.isArray(value)) {
-    return value.map(stripConnectionSecrets);
+    return value.map((item) => stripWithSeen(item, seen));
   }
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     if (isSecretKey(k)) continue;
     if (typeof v === 'string' && isSecretShapedString(v)) continue;
-    out[k] = stripConnectionSecrets(v);
+    out[k] = stripWithSeen(v, seen);
   }
   return out;
 }

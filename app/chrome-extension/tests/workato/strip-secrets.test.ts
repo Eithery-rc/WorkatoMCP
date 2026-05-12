@@ -129,5 +129,30 @@ describe('stripConnectionSecrets', () => {
         d: 'short',
       });
     });
+
+    it('keeps recipe_count (numeric field with non-secret name)', () => {
+      expect(stripConnectionSecrets({ id: 1, recipe_count: 42 })).toEqual({
+        id: 1,
+        recipe_count: 42,
+      });
+    });
+
+    it('strips connection_string and dsn (database credentials)', () => {
+      const input = {
+        id: 1,
+        connection_string: 'postgresql://user:pass@host/db',
+        dsn: 'Server=h;Uid=u;Pwd=p',
+        uri: 'amqp://guest:guest@host',
+      };
+      expect(stripConnectionSecrets(input)).toEqual({ id: 1 });
+    });
+
+    it('handles cyclic references without crashing', () => {
+      const obj: Record<string, unknown> = { id: 1 };
+      obj.self = obj;
+      const out = stripConnectionSecrets(obj) as Record<string, unknown>;
+      expect(out.id).toBe(1);
+      expect(out.self).toBe('[Circular]');
+    });
   });
 });
