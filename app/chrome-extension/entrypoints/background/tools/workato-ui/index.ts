@@ -8,4 +8,5 @@ export {
   WorkatoUiInsertDatapillTool,
   WorkatoUiSaveRecipeTool,
   WorkatoUiExitEditModeTool,
+  WorkatoUiCreateRecipeTool,
 } from './handlers';

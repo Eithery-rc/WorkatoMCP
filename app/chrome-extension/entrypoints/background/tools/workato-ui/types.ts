@@ -56,9 +56,14 @@ export interface ExitEditModeArgs extends TabTargetArgs {
   discard?: boolean;
 }
 
+export interface CreateRecipeArgs extends TabTargetArgs {
+  name: string;
+  folder_id?: number;
+  project_name?: string;
+  description?: string;
+}
+
 export interface StepInfo {
   number: number;
-  app: string;
-  action: string;
-  hasConnection?: boolean;
+  label: string;
 }

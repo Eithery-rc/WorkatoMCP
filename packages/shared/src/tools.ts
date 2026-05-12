@@ -68,6 +68,7 @@ export const TOOL_NAMES = {
     INSERT_DATAPILL: 'workato_ui_insert_datapill',
     SAVE_RECIPE: 'workato_ui_save_recipe',
     EXIT_EDIT_MODE: 'workato_ui_exit_edit_mode',
+    CREATE_RECIPE: 'workato_ui_create_recipe',
   },
 };
 
@@ -1892,7 +1893,9 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO_UI.LIST_STEPS,
     description:
-      'List all steps on the currently open recipe as JSON: {number, app, action}. ' +
+      'List all steps on the currently open recipe as JSON: {number, label}. ' +
+      "`label` is the trimmed text of each step's .recipe-step__title-container " +
+      '(e.g. "Log message to Job report"). ' +
       'Useful right after workato_ui_open_recipe or after workato_ui_add_step to discover the newest step number. ' +
       'Works in both view and edit mode.',
     inputSchema: {
@@ -2045,6 +2048,42 @@ export const TOOL_SCHEMAS: Tool[] = [
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_UI.CREATE_RECIPE,
+    description:
+      "Create a new Workato recipe via the live tab's authenticated session (POST /recipes.json). " +
+      'Two modes: ' +
+      '(1) pass `folder_id` to drop the recipe into an existing folder; ' +
+      '(2) pass `project_name` (and omit `folder_id`) to first create a new project via ' +
+      "POST /web_api/projects.json and then create the recipe in that project's folder. " +
+      'Returns the new recipe id and edit URL. Prerequisite: the active tab must be a logged-in Workato page ' +
+      '(needed to read the CSRF token and reuse the session cookie). The recipe is created in trigger-only ' +
+      'state — open it in edit mode (workato_ui_open_recipe with mode="edit") to configure the trigger.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Recipe name (required).' },
+        folder_id: {
+          type: 'number',
+          description:
+            'Existing folder/project ID to create the recipe in. Mutually exclusive with project_name.',
+        },
+        project_name: {
+          type: 'string',
+          description:
+            'If provided AND folder_id is omitted, a new project is created first and its folder_id is used.',
+        },
+        description: {
+          type: 'string',
+          description:
+            'Optional description. When creating a project it is applied to the project; the recipe description defaults to empty.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['name'],
     },
   },
 ];

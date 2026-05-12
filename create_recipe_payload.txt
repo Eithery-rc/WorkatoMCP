@@ -1,0 +1,50 @@
+fetch("https://app.workato.com/web_api/projects.json", {
+  "headers": {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "content-type": "application/json",
+    "priority": "u=1, i",
+    "sec-ch-ua": "\"Chromium\";v=\"148\", \"Google Chrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "x-csrf-token": "J1zrbGpRbmJU_Jbb0NPpXIdSOQJxudRP1VQQugaZLr6mHf0nY8ICWrahuM97UYp9qRj3Yj_71gDBM3tovT3Mrg",
+    "x-requested-with": "XMLHttpRequest"
+  },
+  "referrer": "https://app.workato.com/?fid=285592",
+  "body": "{\"name\":\"Test kek\",\"description\":\"Test descr\"}",
+  "method": "POST",
+  "mode": "cors",
+  "credentials": "include"
+});
+
+{"result":{"id":"16193403","name":"Test kek","aws_iam_external_id":"workato_iam_external_id_201991","folder_id":31149758,"description":"Test descr","project_type":"standard","color":"forest","icon":null,"lcap_app_enabled":false,"editors":[{"user":{"name":"Roman Chikalenko","profile_image":""}}],"roles":[],"tab_order":{}}}
+
+
+
+fetch("https://app.workato.com/recipes.json", {
+  "headers": {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "content-encoding": "gzip",
+    "content-type": "application/json; charset=utf-8",
+    "priority": "u=1, i",
+    "sec-ch-ua": "\"Chromium\";v=\"148\", \"Google Chrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "x-csrf-token": "x7X4IMTCs_CoNVUpVX4j7Q8Csd6038O3xAlXxqNl_-9G9O5rzVHfyEpoez3-_EDMIUh_vvqdwfjQbjwUGMEd_w",
+    "x-requested-with": "XMLHttpRequest"
+  },
+  "referrer": "https://app.workato.com/?fid=285592",
+  "body": "{\"flow\":{\"name\":\"test123\",\"description\":\"\",\"visibility_private\":false,\"code\":\"{\\\"number\\\":0,\\\"keyword\\\":\\\"trigger\\\",\\\"input\\\":{},\\\"block\\\":[],\\\"uuid\\\":\\\"0e43c163-4a43-46d4-939b-b840c0bceb50\\\",\\\"unfinished\\\":false}\",\"config\":\"[]\",\"worker_concurrency\":1,\"folder_id\":31149758}}",
+  "method": "POST",
+  "mode": "cors",
+  "credentials": "include"
+});
+
+{"result":{"flow":{"action_applications":[],"applications":[],"business_objects":[],"categories":[],"clone_and_run":false,"comment":null,"copy_count":1,"copy_in_progress":false,"created_at":"2026-05-12T11:05:13.834-07:00","curated":false,"deferred_schema_refresh":false,"deleted_at":null,"deleted_by_id":null,"deleted_by_name":null,"deleted_from_folder_id":null,"description":"","engine_version":4,"folder_id":31149758,"follow_count":1,"had_succeeded_job":false,"has_trigger":false,"id":72685409,"job_count":0,"job_data_retention_policy":"default","job_failed_count":0,"job_succeeded_count":0,"last_flow_run_id":null,"last_run_at":null,"like_count":0,"major_version_no":1,"mobile_curated":false,"name":"test123","parent_id":null,"parent_name":null,"parent_version_no":null,"permanently_deleted_at":null,"recipe_type":"regular","root_parent_id":72685409,"root_parent_version_no":1,"runnable":false,"running":false,"shared_account_ids":[],"state":"stopped","stop_reason":null,"stopped_at":null,"stopped_for_error":null,"target_engine_version":null,"to_param":"72685409-test123","trigger_application":null,"trigger_business_object":null,"trigger_type":"invalid","updated_at":"2026-05-12T11:05:13.834-07:00","upgrade_notice_version_no":null,"user_avatar_url":"","user_id":201991,"user_name":"Roman Chikalenko","version_no":1,"visibility_private":false,"worker_concurrency":1,"code":"{\"number\":0,\"keyword\":\"trigger\",\"input\":{},\"block\":[],\"uuid\":\"0e43c163-4a43-46d4-939b-b840c0bceb50\",\"unfinished\":false}","config":"[]"},"folders":[{"id":31149758,"name":"Test kek"}]}}
