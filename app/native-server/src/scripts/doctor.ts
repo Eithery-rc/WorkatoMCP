@@ -629,7 +629,7 @@ export async function collectDoctorReport(options: DoctorOptions): Promise<Docto
   const pkg = readPackageJson();
   const distDir = resolveDistDir();
   const rootDir = path.resolve(distDir, '..');
-  const packageName = typeof pkg.name === 'string' ? pkg.name : 'mcp-chrome-bridge';
+  const packageName = typeof pkg.name === 'string' ? pkg.name : 'workatomcp-bridge';
   const packageVersion = typeof pkg.version === 'string' ? pkg.version : 'unknown';
   const commandInfo = getCommandInfo(pkg);
 
