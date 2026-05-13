@@ -1230,44 +1230,48 @@ class WorkatoLookupTableRowSearchImpl extends BaseBrowserToolExecutor {
 // ---------------------------------------------------------------------------
 
 /**
- * Replaces the table's rows with the contents of a CSV. The CSV must have
- * a header row whose names match the table's column labels. Workato
- * accepts up to 100,000 rows per table. The endpoint is observed to
- * REPLACE all existing rows (not append).
+ * Bulk-import rows into a Lookup Table from a CSV string. Endpoint and
+ * multipart field names captured verbatim 2026-05-13 via in-page XHR
+ * interceptor on the live Workato UI:
+ *
+ *   PUT /lookup_tables/<id>/upload.json
+ *   multipart/form-data:
+ *     lookup_table_entries_csv : <CSV file>
+ *     lookup_table_import_type : "append" | "replace"
+ *     lookup_table_skip_first_row : "true" | "false"
+ *
+ * mode="append" preserves existing rows and adds the CSV's rows after.
+ * mode="replace" wipes existing rows first, then inserts.
+ * skip_first_row=true treats the CSV's first row as a header to discard.
+ * skip_first_row=false imports every row including the first.
  */
 const IMPORT_CSV_PAGE_FN = `
-(async (tableId, csvContent, filename) => {
+(async (tableId, csvContent, mode, skipFirstRow, filename) => {
   try {
     ${PAGE_HELPERS}
     const csrf = getCsrf();
     if (!csrf) return { ok: false, stage: 'csrf', error: 'no CSRF token; ensure the active tab is a logged-in Workato page' };
 
-    async function attempt(fieldName) {
-      const blob = new Blob([csvContent], { type: 'text/csv' });
-      const fd = new FormData();
-      fd.append(fieldName, blob, filename || 'data.csv');
-      const res = await fetch('/lookup_tables/' + tableId + '/upload.json', {
-        method: 'PUT',
-        credentials: 'include',
-        headers: {
-          'x-csrf-token': csrf,
-          'x-requested-with': 'XMLHttpRequest',
-          'accept': 'application/json',
-        },
-        body: fd,
-      });
-      const text = await res.text().catch(() => '');
-      let json = null;
-      try { json = JSON.parse(text); } catch (_) {}
-      return { res, text, json };
-    }
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const fd = new FormData();
+    fd.append('lookup_table_entries_csv', blob, filename || 'data.csv');
+    fd.append('lookup_table_import_type', mode === 'replace' ? 'replace' : 'append');
+    fd.append('lookup_table_skip_first_row', skipFirstRow ? 'true' : 'false');
 
-    // Default field name is "file"; fall back to "csv" if Workato rejects.
-    let r = await attempt('file');
-    if (!r.res.ok && (r.res.status === 400 || r.res.status === 422)) {
-      const fallback = await attempt('csv');
-      if (fallback.res.ok) r = fallback;
-    }
+    const res = await fetch('/lookup_tables/' + tableId + '/upload.json', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: {
+        'x-csrf-token': csrf,
+        'x-requested-with': 'XMLHttpRequest',
+        'accept': 'application/json',
+      },
+      body: fd,
+    });
+    const text = await res.text().catch(() => '');
+    let json = null;
+    try { json = JSON.parse(text); } catch (_) {}
+    const r = { res, text, json };
 
     if (!r.res.ok) {
       return { ok: false, stage: 'http', status: r.res.status, error: 'PUT /lookup_tables/' + tableId + '/upload.json failed: HTTP ' + r.res.status + ' ' + r.text.slice(0, 400) };
@@ -1302,12 +1306,18 @@ class WorkatoLookupTableImportCsvImpl extends BaseBrowserToolExecutor {
   async execute(args: {
     table_id: number;
     csv_content: string;
+    mode?: 'append' | 'replace';
+    skip_first_row?: boolean;
     filename?: string;
     tabId?: number;
     windowId?: number;
   }): Promise<ToolResult> {
+    const mode = args?.mode === 'replace' ? 'replace' : 'append';
+    const skipFirstRow = args?.skip_first_row === true;
     console.log('[workato-lookup] import_csv requested:', {
       table_id: args?.table_id,
+      mode,
+      skip_first_row: skipFirstRow,
       filename: args?.filename,
       csv_bytes: args?.csv_content?.length,
     });
@@ -1335,7 +1345,7 @@ class WorkatoLookupTableImportCsvImpl extends BaseBrowserToolExecutor {
 
       const expr = `(${IMPORT_CSV_PAGE_FN})(${JSON.stringify(args.table_id)}, ${JSON.stringify(
         args.csv_content,
-      )}, ${JSON.stringify(args.filename ?? null)})`;
+      )}, ${JSON.stringify(mode)}, ${JSON.stringify(skipFirstRow)}, ${JSON.stringify(args.filename ?? null)})`;
 
       const result = await evaluateInPage<{
         ok: boolean;
@@ -1359,7 +1369,8 @@ class WorkatoLookupTableImportCsvImpl extends BaseBrowserToolExecutor {
       }
 
       const summary =
-        `imported CSV into lookup table ${result.table_id} "${result.name}" — ` +
+        `imported CSV into lookup table ${result.table_id} "${result.name}" ` +
+        `(mode=${mode}, skip_first_row=${skipFirstRow}) — ` +
         `${result.entry_count} total entries (${result.columns?.length ?? 0} columns)`;
       const payload = {
         table_id: result.table_id,

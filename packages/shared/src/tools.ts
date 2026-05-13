@@ -2474,10 +2474,13 @@ export const TOOL_SCHEMAS: Tool[] = [
     name: TOOL_NAMES.WORKATO_LOOKUP.IMPORT_CSV,
     description:
       'Bulk-import rows into a Workato Lookup Table from a CSV string (PUT /lookup_tables/<id>/upload.json, multipart). ' +
-      "The CSV's first row MUST be column names that match the table's user-facing column labels. " +
-      'Workato REPLACES all existing rows with the contents of the CSV (this is the same import the UI does). ' +
-      "Limits: up to 10 columns and 100,000 rows per table. Use workato_lookup_table_set_columns first if the schema doesn't match. " +
-      'Returns {table_id, name, entry_count, columns, first_rows} where first_rows is a preview (first ~20 rows by label). ' +
+      'Two modes: ' +
+      '`mode="append"` (DEFAULT, safe) preserves existing rows and adds the CSV rows after them. ' +
+      '`mode="replace"` wipes all existing rows first, then inserts. ' +
+      'If your CSV has a header row, set `skip_first_row=true` so it is not imported as data. ' +
+      'Column order in the CSV is positional (maps to col1, col2, ...). ' +
+      'Limits: up to 10 columns and 100,000 rows per table. Use workato_lookup_table_set_columns first if columns are not yet defined. ' +
+      'Returns {table_id, name, entry_count, columns, first_rows} where first_rows is a label-keyed preview (~20 rows). ' +
       'Prerequisite: the active tab must be a logged-in Workato page.',
     inputSchema: {
       type: 'object',
@@ -2486,7 +2489,18 @@ export const TOOL_SCHEMAS: Tool[] = [
         csv_content: {
           type: 'string',
           description:
-            'CSV text including the header row. Cells with commas/quotes must be RFC-4180-quoted. Pass the full file content; the tool builds a multipart upload internally.',
+            'CSV text. Cells with commas/quotes must be RFC-4180-quoted. Pass the full file content; the tool builds a multipart upload internally.',
+        },
+        mode: {
+          type: 'string',
+          enum: ['append', 'replace'],
+          description:
+            'Import mode. `append` (default) preserves existing rows; `replace` wipes them first. Use replace deliberately — it is destructive.',
+        },
+        skip_first_row: {
+          type: 'boolean',
+          description:
+            'When true, skips the first row of the CSV (treats it as a header). Default false — every row is imported. Set to true when your CSV starts with column names like "name,color".',
         },
         filename: {
           type: 'string',
