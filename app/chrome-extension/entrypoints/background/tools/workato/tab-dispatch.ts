@@ -5,12 +5,26 @@
  *
  * Selection algorithm (from spec §6):
  *   1. Query tabs matching *.workato.com or *.workato.is.
- *   2. If zero matches  -> TabNotFound.
- *   3. If matches span >1 distinct host -> MultipleWorkatoHosts.
- *   4. Otherwise pick tabs[0].
+ *   2. Keep only session-bearing hosts (first label must be `app`); this
+ *      excludes docs.workato.com, www.workato.com, support.workato.com, etc.
+ *   3. If zero matches  -> TabNotFound.
+ *   4. If matches span >1 distinct host -> MultipleWorkatoHosts.
+ *   5. Otherwise pick tabs[0].
  */
 
-const WORKATO_URL_PATTERNS = ['*://*.workato.com/*', '*://*.workato.is/*'];
+export const WORKATO_URL_PATTERNS = ['*://*.workato.com/*', '*://*.workato.is/*'];
+
+/**
+ * True for hosts that serve the logged-in Workato app (recipe editor / API).
+ * Allows app.workato.com, app.workato.is, and regional variants like
+ * app.eu.workato.com / app.jp.workato.com. Excludes docs / www / support /
+ * community / status / careers subdomains, none of which carry the session
+ * cookie and which would otherwise trip the MultipleWorkatoHosts guard.
+ */
+export function isWorkatoAppHost(host: string): boolean {
+  if (!host.startsWith('app.')) return false;
+  return host.endsWith('.workato.com') || host.endsWith('.workato.is');
+}
 
 const EXECUTE_SCRIPT_TIMEOUT_MS = 30_000;
 
@@ -72,7 +86,20 @@ export async function findWorkatoTab(): Promise<WorkatoTabInfo> {
     );
   }
 
-  const distinctHosts = new Set(usable.map((t) => new URL(t.url).host));
+  const appTabs = usable.filter((t) => isWorkatoAppHost(new URL(t.url).host));
+
+  if (appTabs.length === 0) {
+    const seenHosts = [...new Set(usable.map((t) => new URL(t.url).host))];
+    throw new WorkatoDispatchError(
+      'TabNotFound',
+      `Found Workato tabs (${seenHosts.join(', ')}) but none on the logged-in app ` +
+        '(app.workato.com or regional equivalent). Sign in at https://app.workato.com ' +
+        'in this browser before calling this tool.',
+      { seenHosts },
+    );
+  }
+
+  const distinctHosts = new Set(appTabs.map((t) => new URL(t.url).host));
   if (distinctHosts.size > 1) {
     throw new WorkatoDispatchError(
       'MultipleWorkatoHosts',
@@ -82,7 +109,7 @@ export async function findWorkatoTab(): Promise<WorkatoTabInfo> {
     );
   }
 
-  const tab = usable[0];
+  const tab = appTabs[0];
   const url = new URL(tab.url);
   return { tabId: tab.id, host: url.host, origin: url.origin };
 }
