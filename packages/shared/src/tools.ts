@@ -87,6 +87,7 @@ export const TOOL_NAMES = {
     ROW_UPDATE: 'workato_lookup_table_row_update',
     ROW_DELETE: 'workato_lookup_table_row_delete',
     ROW_SEARCH: 'workato_lookup_table_row_search',
+    IMPORT_CSV: 'workato_lookup_table_import_csv',
   },
   WORKATO_DATA_TABLE: {
     TABLES_LIST: 'workato_data_tables_list',
@@ -2467,6 +2468,34 @@ export const TOOL_SCHEMAS: Tool[] = [
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'qterm'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LOOKUP.IMPORT_CSV,
+    description:
+      'Bulk-import rows into a Workato Lookup Table from a CSV string (PUT /lookup_tables/<id>/upload.json, multipart). ' +
+      "The CSV's first row MUST be column names that match the table's user-facing column labels. " +
+      'Workato REPLACES all existing rows with the contents of the CSV (this is the same import the UI does). ' +
+      "Limits: up to 10 columns and 100,000 rows per table. Use workato_lookup_table_set_columns first if the schema doesn't match. " +
+      'Returns {table_id, name, entry_count, columns, first_rows} where first_rows is a preview (first ~20 rows by label). ' +
+      'Prerequisite: the active tab must be a logged-in Workato page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'number', description: 'Numeric lookup-table id.' },
+        csv_content: {
+          type: 'string',
+          description:
+            'CSV text including the header row. Cells with commas/quotes must be RFC-4180-quoted. Pass the full file content; the tool builds a multipart upload internally.',
+        },
+        filename: {
+          type: 'string',
+          description: 'Optional filename to send in the multipart part. Defaults to "data.csv".',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id', 'csv_content'],
     },
   },
   {

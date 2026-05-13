@@ -1226,6 +1226,163 @@ class WorkatoLookupTableRowSearchImpl extends BaseBrowserToolExecutor {
 }
 
 // ---------------------------------------------------------------------------
+// Bulk CSV import — PUT /lookup_tables/:id/upload.json
+// ---------------------------------------------------------------------------
+
+/**
+ * Replaces the table's rows with the contents of a CSV. The CSV must have
+ * a header row whose names match the table's column labels. Workato
+ * accepts up to 100,000 rows per table. The endpoint is observed to
+ * REPLACE all existing rows (not append).
+ */
+const IMPORT_CSV_PAGE_FN = `
+(async (tableId, csvContent, filename) => {
+  try {
+    ${PAGE_HELPERS}
+    const csrf = getCsrf();
+    if (!csrf) return { ok: false, stage: 'csrf', error: 'no CSRF token; ensure the active tab is a logged-in Workato page' };
+
+    async function attempt(fieldName) {
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const fd = new FormData();
+      fd.append(fieldName, blob, filename || 'data.csv');
+      const res = await fetch('/lookup_tables/' + tableId + '/upload.json', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: {
+          'x-csrf-token': csrf,
+          'x-requested-with': 'XMLHttpRequest',
+          'accept': 'application/json',
+        },
+        body: fd,
+      });
+      const text = await res.text().catch(() => '');
+      let json = null;
+      try { json = JSON.parse(text); } catch (_) {}
+      return { res, text, json };
+    }
+
+    // Default field name is "file"; fall back to "csv" if Workato rejects.
+    let r = await attempt('file');
+    if (!r.res.ok && (r.res.status === 400 || r.res.status === 422)) {
+      const fallback = await attempt('csv');
+      if (fallback.res.ok) r = fallback;
+    }
+
+    if (!r.res.ok) {
+      return { ok: false, stage: 'http', status: r.res.status, error: 'PUT /lookup_tables/' + tableId + '/upload.json failed: HTTP ' + r.res.status + ' ' + r.text.slice(0, 400) };
+    }
+    const result = r.json && r.json.result;
+    if (!result) return { ok: false, stage: 'parse', error: 'upload response missing result: ' + r.text.slice(0, 400) };
+
+    // Build slim shape: entry_count + columns (label-only) + first page of rows.
+    const labelMap = labelMapFromSchema(result.entry_schema || []);
+    const columns = (result.entry_schema || [])
+      .filter((c, i) => c.sticky)
+      .map((c, i) => ({ name: c.label, position: i + 1 }));
+    const firstRows = ((result.lookup_table_entries && result.lookup_table_entries.result) || []).map(rowToLabeled.bind(null, labelMap));
+    return {
+      ok: true,
+      table_id: result.id,
+      name: result.name,
+      entry_count: result.entry_count,
+      columns: columns,
+      first_rows: firstRows,
+      total_count: (result.lookup_table_entries && result.lookup_table_entries.total_count) || result.entry_count,
+    };
+  } catch (e) {
+    return { ok: false, stage: 'exception', error: String(e && e.message || e) };
+  }
+})
+`;
+
+class WorkatoLookupTableImportCsvImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_LOOKUP.IMPORT_CSV;
+
+  async execute(args: {
+    table_id: number;
+    csv_content: string;
+    filename?: string;
+    tabId?: number;
+    windowId?: number;
+  }): Promise<ToolResult> {
+    console.log('[workato-lookup] import_csv requested:', {
+      table_id: args?.table_id,
+      filename: args?.filename,
+      csv_bytes: args?.csv_content?.length,
+    });
+    try {
+      if (typeof args?.table_id !== 'number' || !Number.isFinite(args.table_id)) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': table_id (number) is required',
+        );
+      }
+      if (typeof args.csv_content !== 'string' || args.csv_content.length === 0) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': csv_content (non-empty string) is required',
+        );
+      }
+
+      const tabId = await resolveTabId(args);
+      await ensureAttached(tabId);
+
+      const url = await getTabUrl(tabId);
+      if (!/workato\.(com|is)/.test(url)) {
+        return createErrorResponse(
+          `workato_lookup_table_import_csv: active tab is not a Workato page (url=${url}).`,
+        );
+      }
+
+      const expr = `(${IMPORT_CSV_PAGE_FN})(${JSON.stringify(args.table_id)}, ${JSON.stringify(
+        args.csv_content,
+      )}, ${JSON.stringify(args.filename ?? null)})`;
+
+      const result = await evaluateInPage<{
+        ok: boolean;
+        stage?: string;
+        status?: number;
+        error?: string;
+        table_id?: number;
+        name?: string;
+        entry_count?: number;
+        columns?: Array<{ name: string; position: number }>;
+        first_rows?: Array<Record<string, unknown>>;
+        total_count?: number;
+      }>(tabId, expr, { awaitPromise: true });
+
+      if (!result?.ok) {
+        return createErrorResponse(
+          `workato_lookup_table_import_csv: ${result?.error ?? 'unknown error'}` +
+            (result?.stage ? ` (stage=${result.stage})` : '') +
+            (result?.status ? ` http=${result.status}` : ''),
+        );
+      }
+
+      const summary =
+        `imported CSV into lookup table ${result.table_id} "${result.name}" — ` +
+        `${result.entry_count} total entries (${result.columns?.length ?? 0} columns)`;
+      const payload = {
+        table_id: result.table_id,
+        name: result.name,
+        entry_count: result.entry_count,
+        columns: result.columns,
+        first_rows: result.first_rows,
+        total_count: result.total_count,
+      };
+      return {
+        content: [{ type: 'text', text: `${summary}\n${JSON.stringify(payload)}` }],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-lookup] import_csv failed:', error);
+      return createErrorResponse(
+        `workato_lookup_table_import_csv failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Exports — runtime instances (tools/index.ts reads `.name`).
 // ---------------------------------------------------------------------------
 
@@ -1239,3 +1396,4 @@ export const WorkatoLookupTableRowCreateTool = new WorkatoLookupTableRowCreateIm
 export const WorkatoLookupTableRowUpdateTool = new WorkatoLookupTableRowUpdateImpl();
 export const WorkatoLookupTableRowDeleteTool = new WorkatoLookupTableRowDeleteImpl();
 export const WorkatoLookupTableRowSearchTool = new WorkatoLookupTableRowSearchImpl();
+export const WorkatoLookupTableImportCsvTool = new WorkatoLookupTableImportCsvImpl();
