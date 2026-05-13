@@ -2473,23 +2473,31 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO_LOOKUP.IMPORT_CSV,
     description:
-      'Bulk-import rows into a Workato Lookup Table from a CSV string (PUT /lookup_tables/<id>/upload.json, multipart). ' +
+      'Bulk-import rows into a Workato Lookup Table from a CSV file (PUT /lookup_tables/<id>/upload.json, multipart). ' +
+      'TWO WAYS to provide the CSV — **prefer `csv_path` for files on disk** so the file content stays out of agent context: ' +
+      '(1) `csv_path` — absolute path on the bridge host; the bridge reads the file via GET /file and streams it. ' +
+      '(2) `csv_content` — inline CSV string for ad-hoc small imports. ' +
       'Two modes: ' +
       '`mode="append"` (DEFAULT, safe) preserves existing rows and adds the CSV rows after them. ' +
       '`mode="replace"` wipes all existing rows first, then inserts. ' +
       'If your CSV has a header row, set `skip_first_row=true` so it is not imported as data. ' +
       'Column order in the CSV is positional (maps to col1, col2, ...). ' +
-      'Limits: up to 10 columns and 100,000 rows per table. Use workato_lookup_table_set_columns first if columns are not yet defined. ' +
+      'Limits: up to 10 columns and 100,000 rows per table. ' +
       'Returns {table_id, name, entry_count, columns, first_rows} where first_rows is a label-keyed preview (~20 rows). ' +
       'Prerequisite: the active tab must be a logged-in Workato page.',
     inputSchema: {
       type: 'object',
       properties: {
         table_id: { type: 'number', description: 'Numeric lookup-table id.' },
+        csv_path: {
+          type: 'string',
+          description:
+            'Absolute file path on the BRIDGE HOST (the machine running the native-server). The bridge reads the file via GET /file and streams content — agent never materializes it in context. Mutually exclusive with csv_content.',
+        },
         csv_content: {
           type: 'string',
           description:
-            'CSV text. Cells with commas/quotes must be RFC-4180-quoted. Pass the full file content; the tool builds a multipart upload internally.',
+            'Inline CSV string (alternative to csv_path). Use only for small ad-hoc imports — large files will bloat agent context. Cells with commas/quotes must be RFC-4180-quoted.',
         },
         mode: {
           type: 'string',
@@ -2504,12 +2512,13 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         filename: {
           type: 'string',
-          description: 'Optional filename to send in the multipart part. Defaults to "data.csv".',
+          description:
+            'Optional filename to send in the multipart part. Defaults to "data.csv" or, when csv_path is used, the basename of the path.',
         },
         tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
-      required: ['table_id', 'csv_content'],
+      required: ['table_id'],
     },
   },
   {

@@ -81,8 +81,68 @@ export class Server {
     // Extension communication
     this.setupExtensionRoutes();
 
+    // File-read endpoint (bridge has Node.js filesystem access)
+    this.setupFileRoutes();
+
     // MCP routes
     this.setupMcpRoutes();
+  }
+
+  // ============================================================
+  // File Routes — let the extension stream local files via the
+  // bridge so file contents never have to live in agent context.
+  // Loopback-only by design (bridge binds 127.0.0.1).
+  // ============================================================
+
+  private setupFileRoutes(): void {
+    this.fastify.get(
+      '/file',
+      async (request: FastifyRequest<{ Querystring: { path?: string } }>, reply: FastifyReply) => {
+        const filePath = request.query?.path;
+        if (typeof filePath !== 'string' || filePath.length === 0) {
+          reply.code(HTTP_STATUS.BAD_REQUEST).send({ error: 'missing required query param: path' });
+          return;
+        }
+        try {
+          // Lazy require so we don't pay startup cost when /file is unused.
+          const fs = await import('node:fs/promises');
+          const path = await import('node:path');
+          const resolved = path.resolve(filePath);
+          const stat = await fs.stat(resolved);
+          if (!stat.isFile()) {
+            reply.code(HTTP_STATUS.BAD_REQUEST).send({ error: 'path is not a file' });
+            return;
+          }
+          const ext = path.extname(resolved).toLowerCase();
+          const contentType =
+            ext === '.csv'
+              ? 'text/csv; charset=utf-8'
+              : ext === '.json'
+                ? 'application/json; charset=utf-8'
+                : ext === '.txt'
+                  ? 'text/plain; charset=utf-8'
+                  : 'application/octet-stream';
+          const buf = await fs.readFile(resolved);
+          reply
+            .code(HTTP_STATUS.OK)
+            .header('content-type', contentType)
+            .header('content-length', String(buf.byteLength))
+            .header('x-file-path', resolved)
+            .send(buf);
+        } catch (err) {
+          const e = err as NodeJS.ErrnoException;
+          if (e?.code === 'ENOENT') {
+            reply.code(404).send({ error: 'file not found', path: filePath });
+          } else if (e?.code === 'EACCES' || e?.code === 'EPERM') {
+            reply.code(403).send({ error: 'permission denied', path: filePath });
+          } else {
+            reply
+              .code(HTTP_STATUS.INTERNAL_SERVER_ERROR)
+              .send({ error: `failed to read file: ${e?.message ?? String(err)}` });
+          }
+        }
+      },
+    );
   }
 
   // ============================================================

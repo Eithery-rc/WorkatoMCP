@@ -1305,7 +1305,8 @@ class WorkatoLookupTableImportCsvImpl extends BaseBrowserToolExecutor {
 
   async execute(args: {
     table_id: number;
-    csv_content: string;
+    csv_content?: string;
+    csv_path?: string;
     mode?: 'append' | 'replace';
     skip_first_row?: boolean;
     filename?: string;
@@ -1320,6 +1321,7 @@ class WorkatoLookupTableImportCsvImpl extends BaseBrowserToolExecutor {
       skip_first_row: skipFirstRow,
       filename: args?.filename,
       csv_bytes: args?.csv_content?.length,
+      csv_path: args?.csv_path,
     });
     try {
       if (typeof args?.table_id !== 'number' || !Number.isFinite(args.table_id)) {
@@ -1327,10 +1329,41 @@ class WorkatoLookupTableImportCsvImpl extends BaseBrowserToolExecutor {
           ERROR_MESSAGES.INVALID_PARAMETERS + ': table_id (number) is required',
         );
       }
-      if (typeof args.csv_content !== 'string' || args.csv_content.length === 0) {
+      const hasContent = typeof args.csv_content === 'string' && args.csv_content.length > 0;
+      const hasPath = typeof args.csv_path === 'string' && args.csv_path.length > 0;
+      if (!hasContent && !hasPath) {
         return createErrorResponse(
-          ERROR_MESSAGES.INVALID_PARAMETERS + ': csv_content (non-empty string) is required',
+          ERROR_MESSAGES.INVALID_PARAMETERS +
+            ': provide either csv_content (string) or csv_path (path on the bridge host)',
         );
+      }
+
+      // Resolve csv content via bridge if path is provided. Keeps file content
+      // out of the agent's context.
+      let csvContent: string;
+      let resolvedFilename = args.filename ?? 'data.csv';
+      if (hasContent) {
+        csvContent = args.csv_content as string;
+      } else {
+        const url = `http://127.0.0.1:12306/file?path=${encodeURIComponent(args.csv_path as string)}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          const t = await res.text().catch(() => '');
+          return createErrorResponse(
+            `workato_lookup_table_import_csv: bridge file-read failed: HTTP ${res.status} ${t.slice(0, 300)}`,
+          );
+        }
+        csvContent = await res.text();
+        // Derive default filename from the path if caller didn't override.
+        if (!args.filename) {
+          const m = (args.csv_path as string).match(/[\\/]([^\\/]+)$/);
+          if (m) resolvedFilename = m[1];
+        }
+        if (csvContent.length === 0) {
+          return createErrorResponse(
+            `workato_lookup_table_import_csv: file at ${args.csv_path} is empty`,
+          );
+        }
       }
 
       const tabId = await resolveTabId(args);
@@ -1344,8 +1377,8 @@ class WorkatoLookupTableImportCsvImpl extends BaseBrowserToolExecutor {
       }
 
       const expr = `(${IMPORT_CSV_PAGE_FN})(${JSON.stringify(args.table_id)}, ${JSON.stringify(
-        args.csv_content,
-      )}, ${JSON.stringify(mode)}, ${JSON.stringify(skipFirstRow)}, ${JSON.stringify(args.filename ?? null)})`;
+        csvContent,
+      )}, ${JSON.stringify(mode)}, ${JSON.stringify(skipFirstRow)}, ${JSON.stringify(resolvedFilename)})`;
 
       const result = await evaluateInPage<{
         ok: boolean;
