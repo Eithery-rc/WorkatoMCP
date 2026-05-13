@@ -20,14 +20,8 @@ const COMMANDS = {
     }
   }
 }`,
-  skillInstallUserBash:
-    'git clone --depth 1 https://github.com/Eithery-rc/WorkatoMCP /tmp/wmcp \\\n  && mkdir -p ~/.claude/skills \\\n  && cp -r /tmp/wmcp/skills/workato-recipes ~/.claude/skills/ \\\n  && rm -rf /tmp/wmcp',
-  skillInstallUserPwsh:
-    'git clone --depth 1 https://github.com/Eithery-rc/WorkatoMCP $env:TEMP\\wmcp; `\n  New-Item -ItemType Directory -Force $HOME\\.claude\\skills | Out-Null; `\n  Copy-Item -Recurse $env:TEMP\\wmcp\\skills\\workato-recipes $HOME\\.claude\\skills\\; `\n  Remove-Item -Recurse -Force $env:TEMP\\wmcp',
-  skillInstallProjectBash:
-    'git clone --depth 1 https://github.com/Eithery-rc/WorkatoMCP /tmp/wmcp \\\n  && mkdir -p .claude/skills \\\n  && cp -r /tmp/wmcp/skills/workato-recipes .claude/skills/ \\\n  && rm -rf /tmp/wmcp',
-  skillInstallProjectPwsh:
-    'git clone --depth 1 https://github.com/Eithery-rc/WorkatoMCP $env:TEMP\\wmcp; `\n  New-Item -ItemType Directory -Force .claude\\skills | Out-Null; `\n  Copy-Item -Recurse $env:TEMP\\wmcp\\skills\\workato-recipes .claude\\skills\\; `\n  Remove-Item -Recurse -Force $env:TEMP\\wmcp',
+  pluginMarketplaceAdd: '/plugin marketplace add Eithery-rc/WorkatoMCP',
+  pluginInstall: '/plugin install workato-recipes@workato-mcp',
 } as const;
 
 type CommandKey = keyof typeof COMMANDS;
@@ -235,102 +229,39 @@ async function openDocs(): Promise<void> {
             <div class="flex items-center gap-2">
               <span class="welcome-step-num">4</span>
               <h2 class="welcome-title text-xl font-medium">
-                Install the <code class="welcome-code">workato-recipes</code> agent skill
+                Install the <code class="welcome-code">workato-recipes</code> skill
                 <span class="welcome-subtle text-xs ml-2">(optional but recommended)</span>
               </h2>
             </div>
             <p class="welcome-muted text-sm mt-2">
-              Ships with the repo: an index + 7-file reference covering recipe code-tree JSON,
-              control flow, Variables-by-Workato, and the full Ruby-allowlist formula API. When
-              installed, Claude Code auto-loads it whenever you ask it to build, edit, or review a
-              Workato recipe — no need to paste the rules every time.
+              An index + 7-file reference covering recipe code-tree JSON, control flow,
+              Variables-by-Workato, and the full Ruby-allowlist formula API. When installed, Claude
+              Code auto-loads it whenever you ask it to build, edit, or review a Workato recipe. Two
+              slash commands in your Claude Code session:
             </p>
 
-            <div class="mt-4 space-y-4">
-              <div>
-                <div
-                  class="welcome-mono welcome-subtle text-[10px] uppercase tracking-widest font-medium mb-2"
+            <div class="mt-4 space-y-2">
+              <div class="welcome-command-row flex items-center justify-between gap-3 px-4 py-3">
+                <code class="welcome-code text-sm break-all">{{
+                  COMMANDS.pluginMarketplaceAdd
+                }}</code>
+                <button
+                  class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
+                  :style="{ color: copyColor('pluginMarketplaceAdd') }"
+                  @click="copyCommand('pluginMarketplaceAdd')"
                 >
-                  Option A — User-global (loads in every Claude Code session)
-                </div>
-                <div class="welcome-command-row flex items-start justify-between gap-3 px-4 py-3">
-                  <pre
-                    class="welcome-code text-xs flex-1 overflow-x-auto"
-                    style="white-space: pre"
-                    >{{ COMMANDS.skillInstallUserBash }}</pre
-                  >
-                  <button
-                    class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
-                    :style="{ color: copyColor('skillInstallUserBash') }"
-                    @click="copyCommand('skillInstallUserBash')"
-                  >
-                    {{ copyLabel('skillInstallUserBash') }}
-                  </button>
-                </div>
-                <div
-                  class="welcome-command-row flex items-start justify-between gap-3 px-4 py-3 mt-2"
-                >
-                  <div class="min-w-0 flex-1">
-                    <div
-                      class="welcome-mono welcome-subtle text-[10px] uppercase tracking-widest font-medium"
-                    >
-                      Windows / PowerShell
-                    </div>
-                    <pre class="welcome-code text-xs overflow-x-auto" style="white-space: pre">{{
-                      COMMANDS.skillInstallUserPwsh
-                    }}</pre>
-                  </div>
-                  <button
-                    class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
-                    :style="{ color: copyColor('skillInstallUserPwsh') }"
-                    @click="copyCommand('skillInstallUserPwsh')"
-                  >
-                    {{ copyLabel('skillInstallUserPwsh') }}
-                  </button>
-                </div>
+                  {{ copyLabel('pluginMarketplaceAdd') }}
+                </button>
               </div>
-
-              <div>
-                <div
-                  class="welcome-mono welcome-subtle text-[10px] uppercase tracking-widest font-medium mb-2"
+              <div class="welcome-command-row flex items-center justify-between gap-3 px-4 py-3">
+                <code class="welcome-code text-sm break-all">{{ COMMANDS.pluginInstall }}</code>
+                <button
+                  class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
+                  :style="{ color: copyColor('pluginInstall') }"
+                  @click="copyCommand('pluginInstall')"
                 >
-                  Option B — Per-project (run from your project root; scope to one repo)
-                </div>
-                <div class="welcome-command-row flex items-start justify-between gap-3 px-4 py-3">
-                  <pre
-                    class="welcome-code text-xs flex-1 overflow-x-auto"
-                    style="white-space: pre"
-                    >{{ COMMANDS.skillInstallProjectBash }}</pre
-                  >
-                  <button
-                    class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
-                    :style="{ color: copyColor('skillInstallProjectBash') }"
-                    @click="copyCommand('skillInstallProjectBash')"
-                  >
-                    {{ copyLabel('skillInstallProjectBash') }}
-                  </button>
-                </div>
-                <div
-                  class="welcome-command-row flex items-start justify-between gap-3 px-4 py-3 mt-2"
-                >
-                  <div class="min-w-0 flex-1">
-                    <div
-                      class="welcome-mono welcome-subtle text-[10px] uppercase tracking-widest font-medium"
-                    >
-                      Windows / PowerShell
-                    </div>
-                    <pre class="welcome-code text-xs overflow-x-auto" style="white-space: pre">{{
-                      COMMANDS.skillInstallProjectPwsh
-                    }}</pre>
-                  </div>
-                  <button
-                    class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
-                    :style="{ color: copyColor('skillInstallProjectPwsh') }"
-                    @click="copyCommand('skillInstallProjectPwsh')"
-                  >
-                    {{ copyLabel('skillInstallProjectPwsh') }}
-                  </button>
-                </div>
+                  {{ copyLabel('pluginInstall') }}
+                </button>
               </div>
 
               <div class="welcome-alt-row welcome-muted px-4 py-3 text-xs">
@@ -338,8 +269,15 @@ async function openDocs(): Promise<void> {
                 <code class="welcome-code welcome-code-inline px-1 py-0.5"
                   >skills/workato-recipes/</code
                 >
-                into whatever skill / rules directory your agent loads from. Pull updates by
-                re-running the install command.
+                from
+                <a
+                  href="https://github.com/Eithery-rc/WorkatoMCP"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="welcome-code"
+                  >github.com/Eithery-rc/WorkatoMCP</a
+                >
+                into whatever skill/rules directory your agent loads from.
               </div>
             </div>
           </section>
