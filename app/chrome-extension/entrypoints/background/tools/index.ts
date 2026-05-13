@@ -5,6 +5,7 @@ import * as workatoTools from './workato';
 import * as workatoUiTools from './workato-ui';
 import * as workatoRecipeTools from './workato-recipe';
 import * as workatoLookupTools from './workato-lookup';
+import * as workatoDataTableTools from './workato-data-table';
 import * as workatoSessionTools from './workato-session';
 import { flowRunTool, listPublishedFlowsTool } from './record-replay';
 
@@ -14,6 +15,7 @@ const tools = {
   ...workatoUiTools,
   ...workatoRecipeTools,
   ...workatoLookupTools,
+  ...workatoDataTableTools,
   ...workatoSessionTools,
   flowRunTool,
   listPublishedFlowsTool,
