@@ -88,6 +88,20 @@ export const TOOL_NAMES = {
     ROW_DELETE: 'workato_lookup_table_row_delete',
     ROW_SEARCH: 'workato_lookup_table_row_search',
   },
+  WORKATO_DATA_TABLE: {
+    TABLES_LIST: 'workato_data_tables_list',
+    TABLE_GET: 'workato_data_table_get',
+    TABLE_CREATE: 'workato_data_table_create',
+    TABLE_RENAME: 'workato_data_table_rename',
+    TABLE_DELETE: 'workato_data_table_delete',
+    ADD_COLUMN: 'workato_data_table_add_column',
+    UPDATE_COLUMN: 'workato_data_table_update_column',
+    DELETE_COLUMN: 'workato_data_table_delete_column',
+    ROW_LIST: 'workato_data_table_row_list',
+    ROW_CREATE: 'workato_data_table_row_create',
+    ROW_UPDATE: 'workato_data_table_row_update',
+    ROW_DELETE: 'workato_data_table_row_delete',
+  },
   WORKATO_SESSION: {
     WHOAMI: 'workato_whoami',
   },
@@ -2453,6 +2467,284 @@ export const TOOL_SCHEMAS: Tool[] = [
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'qterm'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_DATA_TABLE.TABLES_LIST,
+    description:
+      'List Workato Data Tables in a project folder (GET /web_api/mixed_assets.json filtered to data-table assets). ' +
+      'Data Tables are the newer relational store (distinct from the older Lookup Tables at /lookup_tables/). ' +
+      'Returns a slim shape: [{id, name, folder_id, total_entries_count, updated_at}]. ' +
+      'If folder_id is omitted, the tool falls back to the folder visible in the current Workato URL (best-effort). ' +
+      'Prerequisite: the active tab must be a logged-in Workato page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        folder_id: {
+          type: 'number',
+          description:
+            'Numeric folder id to list data tables under. Optional — falls back to the folder in the current URL when possible.',
+        },
+        page: { type: 'number', description: 'Page number (1-based). Optional.' },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_DATA_TABLE.TABLE_GET,
+    description:
+      'Fetch a Data Table with its columns (GET /web_api/workato_db/tables/<id>.json). ' +
+      'Returns {id, name, table_id_uuid, folder_id, columns: [{name, type, id, hidden, read_only}], total_entries_count}. ' +
+      'System columns (Record ID, Created time, Last modified time) are hidden by default; pass include_system=true to include them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'string', description: 'Data Table id (UUID string).' },
+        include_system: {
+          type: 'boolean',
+          description:
+            'When true, also returns the 3 system columns (Record ID, Created time, Last modified time). Default false.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_DATA_TABLE.TABLE_CREATE,
+    description:
+      'Create a new Data Table (POST /web_api/workato_db/tables.json) and optionally add user columns via a follow-up schema PUT. ' +
+      'The server auto-seeds 3 system columns (Record ID, Created time, Last modified time); when `columns` is provided, the tool GETs ' +
+      'the new table, appends the user columns (only {type,title} needed), and PUTs the full schema back. ' +
+      'Column types: short-text, long-text, integer, decimal, boolean, date, date-time, file, multi-value, link-to-table. ' +
+      'Returns {table_id, name, folder_id, columns}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'New data-table name (non-empty).' },
+        folder_id: { type: 'number', description: 'Numeric folder id to create the table under.' },
+        columns: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'Column title.' },
+              type: {
+                type: 'string',
+                description:
+                  'Column type: short-text (default), long-text, integer, decimal, boolean, date, date-time, file, multi-value, link-to-table.',
+              },
+            },
+            required: ['name'],
+          },
+          description: 'Optional user columns to create after the table is provisioned.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['name', 'folder_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_DATA_TABLE.TABLE_RENAME,
+    description:
+      'Rename a Data Table (PUT /web_api/workato_db/tables/<id>.json with {name}). Returns {table_id, name}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'string', description: 'Data Table id (UUID string).' },
+        name: { type: 'string', description: 'New name (non-empty).' },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id', 'name'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_DATA_TABLE.TABLE_DELETE,
+    description:
+      'Delete a Data Table (DELETE /web_api/workato_db/tables/<id>.json). Returns {table_id, deleted: true}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'string', description: 'Data Table id (UUID string).' },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_DATA_TABLE.ADD_COLUMN,
+    description:
+      'Append a column to a Data Table by GETting the current schema, appending the new entry, and PUTting the full schema back. ' +
+      'Default type is short-text. Returns {table_id, column_id, name, type}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'string', description: 'Data Table id (UUID string).' },
+        name: { type: 'string', description: 'New column title (non-empty).' },
+        type: {
+          type: 'string',
+          description:
+            'Column type: short-text (default), long-text, integer, decimal, boolean, date, date-time, file, multi-value, link-to-table.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id', 'name'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_DATA_TABLE.UPDATE_COLUMN,
+    description:
+      'Rename and/or retype an existing user column (full-schema PUT). Identify the column by column_name OR column_id. ' +
+      'At least one of `name` or `type` must be provided. System columns are protected. Returns {table_id, column_id, name, type}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'string', description: 'Data Table id (UUID string).' },
+        column_name: {
+          type: 'string',
+          description: 'Existing column title to update (provide this OR column_id).',
+        },
+        column_id: {
+          type: 'string',
+          description: 'Existing column UUID to update (provide this OR column_name).',
+        },
+        name: { type: 'string', description: 'New column title. Optional.' },
+        type: {
+          type: 'string',
+          description:
+            'New column type. Optional. Must be one of: short-text, long-text, integer, decimal, boolean, date, date-time, file, multi-value, link-to-table.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_DATA_TABLE.DELETE_COLUMN,
+    description:
+      'Delete a user column from a Data Table (full-schema PUT omitting the column). Identify by column_name OR column_id. ' +
+      'Refuses to delete the 3 system columns (Record ID, Created time, Last modified time). Returns {table_id, column_id, deleted: true}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'string', description: 'Data Table id (UUID string).' },
+        column_name: {
+          type: 'string',
+          description: 'Existing column title to delete (provide this OR column_id).',
+        },
+        column_id: {
+          type: 'string',
+          description: 'Existing column UUID to delete (provide this OR column_name).',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_DATA_TABLE.ROW_LIST,
+    description:
+      'Query rows in a Data Table (POST /web_api/workato_db/tables/<id>/records/query.json). ' +
+      'Supports order_by_column (user-facing label, default "Created time"), direction (asc|desc, default desc), ' +
+      'limit (default 100), and continuation_token for pagination. Returns rows keyed by user-facing column label ' +
+      '(plus a `Record ID` field carrying the row UUID).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'string', description: 'Data Table id (UUID string).' },
+        order_by_column: {
+          type: 'string',
+          description: 'Column title to sort by. Defaults to "Created time".',
+        },
+        direction: {
+          type: 'string',
+          enum: ['asc', 'desc'],
+          description: 'Sort direction. Default desc.',
+        },
+        limit: { type: 'number', description: 'Max rows to return. Default 100.' },
+        continuation_token: {
+          type: 'string',
+          description: 'Opaque cursor returned by a prior page. Optional.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_DATA_TABLE.ROW_CREATE,
+    description:
+      'Insert a row into a Data Table (POST /web_api/workato_db/tables/<id>/records.json). ' +
+      "Accepts `row` keyed by the table's user-facing column labels; the tool fetches the schema to resolve " +
+      'label->UUID, then sends a UUID-keyed body. Returns {table_id, record_id, row} where `row` is label-keyed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'string', description: 'Data Table id (UUID string).' },
+        row: {
+          type: 'object',
+          description:
+            'Row values keyed by user-facing column label. Only labels matching the table schema are sent.',
+          additionalProperties: true,
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id', 'row'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_DATA_TABLE.ROW_UPDATE,
+    description:
+      'Update a row in a Data Table (PUT /web_api/workato_db/tables/<id>/records/<record_id>.json). ' +
+      'Accepts a partial label-keyed `row`; only provided fields are sent (UUID-keyed). ' +
+      'Returns {table_id, record_id, row}. NOTE: endpoint is inferred — verify on smoke test.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'string', description: 'Data Table id (UUID string).' },
+        record_id: {
+          type: 'string',
+          description: 'Row UUID (the "Record ID" value of the target row).',
+        },
+        row: {
+          type: 'object',
+          description:
+            'Partial row keyed by user-facing column label. Only provided labels are updated.',
+          additionalProperties: true,
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id', 'record_id', 'row'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_DATA_TABLE.ROW_DELETE,
+    description:
+      'Delete one or more rows from a Data Table (POST /web_api/workato_db/tables/<id>/records/delete_batch.json). ' +
+      'Accepts a single record id (string) or an array of ids. Returns {table_id, record_ids, deleted: true}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'string', description: 'Data Table id (UUID string).' },
+        record_ids: {
+          oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+          description: 'Row UUID, or array of row UUIDs, to delete.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id', 'record_ids'],
     },
   },
   {
