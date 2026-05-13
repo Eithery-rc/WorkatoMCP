@@ -23,6 +23,7 @@ Load the file matching what you're working on. **Always read `code-tree.md` firs
 | `date-formulas.md`      | `now`/`today`, `.strftime`, `.in_time_zone`, date math (`+ N.days`), epoch ↔ datetime.                                                                                                                                                                                                                                                                                                                                                                                     |
 | `array-formulas.md`     | Arrays of hashes: `.where`, `.pluck`, `.compact`, `.flatten`, `.join`/`.smart_join`, `.uniq`.                                                                                                                                                                                                                                                                                                                                                                              |
 | `complex-data-types.md` | Hash ops (`.dig`, `.except`, `.slice`, `.merge`), JSON/XML/CSV/URL encoding, nil-safety without `&.`.                                                                                                                                                                                                                                                                                                                                                                      |
+| `lookup-formulas.md`    | Query data sources from inside a formula: `data_table_lookup` (Data Tables), `lookup` (Lookup Tables), `lookup_table` (inline hash). All case-sensitive AND type-sensitive; return `nil` on miss.                                                                                                                                                                                                                                                                          |
 
 ## Critical rules — recipes
 
@@ -50,12 +51,13 @@ These apply when constructing or reviewing any formula-mode expression (see `for
 
 ## Quick task → file mapping
 
-| Task                               | Start here                                             |
-| ---------------------------------- | ------------------------------------------------------ |
-| Add a step to a recipe             | `code-tree.md` (find matching action shape)            |
-| Wire a foreach over a typed list   | `code-tree.md` → Variables-by-Workato → `declare_list` |
-| Catch and log a step's error       | `code-tree.md` → Try / Catch                           |
-| Format a datapill before injection | `formula-mode.md` then the type-specific file          |
-| Build a JSON body from datapills   | `complex-data-types.md` → `.compact.to_json` patterns  |
-| Reformat a date string             | `date-formulas.md` → `.to_date(format:)` + `.strftime` |
-| Filter array of hashes             | `array-formulas.md` → `.where(...).pluck(...)`         |
+| Task                                   | Start here                                             |
+| -------------------------------------- | ------------------------------------------------------ |
+| Add a step to a recipe                 | `code-tree.md` (find matching action shape)            |
+| Wire a foreach over a typed list       | `code-tree.md` → Variables-by-Workato → `declare_list` |
+| Catch and log a step's error           | `code-tree.md` → Try / Catch                           |
+| Format a datapill before injection     | `formula-mode.md` then the type-specific file          |
+| Build a JSON body from datapills       | `complex-data-types.md` → `.compact.to_json` patterns  |
+| Reformat a date string                 | `date-formulas.md` → `.to_date(format:)` + `.strftime` |
+| Filter array of hashes                 | `array-formulas.md` → `.where(...).pluck(...)`         |
+| Look up a value in a data/lookup table | `lookup-formulas.md` → `data_table_lookup` / `lookup`  |
