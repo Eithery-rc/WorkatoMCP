@@ -9,4 +9,5 @@ export {
   WorkatoLookupTableRowUpdateTool,
   WorkatoLookupTableRowDeleteTool,
   WorkatoLookupTableRowSearchTool,
+  WorkatoLookupTableImportCsvTool,
 } from './handlers';
