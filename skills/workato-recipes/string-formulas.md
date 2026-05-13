@@ -49,6 +49,16 @@ Inverse of `include?`. `"Partner account".exclude?("partner")` → `true`.
 
 True if regex matches anywhere in the string. `"Jean Marie".match?(/Marie/)` → `true`. Regex literal with forward slashes; case-sensitive unless `/i` modifier used.
 
+### Dynamic regex patterns — `#{...}` interpolation inside `/.../`
+
+Even though `#{...}` interpolation is banned in plain string literals, it **is** allowed inside regex literals. This is the cleanest way to build a pattern that depends on a datapill.
+
+- `_dp("payload").to_s.scan(/^.*#{_dp("notice_id")}.*$/).first` — first line in a multi-line payload containing a dynamic id (verified on AdPay Load MVP recipe 72436887).
+- `text.match?(/^#{_dp("prefix")}/)` — startswith check on a dynamic prefix.
+- Works with regex modifiers: `/.../i`, `/.../m`.
+- Also documented/expected to work on `.match`, `.gsub(/regex/, ...)`, `.sub(/regex/, ...)`, `.split(/regex/)` — verify empirically when relying on a specific combination.
+- **Gotcha**: interpolated content is **not** automatically regex-escaped. If the datapill could contain `. ( ) [ ] | + * ? \\`, those will be interpreted as regex metacharacters. There is no `Regexp.escape` in the formula allowlist; if you need literal matching, fall back to `.include?(...)` instead.
+
 ### `.starts_with?(prefix)` / `.ends_with?(suffix)`
 
 Case-sensitive prefix/suffix. `"Jean Marie".starts_with?("Jean")` → `true`. `"Jean Marie".ends_with?("RIE")` → `false`. Chain with `.downcase` for case-insensitive.
