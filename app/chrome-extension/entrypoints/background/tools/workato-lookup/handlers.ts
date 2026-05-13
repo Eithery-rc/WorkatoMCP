@@ -1284,7 +1284,7 @@ const IMPORT_CSV_PAGE_FN = `
     const columns = (result.entry_schema || [])
       .filter((c, i) => c.sticky)
       .map((c, i) => ({ name: c.label, position: i + 1 }));
-    const firstRows = ((result.lookup_table_entries && result.lookup_table_entries.result) || []).map(rowToLabeled.bind(null, labelMap));
+    const firstRows = ((result.lookup_table_entries && result.lookup_table_entries.result) || []).map((entry) => Object.assign({ id: entry && entry.id }, rowToLabeled((entry && entry.data) || {}, labelMap.byCol)));
     return {
       ok: true,
       table_id: result.id,
