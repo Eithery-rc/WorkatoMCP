@@ -36,7 +36,7 @@ What's **not** in the allowlist:
 - `JSON.parse` (encoder `.to_json` IS allowed; parser is not)
 - Blocks: `array.map { |x| ... }`, `.select { ... }`, `.each_with_object`, `.reduce { ... }`
 - String interpolation: `"hi #{name}"` — even in text mode it's banned
-- Safe-navigation: `value&.upcase` won't parse
+- Note: safe-navigation `&.` for **hash square-bracket chains** (`hash["a"]&.[]("b")`) IS documented as supported (see `other-formulas.md`). General `value&.upcase` on scalars is unreliable — prefer `.dig` for nested hashes and `.presence || default` / ternary for scalars.
 
 ## Common patterns
 
@@ -84,7 +84,7 @@ _dp("step.email").present? ? _dp("step.email").upcase : nil
 - **No I/O of any kind.** File reads/writes, network sockets, environment access, shell-out are all blocked. Network calls must go through HTTP-connector actions, not formulas.
 - **No string interpolation.** Build strings with `+`, `<<`, `.join`, `.format_map`, `.smart_join`.
 - **No blocks.** Use `.pluck`, `.where`, `.format_map`, `.uniq`, `.compact`, `.smart_join` instead. For row-by-row transformation, use a recipe Repeat step.
-- **No safe-navigation operator.** `value&.upcase` won't parse; use `.presence` + `||` or ternary. `nil.upcase` raises at runtime.
+- **Safe-navigation `&.` is partially supported.** Workato docs explicitly endorse it for hash bracket chains: `hash["a"]&.[]("b")&.[]("c")`. General `value&.upcase` on scalars is **not** documented as supported — for portability use `.dig(...)` on hashes and `.presence || default` / ternary on scalars. `nil.upcase` raises at runtime, so guard before calling.
 - **`now` and `today` default to US/Pacific**, not UTC. Always pass `.in_time_zone("UTC")` or `.in_time_zone(nil)` for portable timestamps. Bare `.utc` is not allowlisted — use `.in_time_zone(nil)`.
 - **Integer division silently truncates.** `4 / 7` is `0`; cast with `.to_f` for decimals.
 - **`.to_f` / `.to_i` on non-numeric strings returns `0`**, not an error. Validate with `.match?(/^\d+$/)` first if you need to detect bad input.

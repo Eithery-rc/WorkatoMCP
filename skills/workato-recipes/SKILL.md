@@ -24,6 +24,7 @@ Load the file matching what you're working on. **Always read `code-tree.md` firs
 | `array-formulas.md`     | Arrays of hashes: `.where`, `.pluck`, `.compact`, `.flatten`, `.join`/`.smart_join`, `.uniq`.                                                                                                                                                                                                                                                                                                                                                                              |
 | `complex-data-types.md` | Hash ops (`.dig`, `.except`, `.slice`, `.merge`), JSON/XML/CSV/URL encoding, nil-safety without `&.`.                                                                                                                                                                                                                                                                                                                                                                      |
 | `lookup-formulas.md`    | Query data sources from inside a formula: `data_table_lookup` (Data Tables), `lookup` (Lookup Tables), `lookup_table` (inline hash). All case-sensitive AND type-sensitive; return `nil` on miss.                                                                                                                                                                                                                                                                          |
+| `other-formulas.md`     | Field-control values (`null`/`clear`/`skip`), `uuid`, hashing (`sha1`/`encode_sha256`/`md5_hexdigest`/`hmac_*`), encryption (`encrypt`/`decrypt`), encoding (`encode_base64`/`encode_url`/`encode_hex` + decode variants), JWT (`workato.jwt_encode`/`jwt_decode`), YAML (`workato.parse_yaml`/`render_yaml`), and safe-nav hash chains.                                                                                                                                   |
 
 ## Critical rules — recipes
 
@@ -44,20 +45,22 @@ These apply when constructing or reviewing any formula-mode expression (see `for
 1. **Allowlist only.** If a method isn't in these files, it's blocked — including `eval`, `send`, `JSON.parse`, file/network IO.
 2. **No blocks.** `array.map { ... }`, `.select { ... }`, `.reduce { ... }` won't parse. Use `.pluck` / `.where` / `.format_map` / `.smart_join` instead. For per-row logic use a Repeat step in the recipe.
 3. **No string interpolation.** `"hi #{name}"` is rejected in formulas. Build strings with `+`, `.join`, `.format_map`.
-4. **No safe-navigation.** `value&.upcase` won't parse — use `value.presence` + `||` or a ternary, or `.dig(...)` for nested hash access.
+4. **Safe-navigation `&.` is partially supported.** Documented for hash bracket chains (`hash["a"]&.[]("b")`); not documented for scalar methods (`value&.upcase`). Prefer `.dig(...)` for nested hashes and `.presence || default` / ternary for scalars.
 5. **Default `now`/`today` are US/Pacific**, not UTC. Add `.in_time_zone("UTC")` (or `.in_time_zone(nil)`) for portable timestamps.
 6. **Integer division truncates**: `4 / 7 == 0`. Cast with `.to_f` first if you want decimals.
 7. **`.to_i`/`.to_f` on non-numeric strings return `0`**, not an error. Validate with `.match?(/^\d+$/)` if you need failure detection.
 
 ## Quick task → file mapping
 
-| Task                                   | Start here                                             |
-| -------------------------------------- | ------------------------------------------------------ |
-| Add a step to a recipe                 | `code-tree.md` (find matching action shape)            |
-| Wire a foreach over a typed list       | `code-tree.md` → Variables-by-Workato → `declare_list` |
-| Catch and log a step's error           | `code-tree.md` → Try / Catch                           |
-| Format a datapill before injection     | `formula-mode.md` then the type-specific file          |
-| Build a JSON body from datapills       | `complex-data-types.md` → `.compact.to_json` patterns  |
-| Reformat a date string                 | `date-formulas.md` → `.to_date(format:)` + `.strftime` |
-| Filter array of hashes                 | `array-formulas.md` → `.where(...).pluck(...)`         |
-| Look up a value in a data/lookup table | `lookup-formulas.md` → `data_table_lookup` / `lookup`  |
+| Task                                            | Start here                                             |
+| ----------------------------------------------- | ------------------------------------------------------ |
+| Add a step to a recipe                          | `code-tree.md` (find matching action shape)            |
+| Wire a foreach over a typed list                | `code-tree.md` → Variables-by-Workato → `declare_list` |
+| Catch and log a step's error                    | `code-tree.md` → Try / Catch                           |
+| Format a datapill before injection              | `formula-mode.md` then the type-specific file          |
+| Build a JSON body from datapills                | `complex-data-types.md` → `.compact.to_json` patterns  |
+| Reformat a date string                          | `date-formulas.md` → `.to_date(format:)` + `.strftime` |
+| Filter array of hashes                          | `array-formulas.md` → `.where(...).pluck(...)`         |
+| Look up a value in a data/lookup table          | `lookup-formulas.md` → `data_table_lookup` / `lookup`  |
+| Generate UUID / hash / encrypt / JWT / base64   | `other-formulas.md`                                    |
+| Conditionally clear or skip a destination field | `other-formulas.md` → `null` / `clear` / `skip`        |
