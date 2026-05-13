@@ -493,8 +493,12 @@ const CREATE_TABLE_PAGE_FN = `
     if (!created || typeof created !== 'object') {
       return { ok: false, stage: 'create', error: 'create response missing result object: ' + JSON.stringify(createJson).slice(0, 400) };
     }
-    const newId = created.id || created.table_id;
-    if (typeof newId !== 'string' || newId.length === 0) {
+    // Workato returns id as a number (numeric table id used in URLs) and
+    // table_id as a UUID string. Accept either; normalize to a string for
+    // URL composition downstream.
+    const rawId = created.id != null ? created.id : created.table_id;
+    const newId = rawId != null ? String(rawId) : '';
+    if (newId.length === 0) {
       return { ok: false, stage: 'create', error: 'create response missing id/table_id (got ' + JSON.stringify(created).slice(0, 200) + ')' };
     }
 
