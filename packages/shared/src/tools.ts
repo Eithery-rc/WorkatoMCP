@@ -76,6 +76,18 @@ export const TOOL_NAMES = {
     SET_STEP_INPUT: 'workato_recipe_set_step_input',
     MAP_DATAPILL: 'workato_recipe_map_datapill',
   },
+  WORKATO_LOOKUP: {
+    TABLES_LIST: 'workato_lookup_tables_list',
+    TABLE_GET: 'workato_lookup_table_get',
+    TABLE_CREATE: 'workato_lookup_table_create',
+    TABLE_RENAME: 'workato_lookup_table_rename',
+    TABLE_SET_COLUMNS: 'workato_lookup_table_set_columns',
+    TABLE_DELETE: 'workato_lookup_table_delete',
+    ROW_CREATE: 'workato_lookup_table_row_create',
+    ROW_UPDATE: 'workato_lookup_table_row_update',
+    ROW_DELETE: 'workato_lookup_table_row_delete',
+    ROW_SEARCH: 'workato_lookup_table_row_search',
+  },
 };
 
 export const TOOL_SCHEMAS: Tool[] = [
@@ -2232,6 +2244,212 @@ export const TOOL_SCHEMAS: Tool[] = [
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['recipe_id', 'target_step', 'target_field', 'source_step', 'path'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LOOKUP.TABLES_LIST,
+    description:
+      'List all Workato lookup tables visible to the signed-in user (GET /lookup_tables.json). ' +
+      'Returns a slim shape: [{id, name, entry_count, updated_at}]. ' +
+      'Prerequisite: the active tab must be a logged-in Workato page (for CSRF + session cookies).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LOOKUP.TABLE_GET,
+    description:
+      'Fetch a single lookup table with its columns and rows (GET /lookup_tables/<id>.json). ' +
+      'Internally maps col1..col10 to the user-facing column labels, so the response is keyed by label. ' +
+      'Returns {id, name, columns: [{name: label, position: 1..10}], rows: [{id, ...by-label}], total_count, page, per_page}. ' +
+      'Supports pagination (page, per_page) and a server-side full-text filter (qterm). ' +
+      'Lookup tables have at most 10 columns. Prerequisite: the active tab must be a logged-in Workato page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'number', description: 'Numeric lookup-table id.' },
+        page: { type: 'number', description: 'Page number (1-based). Optional.' },
+        per_page: { type: 'number', description: 'Rows per page. Optional.' },
+        qterm: {
+          type: 'string',
+          description: 'Server-side full-text filter applied to rows. Optional.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LOOKUP.TABLE_CREATE,
+    description:
+      'Create a new lookup table (POST /lookup_tables.json), then optionally rename and apply a column schema. ' +
+      'If `name` is provided, a PUT /lookup_tables/<id>.json sets the name. ' +
+      'If `columns` is provided (1–10 user-facing labels), a PUT /lookup_tables/<id>/update_schema.json applies them, ' +
+      'padding the remaining slots with placeholders. Returns {table_id, name, columns}. ' +
+      'Lookup tables always have exactly 10 column slots internally. ' +
+      'Prerequisite: the active tab must be a logged-in Workato page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'New table name. Defaults to "Untitled lookup table".',
+        },
+        columns: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Optional initial column labels (1–10). Each becomes the user-facing name for col1..colN; remaining slots are padded with placeholders.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LOOKUP.TABLE_RENAME,
+    description:
+      'Rename an existing lookup table (PUT /lookup_tables/<id>.json with {name}). Returns {id, name}. ' +
+      'Prerequisite: the active tab must be a logged-in Workato page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'number', description: 'Numeric lookup-table id.' },
+        name: { type: 'string', description: 'New name (non-empty).' },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id', 'name'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LOOKUP.TABLE_SET_COLUMNS,
+    description:
+      "Replace a lookup table's column schema (PUT /lookup_tables/<id>/update_schema.json). " +
+      'Accepts 1–10 user-facing column labels; internally builds the full 10-slot schema by padding with ' +
+      '"Untitled column N" placeholders (sticky=false). Returns {table_id, columns}. ' +
+      'Lookup tables have a fixed 10-column limit. ' +
+      'Prerequisite: the active tab must be a logged-in Workato page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'number', description: 'Numeric lookup-table id.' },
+        columns: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            '1–10 user-facing column labels. The first N slots are named; the rest are padded with placeholders.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id', 'columns'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LOOKUP.TABLE_DELETE,
+    description:
+      'Delete a lookup table (DELETE /lookup_tables/<id>.json). Returns {table_id, deleted: true}. ' +
+      'Prerequisite: the active tab must be a logged-in Workato page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'number', description: 'Numeric lookup-table id.' },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LOOKUP.ROW_CREATE,
+    description:
+      'Add a row to a lookup table (POST /lookup_tables/<id>/add_row.json). ' +
+      "Accepts `row` keyed by the table's user-facing column labels; internally fetches the table once to " +
+      'learn the label→col1..col10 mapping, then builds the full 10-key data object (missing columns are null). ' +
+      'Returns {table_id, row_id, row} where `row` is keyed by label. ' +
+      'Prerequisite: the active tab must be a logged-in Workato page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'number', description: 'Numeric lookup-table id.' },
+        row: {
+          type: 'object',
+          description:
+            'Row values keyed by user-facing column label (e.g. {"Email": "a@b", "Country": "US"}). Missing columns are sent as null. Only labels that match the table\'s schema are kept.',
+          additionalProperties: true,
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id', 'row'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LOOKUP.ROW_UPDATE,
+    description:
+      'Update an existing row in a lookup table (PUT /lookup_tables/<id>/update_row.json). ' +
+      'Accepts a partial `row` keyed by label; the tool fetches the existing row, merges the provided fields ' +
+      'over it, and writes the full 10-key data object back (Workato requires all col1..col10 in update payloads). ' +
+      'Returns {table_id, row_id, row} keyed by label. ' +
+      'Prerequisite: the active tab must be a logged-in Workato page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'number', description: 'Numeric lookup-table id.' },
+        row_id: { type: 'number', description: 'Numeric row id (from a prior get/search).' },
+        row: {
+          type: 'object',
+          description:
+            'Partial row keyed by user-facing column label. Only provided labels are overwritten; the rest are preserved from the current row.',
+          additionalProperties: true,
+        },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id', 'row_id', 'row'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LOOKUP.ROW_DELETE,
+    description:
+      'Delete a row from a lookup table (DELETE /lookup_tables/<id>/delete_row.json?row_id=<row_id>). ' +
+      'Returns {table_id, row_id, deleted: true}. ' +
+      'Prerequisite: the active tab must be a logged-in Workato page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'number', description: 'Numeric lookup-table id.' },
+        row_id: { type: 'number', description: 'Numeric row id.' },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id', 'row_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LOOKUP.ROW_SEARCH,
+    description:
+      'Server-side text search across rows of a lookup table (GET /lookup_tables/<id>.json?qterm=...). ' +
+      'Returns the same shape as workato_lookup_table_get: {id, name, columns, rows, total_count, page, per_page} ' +
+      'with rows keyed by user-facing column label. Supports optional page / per_page pagination. ' +
+      'Prerequisite: the active tab must be a logged-in Workato page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'number', description: 'Numeric lookup-table id.' },
+        qterm: { type: 'string', description: 'Server-side full-text query.' },
+        page: { type: 'number', description: 'Page number (1-based). Optional.' },
+        per_page: { type: 'number', description: 'Rows per page. Optional.' },
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id', 'qterm'],
     },
   },
 ];
