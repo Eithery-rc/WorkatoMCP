@@ -1,0 +1,20 @@
+{
+  "name": "workato-mcp",
+  "owner": {
+    "name": "Roman Chikalenko",
+    "email": "chikalenkor@gmail.com"
+  },
+  "metadata": {
+    "description": "WorkatoMCP companion skills",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "workato-recipes",
+      "description": "Workato recipe authoring/review reference — code-tree JSON schemas (triggers, foreach/if/repeat/try-catch, Variables-by-Workato, app actions) + Ruby-allowlist formula API (string/number/date/array/hash). Pairs with the workato_* MCP tools.",
+      "source": "./",
+      "strict": false,
+      "skills": ["./skills/workato-recipes"]
+    }
+  ]
+}
