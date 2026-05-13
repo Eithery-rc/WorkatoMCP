@@ -1,8 +1,3 @@
----
-name: workato-recipe-schemas
-description: Workato recipe code-tree schemas — verbatim shapes for triggers (clock, recipe_function, salesforce), control flow (foreach, if/elsif/else, repeat+while_condition, try/catch, stop), Variables-by-Workato (declare_list, insert_to_list, declare_variable, update_variables), and common app actions (logger, csv_parser, py_eval, salesforce, netsuite, google_sheets, email, workato_files, workato_pub_sub, openai). Use when authoring or mutating Workato recipes programmatically via the workato_ui_save_recipe_code / workato_recipe_add_step tools. Mined verbatim from production recipes 2026-05-12.
----
-
 # Workato recipe code-tree schemas
 
 Reference doc mined from three production recipes:
