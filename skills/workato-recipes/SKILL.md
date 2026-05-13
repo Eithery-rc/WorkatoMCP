@@ -44,7 +44,7 @@ These apply when constructing or reviewing any formula-mode expression (see `for
 
 1. **Allowlist only.** If a method isn't in these files, it's blocked — including `eval`, `send`, `JSON.parse`, file/network IO.
 2. **No blocks.** `array.map { ... }`, `.select { ... }`, `.reduce { ... }` won't parse. Use `.pluck` / `.where` / `.format_map` / `.smart_join` instead. For per-row logic use a Repeat step in the recipe.
-3. **No string interpolation.** `"hi #{name}"` is rejected in formulas. Build strings with `+`, `.join`, `.format_map`.
+3. **No `#{...}` interpolation in plain strings.** `"hi #{name}"` is rejected. Build with `+`, `.join`, `.format_map`. **Regex literals are an exception** — `#{...}` does work inside `/.../`, useful for dynamic patterns like `text.scan(/^.*#{_dp("id")}.*$/)`.
 4. **Safe-navigation `&.` is partially supported.** Documented for hash bracket chains (`hash["a"]&.[]("b")`); not documented for scalar methods (`value&.upcase`). Prefer `.dig(...)` for nested hashes and `.presence || default` / ternary for scalars.
 5. **Default `now`/`today` are US/Pacific**, not UTC. Add `.in_time_zone("UTC")` (or `.in_time_zone(nil)`) for portable timestamps.
 6. **Integer division truncates**: `4 / 7 == 0`. Cast with `.to_f` first if you want decimals.
