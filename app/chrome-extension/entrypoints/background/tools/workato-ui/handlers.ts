@@ -18,6 +18,7 @@ import { ERROR_MESSAGES } from '@/common/constants';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { ensureAttached, sendCommand } from '../browser/snapshot/debugger-session';
+import { isWorkatoAppHost, WORKATO_URL_PATTERNS } from '../workato/tab-dispatch';
 import {
   axName,
   axRole,
@@ -68,10 +69,13 @@ class WorkatoUiOpenRecipeImpl extends BaseBrowserToolExecutor {
       }
       const mode = args.mode === 'edit' ? 'edit' : 'view';
 
-      // Find any existing Workato tab on this same recipe (any *.workato.com / .is host).
-      const workatoTabs = await chrome.tabs.query({
-        url: ['*://*.workato.com/*', '*://*.workato.is/*'],
-      });
+      // Find any existing Workato tab on this same recipe. Restrict to
+      // session-bearing hosts (app.* subdomain); docs.workato.com / www etc
+      // would otherwise be picked as a navigation target.
+      const allWorkatoTabs = await chrome.tabs.query({ url: WORKATO_URL_PATTERNS });
+      const workatoTabs = allWorkatoTabs.filter(
+        (t) => typeof t.url === 'string' && isWorkatoAppHost(new URL(t.url).host),
+      );
       const matchPath = `/recipes/${args.recipe_id}`;
       const sameRecipeTab = workatoTabs.find(
         (t) => typeof t.url === 'string' && t.url.includes(matchPath),
