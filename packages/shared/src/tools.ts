@@ -88,6 +88,9 @@ export const TOOL_NAMES = {
     ROW_DELETE: 'workato_lookup_table_row_delete',
     ROW_SEARCH: 'workato_lookup_table_row_search',
   },
+  WORKATO_SESSION: {
+    WHOAMI: 'workato_whoami',
+  },
 };
 
 export const TOOL_SCHEMAS: Tool[] = [
@@ -2450,6 +2453,24 @@ export const TOOL_SCHEMAS: Tool[] = [
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'qterm'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_SESSION.WHOAMI,
+    description:
+      'Returns who/where the active Workato tab is connected — workspace, user, role, ' +
+      'available environments, teams, timezone, membership tier. Fetches /web_api/auth_user.json ' +
+      'and slims it down to an agent-friendly JSON shape. ' +
+      "Use this FIRST when you don't know which Workato workspace/account/environment " +
+      'the agent is currently connected to (especially when the user has multiple ' +
+      'Workato accounts open in different tabs). ' +
+      'Prerequisite: the active tab must be a logged-in Workato page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
     },
   },
 ];
