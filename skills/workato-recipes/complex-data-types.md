@@ -114,9 +114,9 @@ Array → CSV row. Not directly available on hash; use `.values.to_csv` for hash
 
 **Gotcha**: There is no in-formula JSON parser. If your HTTP-connector response field is a string, deserialize it in a recipe step (JSON-parse action or `body` projection), not inside a formula.
 
-## Nil-safety patterns (no `&.` operator)
+## Nil-safety patterns
 
-Workato bans the safe-navigation operator (`value&.upcase`), so use these patterns instead:
+Workato docs endorse safe-navigation `&.` for hash bracket chains (`data["a"]&.[]("b")&.[]("c")`) but **not** for scalar method calls (`value&.upcase` is unreliable). For scalars, use these patterns:
 
 ### Ternary on `.present?`
 
