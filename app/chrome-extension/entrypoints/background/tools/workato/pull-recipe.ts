@@ -2,9 +2,20 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
+import {
+  findStep,
+  inspectStep,
+  listStepRefs,
+  toCompactRecipe,
+  type RawNode,
+  type RecipeVersion,
+} from './recipe-view';
 
 interface PullRecipeArgs {
   recipe_id: number;
+  view?: 'compact' | 'full' | 'outline';
+  step?: string;
+  field_query?: string;
 }
 
 interface InPageResult {
@@ -161,6 +172,14 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
         return createErrorResponse('Param [recipe_id] must be a finite number');
       }
 
+      const view = args.view ?? 'compact';
+      if (view !== 'compact' && view !== 'full' && view !== 'outline') {
+        return createErrorResponse("Param [view] must be 'compact', 'outline', or 'full'");
+      }
+      if (args.field_query != null && args.step == null) {
+        return createErrorResponse('Param [field_query] requires [step]');
+      }
+
       const tab = await findWorkatoTab();
       const result = await runInWorkatoTab(tab.tabId, pullInPage, [args.recipe_id]);
 
@@ -173,17 +192,30 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
         );
       }
 
+      const code = result.code as RawNode;
+      const version = result.version as unknown as RecipeVersion;
+      let payload: unknown;
+
+      if (args.step != null) {
+        const node = findStep(code, args.step);
+        if (!node) {
+          const refs = listStepRefs(code)
+            .map((r) => `${r.n ?? '?'}:${r.as ?? '?'}`)
+            .join(', ');
+          return createErrorResponse(
+            `Step [${args.step}] not found in recipe ${args.recipe_id}. ` +
+              `Available steps (number:as): ${refs}`,
+          );
+        }
+        payload = inspectStep(code, node, args.recipe_id, args.field_query);
+      } else if (view === 'full') {
+        payload = { recipe_id: args.recipe_id, code: result.code, version: result.version };
+      } else {
+        payload = toCompactRecipe(code, args.recipe_id, version, view === 'outline');
+      }
+
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              recipe_id: args.recipe_id,
-              code: result.code,
-              version: result.version,
-            }),
-          },
-        ],
+        content: [{ type: 'text', text: JSON.stringify(payload) }],
         isError: false,
       };
     } catch (err) {
