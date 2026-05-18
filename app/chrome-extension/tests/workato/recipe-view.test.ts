@@ -6,12 +6,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   FIELD_CAP,
+  collectUpstreamDatapills,
   compactNode,
   findStep,
+  flattenInput,
   flattenSchema,
+  inspectStep,
   listStepRefs,
   pillToRef,
-  searchFields,
   shortenDatapills,
   stripHtml,
   toCompactRecipe,
@@ -293,39 +295,141 @@ describe('flattenSchema', () => {
   });
 });
 
-describe('searchFields', () => {
-  it('returns input and output fields tagged with io', () => {
-    const view = searchFields(sampleCode().block![0], 72436887);
-    expect(view.fields.some((f) => f.io === 'in' && f.name === 'table_id')).toBe(true);
-    expect(view.fields.some((f) => f.io === 'out' && f.name === 'amount')).toBe(true);
+const PILL = '{"pill_type":"output","provider":"py_eval","line":"e4f443bd","path":["output","x"]}';
+
+describe('flattenInput', () => {
+  it('classifies literals, datapills, formulas, and interpolated values', () => {
+    const maps = flattenInput({
+      record_type: 'invoice',
+      notice_id: `#{_dp('${PILL}')}`,
+      amount: `=_dp('${PILL}').to_f + 1`,
+      msg: `notice #{_dp('${PILL}')} done`,
+    });
+    const byPath = Object.fromEntries(maps.map((m) => [m.path, m]));
+    expect(byPath.record_type.kind).toBe('literal');
+    expect(byPath.notice_id.kind).toBe('datapill');
+    expect(byPath.amount.kind).toBe('formula');
+    expect(byPath.msg.kind).toBe('interpolated');
+  });
+
+  it('uses dotted keys and [index] for nested objects and arrays', () => {
+    const maps = flattenInput({ filters: [{ field_id: 'job_id' }], a: { b: 'c' } });
+    expect(maps.map((m) => m.path).sort()).toEqual(['a.b', 'filters[0].field_id']);
+  });
+
+  it('classifies a long non-JSON string as code and keeps it whole', () => {
+    const code = `def main():\n${' x = 1\n'.repeat(60)}`;
+    const [m] = flattenInput({ code });
+    expect(m.kind).toBe('code');
+    expect(m.value).toBe(code);
+    expect(m.truncated).toBeUndefined();
+  });
+
+  it('shortens datapills inside a code body', () => {
+    const code = `# build query\n${'x\n'.repeat(140)}val = _dp('${PILL}')`;
+    const [m] = flattenInput({ code });
+    expect(m.kind).toBe('code');
+    expect(m.value).toContain('datapill(py_eval.e4f443bd.output.x)');
+    expect(m.value).not.toContain('_dp(');
+  });
+
+  it('classifies a formula-mode pure datapill (=_dp(...)) as a datapill', () => {
+    const [m] = flattenInput({ ref: `=_dp('${PILL}')` });
+    expect(m.kind).toBe('datapill');
+    expect(m.value).toBe('=datapill(py_eval.e4f443bd.output.x)');
+  });
+
+  it('previews a long JSON literal blob', () => {
+    const blob = JSON.stringify(
+      Array.from({ length: 50 }, (_, i) => ({ name: `f${i}`, type: 'string' })),
+    );
+    const [m] = flattenInput({ schema: blob });
+    expect(m.kind).toBe('literal');
+    expect(m.truncated).toBe(true);
+    expect(m.chars).toBe(blob.length);
+    expect((m.value as string).length).toBeLessThan(blob.length);
+  });
+});
+
+describe('collectUpstreamDatapills', () => {
+  it('collects output schemas of steps numbered below the threshold', () => {
+    expect(collectUpstreamDatapills(sampleCode(), 2)).toEqual([
+      { ref: 'datapill(scheduler.trigger00.started_at)', label: 'Started at', type: 'date_time' },
+    ]);
+  });
+
+  it('returns nothing when no upstream step has an output schema', () => {
+    expect(collectUpstreamDatapills(sampleCode(), 0)).toEqual([]);
+  });
+
+  it('recurses into nested blocks to reach steps inside if/try branches', () => {
+    // Step 2 lives inside the if-block (step 1); reaching it proves the walk recurses.
+    expect(collectUpstreamDatapills(sampleCode(), 5).map((d) => d.ref)).toEqual([
+      'datapill(scheduler.trigger00.started_at)',
+      'datapill(workato_db_table.98cc4bea.records)',
+      'datapill(workato_db_table.98cc4bea.records[].amount)',
+      'datapill(workato_db_table.98cc4bea.records[].id)',
+    ]);
+  });
+});
+
+describe('inspectStep', () => {
+  it('returns a header without input, plus mappings, fields, and datapills', () => {
+    const code = sampleCode();
+    const view = inspectStep(code, findStep(code, '2')!, 72436887);
+    expect(view.step.n).toBe(2);
+    expect(view.step).not.toHaveProperty('input');
+    expect(view.step).not.toHaveProperty('block');
+    expect(view.mappings.map((m) => m.path).sort()).toEqual(['limit', 'table_id']);
+    expect(view.mappings.every((m) => m.kind === 'literal')).toBe(true);
+    expect(view.fields.map((f) => f.name).sort()).toEqual(['limit', 'table_id']);
+  });
+
+  it('lists datapills from upstream steps only', () => {
+    const code = sampleCode();
+    const view = inspectStep(code, findStep(code, '2')!, 72436887);
+    expect(view.available_datapills).toEqual([
+      { ref: 'datapill(scheduler.trigger00.started_at)', label: 'Started at', type: 'date_time' },
+    ]);
+  });
+
+  it('filters fields and datapills by query, lifting the cap', () => {
+    const code = sampleCode();
+    const view = inspectStep(code, findStep(code, '2')!, 72436887, 'limit');
+    expect(view.fields.map((f) => f.name)).toEqual(['limit']);
+    expect(view.available_datapills).toEqual([]);
     expect(view.fields_truncated).toBe(false);
   });
 
-  it('filters by name or label case-insensitively when queried', () => {
-    const view = searchFields(sampleCode().block![0], 72436887, 'AMOUNT');
-    expect(view.fields).toHaveLength(1);
-    expect(view.fields[0].name).toBe('amount');
-    expect(view.total_fields).toBe(1);
-    expect(view.fields_truncated).toBe(false);
-  });
-
-  it('matches on label even when the name does not contain the query', () => {
-    // 'Order' appears only in the label "Order amount", never in any field name.
-    const view = searchFields(sampleCode().block![0], 72436887, 'Order');
-    expect(view.fields).toHaveLength(1);
-    expect(view.fields[0].name).toBe('amount');
-    expect(view.fields[0].label).toBe('Order amount');
-  });
-
-  it('caps the catalog and flags truncation past the field cap', () => {
+  it('caps fields at FIELD_CAP and flags truncation without a query', () => {
     const big: RawSchemaEntry[] = Array.from({ length: FIELD_CAP + 5 }, (_, i) => ({
       name: `f${i}`,
       type: 'string',
     }));
-    const node: RawNode = { keyword: 'action', as: 'big', extended_input_schema: big };
-    const view = searchFields(node, 1);
+    const node: RawNode = { number: 9, keyword: 'action', as: 'big', extended_input_schema: big };
+    const view = inspectStep(node, node, 1);
     expect(view.fields).toHaveLength(FIELD_CAP);
     expect(view.total_fields).toBe(FIELD_CAP + 5);
     expect(view.fields_truncated).toBe(true);
+  });
+
+  it('caps available_datapills at FIELD_CAP and flags truncation', () => {
+    const bigOut: RawSchemaEntry[] = Array.from({ length: FIELD_CAP + 5 }, (_, i) => ({
+      name: `o${i}`,
+      type: 'string',
+    }));
+    const target: RawNode = { number: 9, keyword: 'action', as: 'tgt' };
+    const code: RawNode = {
+      number: 0,
+      keyword: 'trigger',
+      provider: 'scheduler',
+      as: 'trig0000',
+      extended_output_schema: bigOut,
+      block: [target],
+    };
+    const view = inspectStep(code, target, 1);
+    expect(view.available_datapills).toHaveLength(FIELD_CAP);
+    expect(view.total_datapills).toBe(FIELD_CAP + 5);
+    expect(view.datapills_truncated).toBe(true);
   });
 });

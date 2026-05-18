@@ -3,7 +3,9 @@
 **Date:** 2026-05-18
 **Status:** Approved (brainstorming) — extended with the `outline` view and
 datapill shortening after the first live test showed the `compact` view can
-still overflow the harness's per-tool-result token cap for very large recipes.
+still overflow the harness's per-tool-result token cap for very large recipes,
+then with the `step`-mode reshape (`mappings` + `available_datapills`) so an
+agent can help with a formula or map a field in a single call.
 **Tool affected:** `workato_pull_recipe`
 
 ## Problem
@@ -48,13 +50,13 @@ Each call shape has one clear job.
 
 Call shapes:
 
-| Call                                                     | Returns                                  |
-| -------------------------------------------------------- | ---------------------------------------- |
-| `pull_recipe(id)`                                        | compact whole-recipe tree — **default**  |
-| `pull_recipe(id, view:'outline')`                        | structural tree, no step inputs          |
-| `pull_recipe(id, view:'full')`                           | today's exact lossless tree              |
-| `pull_recipe(id, step:'98cc4bea')`                       | one step's config + pruned field catalog |
-| `pull_recipe(id, step:'98cc4bea', field_query:'amount')` | that step's fields matching "amount"     |
+| Call                                                     | Returns                                 |
+| -------------------------------------------------------- | --------------------------------------- |
+| `pull_recipe(id)`                                        | compact whole-recipe tree — **default** |
+| `pull_recipe(id, view:'outline')`                        | structural tree, no step inputs         |
+| `pull_recipe(id, view:'full')`                           | today's exact lossless tree             |
+| `pull_recipe(id, step:'98cc4bea')`                       | one step: mappings + fields + datapills |
+| `pull_recipe(id, step:'98cc4bea', field_query:'amount')` | filter that step's fields & datapills   |
 
 Precedence: when `step` is set, `view` is ignored. `field_query` is only valid
 with `step` (error otherwise).
@@ -147,51 +149,81 @@ recipes) and always fits inline. The agent scans the outline to grasp recipe
 shape and flow, then uses `step` mode to read any individual step's actual
 configuration.
 
-### `step` mode — searchable schema inspector
+### `step` mode — step inspector
 
 Locate one step by `step` (matches `as` anchor, or step `number` when the value
-parses as an integer). Walk the full tree to find it.
-
-**`step` without `field_query`** — returns:
+parses as an integer); walk the full tree to find it. The mode is built for the
+two tasks an agent actually does on a step — **help with a formula** and **map a
+field** — so it answers, in one call: what is wired now, what fields can be set,
+and what data is available to reference.
 
 ```json
 {
   "recipe_id": 72436887,
-  "step": {
-    "n": 12,
-    "type": "action",
-    "app": "...",
-    "name": "batch_upsert_rest",
-    "as": "...",
-    "description": "...",
-    "input": {}
-  },
+  "step": { "n": 12, "type": "action", "app": "...", "name": "batch_upsert_rest", "as": "..." },
+  "mappings": [
+    { "path": "record_type", "kind": "literal", "value": "invoice" },
+    {
+      "path": "custbody_mhi_notice_id",
+      "kind": "datapill",
+      "value": "#{datapill(py_eval.e4f443bd.output.Invoices[].noticeID)}"
+    },
+    {
+      "path": "item.items[0].amount",
+      "kind": "formula",
+      "value": "=datapill(...adPayFileType) == \"invoice_type2.1\" ? ... : ..."
+    }
+  ],
   "fields": [
     {
-      "path": "body.items[].adj_cost_estimate",
-      "name": "adj_cost_estimate",
-      "label": "Adj cost estimate",
-      "type": "number",
-      "optional": true,
-      "control_type": "number",
+      "path": "record_type",
+      "name": "record_type",
+      "label": "Record type",
+      "type": "string",
+      "optional": false,
+      "control_type": "select",
       "io": "in"
     }
   ],
-  "total_fields": 432,
-  "fields_truncated": true
+  "total_fields": 280,
+  "fields_truncated": true,
+  "available_datapills": [
+    {
+      "ref": "datapill(py_eval.e4f443bd.output.Invoices[].noticeID)",
+      "label": "Notice ID",
+      "type": "string"
+    }
+  ],
+  "total_datapills": 96,
+  "datapills_truncated": true
 }
 ```
 
-- `fields` is a **flat catalog** built from the step's `extended_input_schema`
-  (`io: "in"`) and `extended_output_schema` (`io: "out"`). Nested schema entries
-  (`properties`) are flattened with a dotted `path`; array nesting uses `[]`.
-- Capped at **60 fields**. When the step has more, `fields_truncated` is `true`
-  and `total_fields` gives the real count, signalling the agent to narrow with
-  `field_query`.
+- **`step`** — the step header (`compactNode` with `omitInput`): no `input`, no
+  `block`. The configured values live in `mappings` instead.
+- **`mappings`** — the step's `input` distilled into a flat list of leaves, each
+  classified by `kind`:
+  - `datapill` — the whole value is one datapill reference.
+  - `formula` — a formula-mode expression (`=` prefix).
+  - `interpolated` — a string with embedded `#{datapill(...)}`.
+  - `code` — a long non-JSON string (Python / SQL body); kept whole.
+  - `literal` — a plain constant. A literal string longer than `LITERAL_CAP`
+    (256) that parses as JSON (e.g. an embedded schema blob) is previewed —
+    `value` truncated, `truncated:true`, `chars` gives the real length.
+    Object keys join with `.`, array elements with `[index]`. `mappings` is the
+    core wiring/logic of the step and is **never capped**.
+- **`fields`** — the step's settable input fields, flattened from
+  `extended_input_schema` (`io:"in"`). Capped at `FIELD_CAP` (60);
+  `total_fields` / `fields_truncated` report the real count.
+- **`available_datapills`** — every datapill exposed by a step numbered below
+  the inspected step (its `extended_output_schema` flattened to ready
+  `datapill(provider.as.path)` refs). This is the menu the agent picks from to
+  write a formula or a mapping. Capped at `FIELD_CAP`;
+  `total_datapills` / `datapills_truncated` report the real count.
 
-**`step` with `field_query`** — same shape, but `fields` contains only entries
-whose `name` or `label` contains `field_query` (case-insensitive). Uncapped
-(matches are naturally few); `fields_truncated` is always `false`.
+**`step` with `field_query`** — filters `fields` (by name/label) and
+`available_datapills` (by ref/label), case-insensitive, and lifts the cap on
+both. `mappings` is unaffected.
 
 ## Components
 
@@ -202,16 +234,18 @@ promise-chain form (see `reference_v1_pitfalls_resolved`).
 
 New module: `app/chrome-extension/entrypoints/background/tools/workato/recipe-view.ts`
 
-| Function           | Signature                                               | Job                          |
-| ------------------ | ------------------------------------------------------- | ---------------------------- |
-| `toCompactRecipe`  | `(code, recipeId, version, omitInput?) → CompactRecipe` | prune the tree               |
-| `compactNode`      | `(node, omitInput?) → CompactStep`                      | prune one step node          |
-| `stripHtml`        | `(s) → string`                                          | description cleanup          |
-| `pillToRef`        | `(pill) → string`                                       | render a parsed pill short   |
-| `shortenDatapills` | `(value) → value`                                       | rewrite `_dp(...)` in inputs |
-| `findStep`         | `(code, step) → RawNode \| null`                        | locate by `as` or `number`   |
-| `flattenSchema`    | `(schema[], io, parentPath) → FieldEntry[]`             | flatten nested schema        |
-| `searchFields`     | `(node, recipeId, query?) → StepView`                   | catalog + filter             |
+| Function                   | Signature                                               | Job                           |
+| -------------------------- | ------------------------------------------------------- | ----------------------------- |
+| `toCompactRecipe`          | `(code, recipeId, version, omitInput?) → CompactRecipe` | prune the tree                |
+| `compactNode`              | `(node, omitInput?) → CompactStep`                      | prune one step node           |
+| `stripHtml`                | `(s) → string`                                          | description cleanup           |
+| `pillToRef`                | `(pill) → string`                                       | render a parsed pill short    |
+| `shortenDatapills`         | `(value) → value`                                       | rewrite `_dp(...)` in inputs  |
+| `findStep`                 | `(code, step) → RawNode \| null`                        | locate by `as` or `number`    |
+| `flattenSchema`            | `(schema[], io, parentPath) → FieldEntry[]`             | flatten nested schema         |
+| `flattenInput`             | `(value, parentPath?) → Mapping[]`                      | distill `input` into mappings |
+| `collectUpstreamDatapills` | `(code, beforeNumber) → DatapillRef[]`                  | upstream output pills         |
+| `inspectStep`              | `(code, node, recipeId, query?) → StepView`             | assemble the `step`-mode view |
 
 `pull-recipe.ts` `execute()` reads the new args, calls `runInWorkatoTab` exactly
 as today to get the raw `code`, then dispatches to the transform layer based on
@@ -227,7 +261,7 @@ Shared schema: `packages/shared/src/tools.ts` — the `PULL_RECIPE` entry gains
 2. `findWorkatoTab()` + `runInWorkatoTab(tabId, pullInPage, [recipe_id])` —
    unchanged. Yields `{ code, version }`.
 3. Dispatch:
-   - `step` set → `searchFields(findStep(code, step), recipe_id, field_query)`;
+   - `step` set → `inspectStep(code, findStep(code, step), recipe_id, field_query)`;
      if `findStep` returns null → error.
    - else `view === 'full'` → today's `{ recipe_id, code, version }`.
    - else → `toCompactRecipe(code, recipe_id, version, view === 'outline')`.
@@ -263,9 +297,13 @@ fixture derived from a `.tmp` dump.
 - `findStep` — resolves by `as` and by numeric `number`; returns null on miss.
 - `flattenSchema` — flattens nested `properties` with correct dotted `path`
   and `[]` for arrays.
-- `searchFields` — caps at 60 without query; `field_query` filters by name and
-  label case-insensitively and is uncapped; `total_fields`/`fields_truncated`
-  correct.
+- `flattenInput` — classifies leaves as datapill/formula/interpolated/code/
+  literal; dotted keys and `[index]` for nesting; previews long JSON blobs but
+  keeps code bodies whole.
+- `collectUpstreamDatapills` — collects only steps numbered below the target;
+  builds `datapill(provider.as.path)` refs.
+- `inspectStep` — header without input, full `mappings`, capped `fields` and
+  `available_datapills`; `field_query` filters both and lifts the cap.
 
 Pure functions only — no browser needed. The in-page fetch path is unchanged
 and stays out of scope.

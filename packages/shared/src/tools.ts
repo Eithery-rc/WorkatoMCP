@@ -1460,9 +1460,11 @@ export const TOOL_SCHEMAS: Tool[] = [
       '2. pull_recipe(recipe_id, view:"outline") — lightest view: step tree and ' +
       'descriptions only, no input. Use for very large recipes that overflow compact.\n' +
       '3. pull_recipe(recipe_id, step:"<as|number>") — drill into one step: its ' +
-      'config plus a flat field catalog (capped at 60).\n' +
-      '4. pull_recipe(recipe_id, step:"...", field_query:"text") — search that ' +
-      "step's input/output schema fields by name or label.\n" +
+      'input distilled into a classified `mappings` list (datapill / formula / ' +
+      'interpolated / literal / code), the settable input `fields`, and the ' +
+      '`available_datapills` produced by upstream steps it can reference.\n' +
+      '4. pull_recipe(recipe_id, step:"...", field_query:"text") — filter that ' +
+      "step's `fields` and `available_datapills` by name, label, or ref.\n" +
       '5. pull_recipe(recipe_id, view:"full") — the lossless raw tree (exact ' +
       '_dp(...) references), only for wholesale tree rewrites.',
     inputSchema: {
@@ -1487,14 +1489,16 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'string',
           description:
             "Drill into a single step. Accepts the step's 'as' anchor or its " +
-            'numeric step number. Returns that step plus a flat catalog of its ' +
-            'input/output schema fields.',
+            'numeric step number. Returns the step header, its `mappings` ' +
+            '(classified input leaves — the wiring and logic), the settable ' +
+            '`fields`, and `available_datapills` from upstream steps.',
         },
         field_query: {
           type: 'string',
           description:
-            "Case-insensitive substring filter for [step] mode's field catalog, " +
-            'matched against each field name and label. Requires [step].',
+            "Case-insensitive substring filter for [step] mode's `fields` and " +
+            '`available_datapills`, matched against name, label, and ref. ' +
+            'Lifts the 60-item cap on both. Requires [step].',
         },
       },
       required: ['recipe_id'],

@@ -4,8 +4,8 @@ import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
 import {
   findStep,
+  inspectStep,
   listStepRefs,
-  searchFields,
   toCompactRecipe,
   type RawNode,
   type RecipeVersion,
@@ -207,7 +207,7 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
               `Available steps (number:as): ${refs}`,
           );
         }
-        payload = searchFields(node, args.recipe_id, args.field_query);
+        payload = inspectStep(code, node, args.recipe_id, args.field_query);
       } else if (view === 'full') {
         payload = { recipe_id: args.recipe_id, code: result.code, version: result.version };
       } else {
