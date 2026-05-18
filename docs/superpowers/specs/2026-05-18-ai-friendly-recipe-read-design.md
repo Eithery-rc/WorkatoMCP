@@ -94,7 +94,6 @@ The same nested step tree with UI-metadata sections removed. Output shape:
       "name": "get_records",
       "as": "98cc4bea",
       "uuid": "0c7bd277-...",
-      "title": null,
       "description": "Search records in AdPay Processing errors data table",
       "input": { "table_id": "110379", "limit": "1000", "filters": [] },
       "block": [
@@ -108,8 +107,10 @@ The same nested step tree with UI-metadata sections removed. Output shape:
 Per node:
 
 - **Kept:** `number`→`n`, `keyword`→`type`, `provider`→`app`, `name`, `as`,
-  `uuid`, `title`, `description` (HTML stripped), `input` (verbatim),
-  `block` (recursed).
+  `uuid`, `title` (only when set to a non-empty value — a user-set step title),
+  `description` (HTML stripped), `input` (verbatim), `block` (recursed).
+- `step_count` counts action/control steps only; the trigger is reported
+  separately under `trigger`.
 - **Stripped:** `extended_input_schema`, `extended_output_schema`,
   `visible_config_fields`, `dynamicPickListSelection`, `job_report_config`,
   `job_report_schema`, and `skip` when `false`.
@@ -118,9 +119,11 @@ Per node:
 - `description` has its `<span class="provider">…</span>` HTML stripped to plain
   text.
 
-Expected reduction: 644 KB → ~75 KB (≈88% smaller). The compact tree maps 1:1
-to the full tree by `n` / `as`, so it doubles as the cheap whole-recipe index —
-no separate recipe-wide search is needed.
+Measured reduction on the sample: 644 KB → 141 KB (≈78% smaller). The remaining
+weight is the verbatim `input` of every step (Python source, NetSuite configs);
+trimming that further is out of scope. The compact tree maps 1:1 to the full
+tree by `n` / `as`, so it doubles as the cheap whole-recipe index — no separate
+recipe-wide search is needed.
 
 ### `step` mode — searchable schema inspector
 
