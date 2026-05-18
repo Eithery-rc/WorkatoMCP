@@ -47,3 +47,6 @@ CLAUDE.md
 
 .docs/
 .claude/
+
+# Scratch / local dumps
+.tmp/
