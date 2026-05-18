@@ -1447,9 +1447,26 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO.PULL_RECIPE,
     description:
-      "Fetch a Workato recipe's full code tree plus version metadata. Read-only. " +
+      "Fetch a Workato recipe's code tree plus version metadata. Read-only. " +
       'Requires an open Workato tab (*.workato.com or *.workato.is) using the same ' +
-      "session as the recipe's account.",
+      "session as the recipe's account.\n\n" +
+      'By default returns a COMPACT view: the full step tree with bulky UI-metadata ' +
+      'sections (extended_input_schema, extended_output_schema, visible_config_fields, ' +
+      "dynamicPickListSelection) stripped and each step's configured input kept with " +
+      'its verbose _dp(...) datapills shortened to a readable datapill(...) form. The ' +
+      'cheap whole-recipe index — scan it to understand a recipe.\n\n' +
+      'Usage pipeline:\n' +
+      '1. pull_recipe(recipe_id) — compact tree, see the whole recipe.\n' +
+      '2. pull_recipe(recipe_id, view:"outline") — lightest view: step tree and ' +
+      'descriptions only, no input. Use for very large recipes that overflow compact.\n' +
+      '3. pull_recipe(recipe_id, step:"<as|number>") — drill into one step: its ' +
+      'input distilled into a classified `mappings` list (datapill / formula / ' +
+      'interpolated / literal / code), the settable input `fields`, and the ' +
+      '`available_datapills` produced by upstream steps it can reference.\n' +
+      '4. pull_recipe(recipe_id, step:"...", field_query:"text") — filter that ' +
+      "step's `fields` and `available_datapills` by name, label, or ref.\n" +
+      '5. pull_recipe(recipe_id, view:"full") — the lossless raw tree (exact ' +
+      '_dp(...) references), only for wholesale tree rewrites.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1458,6 +1475,30 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Numeric Workato recipe id, e.g. 72449879. Found in the recipe URL: ' +
             'app.workato.com/recipes/<recipe_id>-<slug>.',
+        },
+        view: {
+          type: 'string',
+          enum: ['compact', 'outline', 'full'],
+          description:
+            "Whole-recipe read mode. 'compact' (default) strips UI metadata and " +
+            "shortens datapills; 'outline' additionally drops every step's input " +
+            "(lightest, for very large recipes); 'full' returns the lossless raw " +
+            'code tree. Ignored when [step] is set.',
+        },
+        step: {
+          type: 'string',
+          description:
+            "Drill into a single step. Accepts the step's 'as' anchor or its " +
+            'numeric step number. Returns the step header, its `mappings` ' +
+            '(classified input leaves — the wiring and logic), the settable ' +
+            '`fields`, and `available_datapills` from upstream steps.',
+        },
+        field_query: {
+          type: 'string',
+          description:
+            "Case-insensitive substring filter for [step] mode's `fields` and " +
+            '`available_datapills`, matched against name, label, and ref. ' +
+            'Lifts the 60-item cap on both. Requires [step].',
         },
       },
       required: ['recipe_id'],
