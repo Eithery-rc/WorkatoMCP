@@ -8,8 +8,9 @@
  *  - `toCompactRecipe` — the whole recipe with UI metadata stripped and
  *    `_dp(...)` datapills shortened for readability; with `omitInput` it drops
  *    every step's `input` for an even lighter structural outline.
- *  - `findStep` + `searchFields` — drill into one step and flatten/search its
- *    input & output schema fields.
+ *  - `findStep` + `inspectStep` — drill into one step: its config distilled
+ *    into a classified `mappings` list, the settable input fields, and the
+ *    datapills produced by upstream steps that it can reference.
  *
  * Everything here is pure: it runs in the background script on the parsed
  * `code` object after `pullInPage` returns. The in-page fetch is untouched.
@@ -89,17 +90,45 @@ export interface FieldEntry {
   io: 'in' | 'out';
 }
 
+/** How a step's input leaf is wired. */
+export type MappingKind = 'datapill' | 'formula' | 'interpolated' | 'literal' | 'code';
+
+/** One distilled input leaf — the wiring/logic of a step. */
+export interface Mapping {
+  path: string;
+  kind: MappingKind;
+  value: unknown;
+  /** set when a long literal blob was previewed instead of returned whole */
+  truncated?: true;
+  /** original length, present only alongside `truncated` */
+  chars?: number;
+}
+
+/** A datapill an upstream step exposes for the inspected step to reference. */
+export interface DatapillRef {
+  ref: string;
+  label: string;
+  type: string;
+}
+
 /** The `step`-mode payload. */
 export interface StepView {
   recipe_id: number;
   step: CompactStep;
+  mappings: Mapping[];
   fields: FieldEntry[];
   total_fields: number;
   fields_truncated: boolean;
+  available_datapills: DatapillRef[];
+  total_datapills: number;
+  datapills_truncated: boolean;
 }
 
-/** Max fields returned in `step` mode before truncation kicks in. */
+/** Max fields/datapills returned in `step` mode before truncation kicks in. */
 export const FIELD_CAP = 60;
+
+/** Plain-literal strings longer than this are previewed, not returned whole. */
+export const LITERAL_CAP = 256;
 
 /** Shape of the JSON argument inside a `_dp('...')` datapill reference. */
 interface RawPill {
@@ -318,39 +347,135 @@ export function flattenSchema(
   return fields;
 }
 
-/**
- * Build the `step`-mode payload: the step's compact config plus a flat catalog
- * of its input & output schema fields. Without `query` the catalog is capped at
- * `FIELD_CAP`; with `query` it is filtered (by name/label, case-insensitive)
- * and uncapped.
- */
-export function searchFields(node: RawNode, recipeId: number, query?: string): StepView {
-  const step = compactNode(node);
-  delete step.block;
-  const all = [
-    ...flattenSchema(node.extended_input_schema, 'in'),
-    ...flattenSchema(node.extended_output_schema, 'out'),
-  ];
+/** A whole value that is a single datapill reference (interpolated or formula). */
+const PURE_DATAPILL_RE = /^#\{datapill\([^)]*\)\}$|^=datapill\([^)]*\)$/;
 
-  if (query && query.trim() !== '') {
-    const needle = query.trim().toLowerCase();
-    const matched = all.filter(
-      (f) => f.name.toLowerCase().includes(needle) || f.label.toLowerCase().includes(needle),
-    );
-    return {
-      recipe_id: recipeId,
-      step,
-      fields: matched,
-      total_fields: matched.length,
-      fields_truncated: false,
-    };
+/**
+ * Classify one input leaf by how it is wired: a bare datapill reference, a
+ * formula (`=` prefix), an interpolated string with embedded datapills, a code
+ * body (a long non-JSON string — Python/SQL), or a plain literal. Long literal
+ * JSON blobs (e.g. embedded schemas) are previewed rather than returned whole.
+ */
+function classifyValue(raw: unknown): Omit<Mapping, 'path'> {
+  if (typeof raw !== 'string') return { kind: 'literal', value: raw };
+
+  const shortened = shortenDatapills(raw) as string;
+  if (PURE_DATAPILL_RE.test(shortened.trim())) return { kind: 'datapill', value: shortened };
+  if (shortened.startsWith('=')) return { kind: 'formula', value: shortened };
+  if (shortened.includes('#{')) return { kind: 'interpolated', value: shortened };
+
+  if (raw.length > LITERAL_CAP) {
+    let isJson = false;
+    try {
+      JSON.parse(raw);
+      isJson = true;
+    } catch {
+      /* not JSON — treat as a code/text body */
+    }
+    if (isJson) {
+      return {
+        kind: 'literal',
+        value: `${raw.slice(0, LITERAL_CAP)}…`,
+        truncated: true,
+        chars: raw.length,
+      };
+    }
+    return { kind: 'code', value: shortened };
   }
+  return { kind: 'literal', value: shortened };
+}
+
+/**
+ * Flatten a step's `input` object into a flat list of classified leaf mappings.
+ * Object keys join with `.`, array elements with `[index]`.
+ */
+export function flattenInput(value: unknown, parentPath = ''): Mapping[] {
+  if (Array.isArray(value)) {
+    const out: Mapping[] = [];
+    value.forEach((element, index) => {
+      out.push(...flattenInput(element, `${parentPath}[${index}]`));
+    });
+    return out;
+  }
+  if (value && typeof value === 'object') {
+    const out: Mapping[] = [];
+    for (const [key, val] of Object.entries(value)) {
+      out.push(...flattenInput(val, parentPath ? `${parentPath}.${key}` : key));
+    }
+    return out;
+  }
+  return [{ path: parentPath || '(value)', ...classifyValue(value) }];
+}
+
+/**
+ * Collect every datapill that steps numbered below `beforeNumber` expose —
+ * the references the inspected step is allowed to wire in. Built from each
+ * upstream step's `extended_output_schema`.
+ */
+export function collectUpstreamDatapills(code: RawNode, beforeNumber: number): DatapillRef[] {
+  const refs: DatapillRef[] = [];
+  const walk = (node: RawNode): void => {
+    if (
+      typeof node.number === 'number' &&
+      node.number < beforeNumber &&
+      typeof node.provider === 'string' &&
+      typeof node.as === 'string' &&
+      Array.isArray(node.extended_output_schema)
+    ) {
+      const head = `${node.provider}.${node.as}`;
+      for (const field of flattenSchema(node.extended_output_schema, 'out')) {
+        refs.push({ ref: `datapill(${head}.${field.path})`, label: field.label, type: field.type });
+      }
+    }
+    if (Array.isArray(node.block)) node.block.forEach(walk);
+  };
+  walk(code);
+  return refs;
+}
+
+/**
+ * Build the `step`-mode payload: the step header, its `input` distilled into a
+ * classified `mappings` list, the settable input `fields`, and the
+ * `available_datapills` produced by upstream steps. `fields` and
+ * `available_datapills` are capped at `FIELD_CAP`; passing `query` filters both
+ * (by name/label/ref, case-insensitive) and lifts the cap. `mappings` — the
+ * core wiring/logic of the step — is always returned in full.
+ */
+export function inspectStep(
+  code: RawNode,
+  node: RawNode,
+  recipeId: number,
+  query?: string,
+): StepView {
+  const step = compactNode(node, true);
+  delete step.block;
+
+  const mappings = flattenInput(node.input ?? {});
+  const allFields = flattenSchema(node.extended_input_schema, 'in');
+  const targetNumber = typeof node.number === 'number' ? node.number : Number.POSITIVE_INFINITY;
+  const allDatapills = collectUpstreamDatapills(code, targetNumber);
+
+  const needle = query && query.trim() !== '' ? query.trim().toLowerCase() : null;
+  const fields = needle
+    ? allFields.filter(
+        (f) => f.name.toLowerCase().includes(needle) || f.label.toLowerCase().includes(needle),
+      )
+    : allFields.slice(0, FIELD_CAP);
+  const datapills = needle
+    ? allDatapills.filter(
+        (d) => d.ref.toLowerCase().includes(needle) || d.label.toLowerCase().includes(needle),
+      )
+    : allDatapills.slice(0, FIELD_CAP);
 
   return {
     recipe_id: recipeId,
     step,
-    fields: all.slice(0, FIELD_CAP),
-    total_fields: all.length,
-    fields_truncated: all.length > FIELD_CAP,
+    mappings,
+    fields,
+    total_fields: needle ? fields.length : allFields.length,
+    fields_truncated: needle ? false : allFields.length > FIELD_CAP,
+    available_datapills: datapills,
+    total_datapills: needle ? datapills.length : allDatapills.length,
+    datapills_truncated: needle ? false : allDatapills.length > FIELD_CAP,
   };
 }
