@@ -1,7 +1,9 @@
 # AI-Friendly Recipe Read — Design
 
 **Date:** 2026-05-18
-**Status:** Approved (brainstorming)
+**Status:** Approved (brainstorming) — extended with the `outline` view and
+datapill shortening after the first live test showed the `compact` view can
+still overflow the harness's per-tool-result token cap for very large recipes.
 **Tool affected:** `workato_pull_recipe`
 
 ## Problem
@@ -37,18 +39,19 @@ Each call shape has one clear job.
 
 ### Tool surface
 
-| Param         | Type                    | Default      | Effect                                              |
-| ------------- | ----------------------- | ------------ | --------------------------------------------------- |
-| `recipe_id`   | number                  | _(required)_ | unchanged                                           |
-| `view`        | `'compact'` \| `'full'` | `compact`    | whole-recipe read mode                              |
-| `step`        | string                  | —            | `as` anchor or step number — single-step drill-down |
-| `field_query` | string                  | —            | substring filter for `step` mode's schema search    |
+| Param         | Type                                   | Default      | Effect                                              |
+| ------------- | -------------------------------------- | ------------ | --------------------------------------------------- |
+| `recipe_id`   | number                                 | _(required)_ | unchanged                                           |
+| `view`        | `'compact'` \| `'outline'` \| `'full'` | `compact`    | whole-recipe read mode                              |
+| `step`        | string                                 | —            | `as` anchor or step number — single-step drill-down |
+| `field_query` | string                                 | —            | substring filter for `step` mode's schema search    |
 
 Call shapes:
 
 | Call                                                     | Returns                                  |
 | -------------------------------------------------------- | ---------------------------------------- |
 | `pull_recipe(id)`                                        | compact whole-recipe tree — **default**  |
+| `pull_recipe(id, view:'outline')`                        | structural tree, no step inputs          |
 | `pull_recipe(id, view:'full')`                           | today's exact lossless tree              |
 | `pull_recipe(id, step:'98cc4bea')`                       | one step's config + pruned field catalog |
 | `pull_recipe(id, step:'98cc4bea', field_query:'amount')` | that step's fields matching "amount"     |
@@ -108,22 +111,41 @@ Per node:
 
 - **Kept:** `number`→`n`, `keyword`→`type`, `provider`→`app`, `name`, `as`,
   `uuid`, `title` (only when set to a non-empty value — a user-set step title),
-  `description` (HTML stripped), `input` (verbatim), `block` (recursed).
+  `description` (HTML stripped), `input` (datapills shortened — see below),
+  `block` (recursed).
 - `step_count` counts action/control steps only; the trigger is reported
   separately under `trigger`.
 - **Stripped:** `extended_input_schema`, `extended_output_schema`,
   `visible_config_fields`, `dynamicPickListSelection`, `job_report_config`,
   `job_report_schema`, and `skip` when `false`.
-- `input` is kept **verbatim** — it holds `#{_dp(...)}` datapills that are
-  semantically load-bearing; pruning it would be lossy.
 - `description` has its `<span class="provider">…</span>` HTML stripped to plain
   text.
 
-Measured reduction on the sample: 644 KB → 141 KB (≈78% smaller). The remaining
-weight is the verbatim `input` of every step (Python source, NetSuite configs);
-trimming that further is out of scope. The compact tree maps 1:1 to the full
-tree by `n` / `as`, so it doubles as the cheap whole-recipe index — no separate
+**Datapill shortening.** A saved recipe references upstream data with verbose
+`_dp('{...json...}')` blobs — e.g.
+`_dp('{"pill_type":"output","provider":"py_eval","line":"e4f443bd","path":["output","Invoices",{"path_element_type":"current_item"},"lines",{"path_element_type":"current_item"},"amount"]}')`
+(~190 chars). In `compact` (and `step`) mode each `_dp('...')` is rewritten to a
+short dotted reference: `datapill(py_eval.e4f443bd.output.Invoices[].lines[].amount)`.
+Loop items (`current_item`) collapse to `[]`, array sizes to `.size`,
+`job_context` pills keep their `pill_type` as the head. A reference whose JSON
+fails to parse is left untouched. This is **lossy-but-readable** — `view:'full'`
+remains the only source of the exact `_dp(...)` form, and the recipe-mutation
+tools never consume the compact view, so there is no write-back risk.
+
+Measured reduction on the sample: 644 KB → ~71 KB (≈89% smaller). Even so, a
+recipe this large can still exceed the harness's per-tool-result token cap — use
+`view:'outline'` when that happens. The compact tree maps 1:1 to the full tree
+by `n` / `as`, so it doubles as the cheap whole-recipe index — no separate
 recipe-wide search is needed.
+
+### `view: 'outline'`
+
+Identical to `compact` but every step's `input` is dropped entirely. What
+remains is pure structure: the step tree, `type`/`app`/`name`/`as`, and
+`description`. This is the lightest view (single-digit KB even for large
+recipes) and always fits inline. The agent scans the outline to grasp recipe
+shape and flow, then uses `step` mode to read any individual step's actual
+configuration.
 
 ### `step` mode — searchable schema inspector
 
@@ -180,14 +202,16 @@ promise-chain form (see `reference_v1_pitfalls_resolved`).
 
 New module: `app/chrome-extension/entrypoints/background/tools/workato/recipe-view.ts`
 
-| Function          | Signature                                       | Job                        |
-| ----------------- | ----------------------------------------------- | -------------------------- |
-| `toCompactRecipe` | `(code, recipeId, version) → CompactRecipe`     | prune the tree             |
-| `compactNode`     | `(node) → CompactStep`                          | prune one step node        |
-| `stripHtml`       | `(s) → string`                                  | description cleanup        |
-| `findStep`        | `(code, step) → RawNode \| null`                | locate by `as` or `number` |
-| `flattenSchema`   | `(schema[], io, parentPath) → FieldEntry[]`     | flatten nested schema      |
-| `searchFields`    | `(node, query?) → { fields, total, truncated }` | catalog + filter           |
+| Function           | Signature                                               | Job                          |
+| ------------------ | ------------------------------------------------------- | ---------------------------- |
+| `toCompactRecipe`  | `(code, recipeId, version, omitInput?) → CompactRecipe` | prune the tree               |
+| `compactNode`      | `(node, omitInput?) → CompactStep`                      | prune one step node          |
+| `stripHtml`        | `(s) → string`                                          | description cleanup          |
+| `pillToRef`        | `(pill) → string`                                       | render a parsed pill short   |
+| `shortenDatapills` | `(value) → value`                                       | rewrite `_dp(...)` in inputs |
+| `findStep`         | `(code, step) → RawNode \| null`                        | locate by `as` or `number`   |
+| `flattenSchema`    | `(schema[], io, parentPath) → FieldEntry[]`             | flatten nested schema        |
+| `searchFields`     | `(node, recipeId, query?) → StepView`                   | catalog + filter             |
 
 `pull-recipe.ts` `execute()` reads the new args, calls `runInWorkatoTab` exactly
 as today to get the raw `code`, then dispatches to the transform layer based on
@@ -203,16 +227,17 @@ Shared schema: `packages/shared/src/tools.ts` — the `PULL_RECIPE` entry gains
 2. `findWorkatoTab()` + `runInWorkatoTab(tabId, pullInPage, [recipe_id])` —
    unchanged. Yields `{ code, version }`.
 3. Dispatch:
-   - `step` set → `searchFields(findStep(code, step), field_query)`; if
-     `findStep` returns null → error.
+   - `step` set → `searchFields(findStep(code, step), recipe_id, field_query)`;
+     if `findStep` returns null → error.
    - else `view === 'full'` → today's `{ recipe_id, code, version }`.
-   - else → `toCompactRecipe(code, recipe_id, version)`.
+   - else → `toCompactRecipe(code, recipe_id, version, view === 'outline')`.
 4. `JSON.stringify` the result into the `ToolResult` text content.
 
 ## Error handling
 
 - `recipe_id` not a finite number → existing error.
-- `view` not `compact`/`full` → `"Param [view] must be 'compact' or 'full'"`.
+- `view` not `compact`/`outline`/`full` →
+  `"Param [view] must be 'compact', 'outline', or 'full'"`.
 - `field_query` set without `step` → `"Param [field_query] requires [step]"`.
 - `step` matches no node → error listing available step numbers and `as`
   anchors so the agent can retry.
@@ -226,9 +251,15 @@ Vitest (already used in the extension). New file:
 fixture derived from a `.tmp` dump.
 
 - `stripHtml` — removes `<span>` markup, leaves plain text.
-- `compactNode` — drops the four UI-metadata sections, keeps `input` verbatim,
-  renames keys, drops `skip:false` but keeps `skip:true`.
-- `toCompactRecipe` — recurses `block`, preserves nesting, emits `step_count`.
+- `compactNode` — drops the four UI-metadata sections, shortens datapills in
+  `input`, renames keys, drops `skip:false` but keeps `skip:true`, drops `input`
+  when `omitInput` is set.
+- `pillToRef` — renders output and `job_context` pills, `[]` for loop items,
+  `.size` for array sizes.
+- `shortenDatapills` — rewrites `_dp(...)` in strings, recurses objects/arrays,
+  leaves unparseable references untouched, passes scalars through.
+- `toCompactRecipe` — recurses `block`, preserves nesting, emits `step_count`;
+  `omitInput` produces the outline (no step inputs).
 - `findStep` — resolves by `as` and by numeric `number`; returns null on miss.
 - `flattenSchema` — flattens nested `properties` with correct dotted `path`
   and `[]` for arrays.
@@ -243,6 +274,7 @@ and stays out of scope.
 
 - Recipe-wide cross-step search — the compact view already serves as the index.
 - Per-app special-casing (e.g. trimming `code_output_schema_json` inside
-  `py_eval` `input`). Possible future optimisation; `input` stays verbatim now.
-- Datapill prettification (`#{_dp(...)}` → human-readable refs).
+  `py_eval` `input`). Possible future optimisation.
+- Reversing shortened `datapill(...)` refs back to `_dp(...)` — the compact and
+  outline views are read-only; write-back uses `view:'full'` or the mutators.
 - Any change to the in-page `pullInPage` fetch function.

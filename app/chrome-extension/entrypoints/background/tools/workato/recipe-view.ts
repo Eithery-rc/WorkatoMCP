@@ -5,8 +5,9 @@
  * (`extended_input_schema` alone is ~78% of a real recipe). These functions
  * project that tree into AI-friendly shapes:
  *
- *  - `toCompactRecipe` — the whole recipe with UI metadata stripped (~78%
- *    smaller), keeping each step's configured `input` verbatim.
+ *  - `toCompactRecipe` — the whole recipe with UI metadata stripped and
+ *    `_dp(...)` datapills shortened for readability; with `omitInput` it drops
+ *    every step's `input` for an even lighter structural outline.
  *  - `findStep` + `searchFields` — drill into one step and flatten/search its
  *    input & output schema fields.
  *
@@ -100,6 +101,78 @@ export interface StepView {
 /** Max fields returned in `step` mode before truncation kicks in. */
 export const FIELD_CAP = 60;
 
+/** Shape of the JSON argument inside a `_dp('...')` datapill reference. */
+interface RawPill {
+  pill_type?: string;
+  provider?: string;
+  line?: string;
+  path?: Array<string | { path_element_type?: string }>;
+}
+
+/**
+ * Render a parsed datapill as a short dotted reference, e.g.
+ * `py_eval.e4f443bd.output.Invoices[].lines[].amount` or
+ * `job_context.parameters.flowCode`. Loop items collapse to `[]`, array
+ * sizes to `.size`.
+ */
+export function pillToRef(pill: RawPill): string {
+  const segments: string[] = [];
+  if (typeof pill.pill_type === 'string' && pill.pill_type !== 'output') {
+    segments.push(pill.pill_type);
+  }
+  if (typeof pill.provider === 'string') segments.push(pill.provider);
+  if (typeof pill.line === 'string') segments.push(pill.line);
+
+  for (const element of pill.path ?? []) {
+    if (element && typeof element === 'object') {
+      const kind = element.path_element_type;
+      if (kind === 'current_item') {
+        if (segments.length > 0) segments[segments.length - 1] += '[]';
+        else segments.push('[]');
+      } else if (kind === 'size') {
+        segments.push('size');
+      } else {
+        segments.push('?');
+      }
+    } else {
+      segments.push(String(element));
+    }
+  }
+  return `datapill(${segments.join('.')})`;
+}
+
+/** Matches a `_dp('<single-quoted JSON>')` datapill reference. */
+const DATAPILL_RE = /_dp\('([\s\S]*?)'\)/g;
+
+/**
+ * Recursively rewrite verbose `_dp('{...json...}')` datapill references inside
+ * an `input` value into the short `datapill(...)` form. Datapills whose JSON
+ * fails to parse are left untouched. This is lossy-but-readable — `view:'full'`
+ * remains the source of the exact reference.
+ */
+export function shortenDatapills(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return value.replace(DATAPILL_RE, (whole, json: string) => {
+      try {
+        const pill = JSON.parse(json) as RawPill;
+        if (pill && typeof pill === 'object' && (pill.pill_type || pill.provider)) {
+          return pillToRef(pill);
+        }
+      } catch {
+        /* not parseable — leave the original reference in place */
+      }
+      return whole;
+    });
+  }
+  if (Array.isArray(value)) return value.map(shortenDatapills);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value)) out[key] = shortenDatapills(val);
+    return out;
+  }
+  return value;
+}
+
 /** Strip HTML tags from a Workato description, collapsing whitespace. */
 export function stripHtml(value: unknown): string {
   if (typeof value !== 'string') return '';
@@ -117,10 +190,11 @@ export function stripHtml(value: unknown): string {
 
 /**
  * Prune one raw node into a compact step. UI-metadata sections are dropped;
- * `input` is kept verbatim (it holds `#{_dp(...)}` datapills); `block` is
+ * `input` is kept with its `_dp(...)` datapills shortened for readability (or
+ * dropped entirely when `omitInput` is set, for the outline view); `block` is
  * recursed so nested if/try/foreach branches are preserved.
  */
-export function compactNode(node: RawNode): CompactStep {
+export function compactNode(node: RawNode, omitInput = false): CompactStep {
   const out: CompactStep = {};
   if (typeof node.number === 'number') out.n = node.number;
   if (typeof node.keyword === 'string') out.type = node.keyword;
@@ -131,8 +205,12 @@ export function compactNode(node: RawNode): CompactStep {
   if (node.title != null && node.title !== '') out.title = node.title;
   if (node.description) out.description = stripHtml(node.description);
   if (node.skip === true) out.skip = true;
-  if (node.input && typeof node.input === 'object') out.input = node.input;
-  if (Array.isArray(node.block)) out.block = node.block.map(compactNode);
+  if (!omitInput && node.input && typeof node.input === 'object') {
+    out.input = shortenDatapills(node.input) as Record<string, unknown>;
+  }
+  if (Array.isArray(node.block)) {
+    out.block = node.block.map((child) => compactNode(child, omitInput));
+  }
   return out;
 }
 
@@ -146,13 +224,17 @@ function countSteps(steps: CompactStep[]): number {
   return total;
 }
 
-/** Project a raw recipe code tree into the compact whole-recipe payload. */
+/**
+ * Project a raw recipe code tree into the compact whole-recipe payload.
+ * With `omitInput` set, every step's `input` is dropped — the outline view.
+ */
 export function toCompactRecipe(
   code: RawNode,
   recipeId: number,
   version: RecipeVersion,
+  omitInput = false,
 ): CompactRecipe {
-  const trigger = compactNode(code);
+  const trigger = compactNode(code, omitInput);
   const steps = trigger.block ?? [];
   delete trigger.block;
   return {

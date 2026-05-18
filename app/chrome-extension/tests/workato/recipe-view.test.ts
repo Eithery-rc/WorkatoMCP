@@ -10,7 +10,9 @@ import {
   findStep,
   flattenSchema,
   listStepRefs,
+  pillToRef,
   searchFields,
+  shortenDatapills,
   stripHtml,
   toCompactRecipe,
   type RawNode,
@@ -105,7 +107,7 @@ describe('stripHtml', () => {
 });
 
 describe('compactNode', () => {
-  it('drops UI-metadata sections and keeps input verbatim', () => {
+  it('drops UI-metadata sections and keeps configured input', () => {
     const step = sampleCode().block![0];
     const compact = compactNode(step);
     expect(compact).not.toHaveProperty('extended_input_schema');
@@ -113,6 +115,25 @@ describe('compactNode', () => {
     expect(compact).not.toHaveProperty('visible_config_fields');
     expect(compact).not.toHaveProperty('dynamicPickListSelection');
     expect(compact.input).toEqual({ table_id: '110379', limit: '1000' });
+  });
+
+  it('shortens _dp(...) datapills in input', () => {
+    const node: RawNode = {
+      number: 9,
+      keyword: 'action',
+      as: 'step9',
+      input: {
+        total:
+          '#{_dp(\'{"pill_type":"output","provider":"py_eval","line":"e4f443bd","path":["output","total"]}\')}',
+      },
+    };
+    expect(compactNode(node).input).toEqual({
+      total: '#{datapill(py_eval.e4f443bd.output.total)}',
+    });
+  });
+
+  it('omits input entirely when omitInput is set', () => {
+    expect(compactNode(sampleCode().block![0], true)).not.toHaveProperty('input');
   });
 
   it('renames keys and strips description HTML', () => {
@@ -145,6 +166,88 @@ describe('toCompactRecipe', () => {
     expect(recipe.trigger).not.toHaveProperty('block');
     expect(recipe.steps).toHaveLength(2);
     expect(recipe.step_count).toBe(3); // step 2, if 3, nested action 4
+  });
+
+  it('drops every step input in outline mode (omitInput) but keeps structure', () => {
+    const outline = toCompactRecipe(sampleCode(), 72436887, version, true);
+    expect(outline.trigger).not.toHaveProperty('input');
+    expect(outline.steps[0]).not.toHaveProperty('input');
+    expect(outline.steps[1].block![0]).not.toHaveProperty('input');
+    // structure and descriptions survive
+    expect(outline.steps[0].app).toBe('workato_db_table');
+    expect(outline.steps[0].description).toBe('Search records in errors data table');
+    expect(outline.step_count).toBe(3);
+  });
+});
+
+describe('pillToRef', () => {
+  it('renders an output pill as provider.line.path with [] for loop items', () => {
+    expect(
+      pillToRef({
+        pill_type: 'output',
+        provider: 'py_eval',
+        line: 'e4f443bd',
+        path: [
+          'output',
+          'Invoices',
+          { path_element_type: 'current_item' },
+          'lines',
+          { path_element_type: 'current_item' },
+          'amount',
+        ],
+      }),
+    ).toBe('datapill(py_eval.e4f443bd.output.Invoices[].lines[].amount)');
+  });
+
+  it('renders a job_context pill and a size element', () => {
+    expect(pillToRef({ pill_type: 'job_context', path: ['parameters', 'flowCode'] })).toBe(
+      'datapill(job_context.parameters.flowCode)',
+    );
+    expect(
+      pillToRef({
+        pill_type: 'output',
+        provider: 'logger',
+        line: 'ac1fa99f',
+        path: ['rows', { path_element_type: 'size' }],
+      }),
+    ).toBe('datapill(logger.ac1fa99f.rows.size)');
+  });
+});
+
+describe('shortenDatapills', () => {
+  const pill =
+    '{"pill_type":"output","provider":"py_eval","line":"e4f443bd","path":["output","total"]}';
+
+  it('shortens an interpolated datapill inside a string', () => {
+    expect(shortenDatapills(`#{_dp('${pill}')}`)).toBe(
+      '#{datapill(py_eval.e4f443bd.output.total)}',
+    );
+  });
+
+  it('shortens multiple datapills in a formula expression', () => {
+    const formula = `=_dp('${pill}').to_f + _dp('${pill}').to_f`;
+    expect(shortenDatapills(formula)).toBe(
+      '=datapill(py_eval.e4f443bd.output.total).to_f + datapill(py_eval.e4f443bd.output.total).to_f',
+    );
+  });
+
+  it('recurses into nested objects and arrays', () => {
+    const result = shortenDatapills({
+      a: `#{_dp('${pill}')}`,
+      b: [`#{_dp('${pill}')}`, 7],
+    }) as Record<string, unknown>;
+    expect(result.a).toBe('#{datapill(py_eval.e4f443bd.output.total)}');
+    expect((result.b as unknown[])[0]).toBe('#{datapill(py_eval.e4f443bd.output.total)}');
+    expect((result.b as unknown[])[1]).toBe(7);
+  });
+
+  it('leaves an unparseable datapill reference untouched', () => {
+    expect(shortenDatapills("=_dp('not json').foo")).toBe("=_dp('not json').foo");
+  });
+
+  it('passes non-string scalars through unchanged', () => {
+    expect(shortenDatapills(42)).toBe(42);
+    expect(shortenDatapills(null)).toBeNull();
   });
 });
 
