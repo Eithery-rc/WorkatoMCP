@@ -13,7 +13,7 @@ import {
 
 interface PullRecipeArgs {
   recipe_id: number;
-  view?: 'compact' | 'full';
+  view?: 'compact' | 'full' | 'outline';
   step?: string;
   field_query?: string;
 }
@@ -173,8 +173,8 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
       }
 
       const view = args.view ?? 'compact';
-      if (view !== 'compact' && view !== 'full') {
-        return createErrorResponse("Param [view] must be 'compact' or 'full'");
+      if (view !== 'compact' && view !== 'full' && view !== 'outline') {
+        return createErrorResponse("Param [view] must be 'compact', 'outline', or 'full'");
       }
       if (args.field_query != null && args.step == null) {
         return createErrorResponse('Param [field_query] requires [step]');
@@ -211,7 +211,7 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
       } else if (view === 'full') {
         payload = { recipe_id: args.recipe_id, code: result.code, version: result.version };
       } else {
-        payload = toCompactRecipe(code, args.recipe_id, version);
+        payload = toCompactRecipe(code, args.recipe_id, version, view === 'outline');
       }
 
       return {

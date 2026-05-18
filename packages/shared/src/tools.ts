@@ -1452,17 +1452,19 @@ export const TOOL_SCHEMAS: Tool[] = [
       "session as the recipe's account.\n\n" +
       'By default returns a COMPACT view: the full step tree with bulky UI-metadata ' +
       'sections (extended_input_schema, extended_output_schema, visible_config_fields, ' +
-      "dynamicPickListSelection) stripped, keeping each step's configured input " +
-      'verbatim. This is ~78% smaller than the raw tree and is the cheap whole-recipe ' +
-      'index — scan it to understand a recipe.\n\n' +
+      "dynamicPickListSelection) stripped and each step's configured input kept with " +
+      'its verbose _dp(...) datapills shortened to a readable datapill(...) form. The ' +
+      'cheap whole-recipe index — scan it to understand a recipe.\n\n' +
       'Usage pipeline:\n' +
       '1. pull_recipe(recipe_id) — compact tree, see the whole recipe.\n' +
-      '2. pull_recipe(recipe_id, step:"<as|number>") — drill into one step: its ' +
+      '2. pull_recipe(recipe_id, view:"outline") — lightest view: step tree and ' +
+      'descriptions only, no input. Use for very large recipes that overflow compact.\n' +
+      '3. pull_recipe(recipe_id, step:"<as|number>") — drill into one step: its ' +
       'config plus a flat field catalog (capped at 60).\n' +
-      '3. pull_recipe(recipe_id, step:"...", field_query:"text") — search that ' +
+      '4. pull_recipe(recipe_id, step:"...", field_query:"text") — search that ' +
       "step's input/output schema fields by name or label.\n" +
-      '4. pull_recipe(recipe_id, view:"full") — the lossless raw tree, only for ' +
-      'wholesale tree rewrites.',
+      '5. pull_recipe(recipe_id, view:"full") — the lossless raw tree (exact ' +
+      '_dp(...) references), only for wholesale tree rewrites.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1474,10 +1476,12 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         view: {
           type: 'string',
-          enum: ['compact', 'full'],
+          enum: ['compact', 'outline', 'full'],
           description:
-            "Whole-recipe read mode. 'compact' (default) strips UI metadata; " +
-            "'full' returns the lossless raw code tree. Ignored when [step] is set.",
+            "Whole-recipe read mode. 'compact' (default) strips UI metadata and " +
+            "shortens datapills; 'outline' additionally drops every step's input " +
+            "(lightest, for very large recipes); 'full' returns the lossless raw " +
+            'code tree. Ignored when [step] is set.',
         },
         step: {
           type: 'string',
