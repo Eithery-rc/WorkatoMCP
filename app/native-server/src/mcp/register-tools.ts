@@ -6,6 +6,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import nativeMessagingHostInstance from '../native-messaging-host';
 import { NativeMessageType, TOOL_SCHEMAS } from 'workatomcp-shared';
+import { isWorkatoFileTool, prepareWorkatoCall, writePulledRecipe } from './workato-file-io';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 
 async function listDynamicFlowTools(): Promise<Tool[]> {
@@ -117,16 +118,26 @@ const handleToolCall = async (name: string, args: any): Promise<CallToolResult> 
         };
       }
     }
+    // workato_pull_recipe(out_file) / workato_ui_save_recipe_code(code_path):
+    // resolve the file params here (this process has filesystem access).
+    let effectiveArgs: any = args;
+    let pullOutFile: string | undefined;
+    if (isWorkatoFileTool(name)) {
+      const prepared = prepareWorkatoCall(name, args || {});
+      effectiveArgs = prepared.args;
+      pullOutFile = prepared.pullOutFile;
+    }
+
     const response = await nativeMessagingHostInstance.sendRequestToExtensionAndWait(
       {
         name,
-        args,
+        args: effectiveArgs,
       },
       NativeMessageType.CALL_TOOL,
       120000,
     );
     if (response.status === 'success') {
-      return response.data;
+      return pullOutFile ? writePulledRecipe(pullOutFile, response.data) : response.data;
     } else {
       return {
         content: [
