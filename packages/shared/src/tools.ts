@@ -1500,6 +1500,16 @@ export const TOOL_SCHEMAS: Tool[] = [
             '`available_datapills`, matched against name, label, and ref. ' +
             'Lifts the 60-item cap on both. Requires [step].',
         },
+        out_file: {
+          type: 'string',
+          description:
+            'Absolute path to write the complete recipe to as a JSON file (envelope: ' +
+            '{recipe_id, name, version_no, code, config}). When set, the full code tree ' +
+            'is saved to disk and the response returns only a compact summary plus a ' +
+            'step list — the raw tree never enters the agent context. Forces full view; ' +
+            '[view]/[step]/[field_query] are ignored. Edit the file, then push it back ' +
+            'with workato_ui_save_recipe_code(code_path).',
+        },
       },
       required: ['recipe_id'],
     },
@@ -2169,19 +2179,33 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Save a complete recipe code tree directly via the Workato REST API (PUT /recipes/<id>.json). ' +
       'Bypasses the UI entirely — no need to enter edit mode, focus steps, or drive the editor. ' +
       'Pair with workato_pull_recipe to fetch the current code, mutate it client-side, then save. ' +
+      'For large recipes use the file round-trip: workato_pull_recipe(out_file:...) then save with ' +
+      '[code_path] so the recipe tree never has to be passed inline. ' +
       'Returns the new version_no plus any validation errors Workato emits about the saved tree. ' +
       'Prerequisite: the active tab must be a logged-in Workato page (for CSRF + session cookies).',
     inputSchema: {
       type: 'object',
       properties: {
-        recipe_id: { type: 'number', description: 'Numeric Workato recipe id.' },
+        recipe_id: {
+          type: 'number',
+          description:
+            'Numeric Workato recipe id. Required unless [code_path] is given and the file ' +
+            'contains a numeric recipe_id.',
+        },
         code: {
           description:
-            'Recipe code tree. Either a plain object (will be JSON.stringified) or an already-stringified JSON string. Same shape as workato_pull_recipe returns under .code.',
+            'Recipe code tree. Either a plain object (will be JSON.stringified) or an already-stringified JSON string. Same shape as workato_pull_recipe returns under .code. Provide this OR [code_path], not both.',
+        },
+        code_path: {
+          type: 'string',
+          description:
+            'Absolute path to a recipe JSON file as written by workato_pull_recipe(out_file:...). ' +
+            'When set, code/config/recipe_id are read from the file and [code]/[config] are ' +
+            'ignored — the recipe tree never has to be passed inline. The agent-friendly push path.',
         },
         config: {
           description:
-            'Optional config array (apps/connections used by the recipe). Either an array (will be JSON.stringified) or a stringified JSON.',
+            'Optional config array (apps/connections used by the recipe). Either an array (will be JSON.stringified) or a stringified JSON. Ignored when [code_path] is set.',
         },
         name: {
           type: 'string',
@@ -2194,7 +2218,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
-      required: ['recipe_id', 'code'],
+      required: [],
     },
   },
   {
