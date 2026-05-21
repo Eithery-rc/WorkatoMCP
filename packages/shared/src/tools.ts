@@ -1,3 +1,9 @@
+/**
+ * Shared MCP Tool Schemas.
+ *
+ * Author: Roman Chikalenko
+ * Version: 1.4.0
+ */
 import { type Tool } from '@modelcontextprotocol/sdk/types.js';
 
 export const TOOL_NAMES = {
@@ -57,6 +63,8 @@ export const TOOL_NAMES = {
     LIST_JOBS: 'workato_list_jobs',
     RUN_QUERY: 'workato_run_query',
     CALL_ACTION: 'workato_call_action',
+    LIST_PROFILES: 'workato_list_profiles',
+    SWITCH_PROFILE: 'workato_switch_profile',
   },
   WORKATO_UI: {
     OPEN_RECIPE: 'workato_ui_open_recipe',
@@ -3015,6 +3023,34 @@ export const TOOL_SCHEMAS: Tool[] = [
         tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.LIST_PROFILES,
+    description:
+      'List all currently active/connected Chrome profiles (e.g. "prod", "staging", "dev") ' +
+      'and see which one is currently selected as the active profile context.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.SWITCH_PROFILE,
+    description:
+      'Switch the active profile context on the server. All subsequent Workato tool calls ' +
+      'will automatically route to the browser session of the selected profile.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        profile: {
+          type: 'string',
+          description:
+            'The name of the connected profile to switch context to (e.g. "prod", "staging", "dev").',
+        },
+      },
+      required: ['profile'],
     },
   },
 ];

@@ -2,7 +2,7 @@
  * HTTP Server - Core server implementation.
  *
  * Author: Roman Chikalenko
- * Version: 1.3.2
+ * Version: 1.4.0
  *
  * Responsibilities:
  * - Fastify instance management
@@ -13,6 +13,7 @@
  */
 import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
+import fastifyWebsocket from '@fastify/websocket';
 import {
   NATIVE_SERVER_PORT,
   TIMEOUTS,
@@ -26,6 +27,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { randomUUID } from 'node:crypto';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { createMcpServer } from '../mcp/mcp-server';
+import { profileRegistry } from './profile-registry';
 
 // ============================================================
 // Types
@@ -60,6 +62,7 @@ export class Server {
   }
 
   private async setupPlugins(): Promise<void> {
+    await this.fastify.register(fastifyWebsocket);
     await this.fastify.register(cors, {
       origin: (origin, cb) => {
         // Allow requests with no origin (e.g., curl, server-to-server)
@@ -89,6 +92,29 @@ export class Server {
 
     // MCP routes
     this.setupMcpRoutes();
+
+    // WebSocket routes for Chrome profiles
+    this.setupWebSocketRoutes();
+  }
+
+  private setupWebSocketRoutes(): void {
+    this.fastify.get('/ws-client', { websocket: true }, (connection, req) => {
+      const origin = req.headers.origin;
+      const isAllowed =
+        !origin ||
+        SERVER_CONFIG.CORS_ORIGIN.some((pattern) =>
+          pattern instanceof RegExp ? pattern.test(origin) : origin.startsWith(pattern),
+        );
+
+      if (!isAllowed) {
+        req.log.warn(`WebSocket connection rejected from unauthorized origin: ${origin}`);
+        connection.socket.destroy();
+        return;
+      }
+
+      const profileName = (req.query as any)?.profile || 'default';
+      profileRegistry.register(profileName, connection.socket);
+    });
   }
 
   // ============================================================

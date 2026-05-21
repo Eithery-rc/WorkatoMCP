@@ -1,3 +1,11 @@
+/**
+ * Native Host background service worker script.
+ * Manages WebSocket client lifecycle, failover native host server election,
+ * and handles MCP tool execution requests from the native server.
+ *
+ * Author: Roman Chikalenko
+ * Version: 1.4.0
+ */
 import { NativeMessageType } from 'workatomcp-shared';
 import { BACKGROUND_MESSAGE_TYPES } from '@/common/message-types';
 import { NATIVE_HOST, STORAGE_KEYS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '@/common/constants';
@@ -9,6 +17,13 @@ const LOG_PREFIX = '[NativeHost]';
 
 let nativePort: chrome.runtime.Port | null = null;
 export const HOST_NAME = NATIVE_HOST.NAME;
+
+// ==================== WebSocket Aggregator Client State ====================
+let wsClient: WebSocket | null = null;
+let isWsConnecting = false;
+let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let wsReconnectAttempts = 0;
+const WS_MAX_RECONNECT_ATTEMPTS = 5;
 
 // ==================== Reconnect Configuration ====================
 
@@ -303,16 +318,28 @@ async function ensureNativeConnected(trigger: string, portOverride?: unknown): P
     syncKeepaliveHold();
 
     // Already connected
-    if (nativePort) {
+    if (nativePort || wsClient) {
       console.debug(`${LOG_PREFIX} Already connected (trigger=${trigger})`);
       return true;
     }
 
     // Get the port to use
     const port = await getPreferredPort(portOverride);
-    console.debug(`${LOG_PREFIX} Attempting connection on port ${port} (trigger=${trigger})`);
 
-    // Attempt connection
+    // 1. Try connecting to the central server via WebSocket first
+    console.debug(
+      `${LOG_PREFIX} Checking for active native server via WS on port ${port}... (trigger=${trigger})`,
+    );
+    const wsConnected = await connectWebSocket(port);
+    if (wsConnected) {
+      console.log(`${LOG_PREFIX} Connected to existing native server via WS.`);
+      return true;
+    }
+
+    // 2. If WS connection failed, the server is down. Start native host process (host election!)
+    console.debug(
+      `${LOG_PREFIX} No active native server found via WS. Spawning local server... (trigger=${trigger})`,
+    );
     const ok = connectNativeHost(port);
     if (!ok) {
       console.warn(`${LOG_PREFIX} Connection failed (trigger=${trigger})`);
@@ -320,15 +347,216 @@ async function ensureNativeConnected(trigger: string, portOverride?: unknown): P
       return false;
     }
 
-    console.debug(`${LOG_PREFIX} Connection initiated successfully (trigger=${trigger})`);
-    // Note: Don't reset reconnect state here. Wait for SERVER_STARTED confirmation.
-    // Chrome may return a Port but disconnect immediately if native host is missing.
-    return true;
+    console.debug(`${LOG_PREFIX} Spawning initiated, waiting to establish WebSocket connection...`);
+    // Wait for native server to start and establish the WebSocket connection
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const finalConnected = await connectWebSocket(port);
+    if (!finalConnected) {
+      console.warn(`${LOG_PREFIX} Native host spawned but WebSocket connection failed.`);
+    }
+    return finalConnected;
   })().finally(() => {
     ensurePromise = null;
   });
 
   return ensurePromise;
+}
+
+// ==================== WebSocket Client Helpers ====================
+
+async function connectWebSocket(port: number): Promise<boolean> {
+  if (wsClient) {
+    return true;
+  }
+  if (isWsConnecting) {
+    return false;
+  }
+
+  isWsConnecting = true;
+
+  // Retrieve profileName from storage
+  let profileName = 'default';
+  try {
+    const result = await chrome.storage.local.get([STORAGE_KEYS.PROFILE_NAME]);
+    if (result[STORAGE_KEYS.PROFILE_NAME]) {
+      profileName = result[STORAGE_KEYS.PROFILE_NAME];
+    }
+  } catch (error) {
+    console.warn(
+      `${LOG_PREFIX} Failed to load profile name from storage, defaulting to 'default'`,
+      error,
+    );
+  }
+
+  return new Promise((resolve) => {
+    const wsUrl = `ws://127.0.0.1:${port}/ws-client?profile=${encodeURIComponent(profileName)}`;
+    console.debug(`${LOG_PREFIX} Connecting WebSocket to ${wsUrl}`);
+
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log(`${LOG_PREFIX} WebSocket connected for profile "${profileName}"`);
+      wsClient = ws;
+      isWsConnecting = false;
+      wsReconnectAttempts = 0;
+      if (wsReconnectTimer) {
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = null;
+      }
+
+      // Update in-memory server status since server is confirmed running
+      currentServerStatus = {
+        isRunning: true,
+        port: port,
+        lastUpdated: Date.now(),
+      };
+      void saveServerStatus(currentServerStatus);
+      broadcastServerStatusChange(currentServerStatus);
+
+      resolve(true);
+    };
+
+    ws.onmessage = async (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        console.debug(`${LOG_PREFIX} WebSocket received message type: ${message.type}`);
+
+        if (message.type === NativeMessageType.CALL_TOOL && message.requestId) {
+          const requestId = message.requestId;
+          try {
+            const result = await handleCallTool(message.payload);
+            ws.send(
+              JSON.stringify({
+                responseToRequestId: requestId,
+                payload: {
+                  status: 'success',
+                  message: SUCCESS_MESSAGES.TOOL_EXECUTED,
+                  data: result,
+                },
+              }),
+            );
+          } catch (error) {
+            ws.send(
+              JSON.stringify({
+                responseToRequestId: requestId,
+                payload: {
+                  status: 'error',
+                  message: ERROR_MESSAGES.TOOL_EXECUTION_FAILED,
+                  error: error instanceof Error ? error.message : String(error),
+                },
+              }),
+            );
+          }
+        } else if (message.type === 'rr_list_published_flows' && message.requestId) {
+          const requestId = message.requestId;
+          try {
+            const published = await listPublished();
+            const items = [] as any[];
+            for (const p of published) {
+              const flow = await getFlow(p.id);
+              if (!flow) continue;
+              items.push({
+                id: p.id,
+                slug: p.slug,
+                version: p.version,
+                name: p.name,
+                description: p.description || flow.description || '',
+                variables: flow.variables || [],
+                meta: flow.meta || {},
+              });
+            }
+            ws.send(
+              JSON.stringify({
+                responseToRequestId: requestId,
+                payload: { status: 'success', items },
+              }),
+            );
+          } catch (error: any) {
+            ws.send(
+              JSON.stringify({
+                responseToRequestId: requestId,
+                payload: { status: 'error', error: error?.message || String(error) },
+              }),
+            );
+          }
+        } else if (message.type === NativeMessageType.PROCESS_DATA && message.requestId) {
+          const requestId = message.requestId;
+          const requestPayload = message.payload;
+          ws.send(
+            JSON.stringify({
+              responseToRequestId: requestId,
+              payload: {
+                status: 'success',
+                message: SUCCESS_MESSAGES.TOOL_EXECUTED,
+                data: requestPayload,
+              },
+            }),
+          );
+        }
+      } catch (err: any) {
+        console.error(`${LOG_PREFIX} Error handling WS message:`, err);
+      }
+    };
+
+    ws.onclose = () => {
+      console.warn(`${LOG_PREFIX} WebSocket connection closed`);
+      wsClient = null;
+      isWsConnecting = false;
+
+      // If we didn't initiate a manual disconnect, handle reconnection
+      if (!manualDisconnect && autoConnectEnabled) {
+        scheduleWsReconnect(port);
+      }
+    };
+
+    ws.onerror = (err) => {
+      console.warn(`${LOG_PREFIX} WebSocket error:`, err);
+      isWsConnecting = false;
+      resolve(false);
+    };
+  });
+}
+
+function scheduleWsReconnect(port: number): void {
+  if (wsClient) return;
+  if (wsReconnectTimer) return;
+
+  if (wsReconnectAttempts >= WS_MAX_RECONNECT_ATTEMPTS) {
+    console.warn(
+      `${LOG_PREFIX} WebSocket max reconnect attempts reached. Triggering failover host election...`,
+    );
+    wsReconnectAttempts = 0;
+
+    // FAILOVER: Elect ourselves as the host!
+    void triggerHostElection(port);
+    return;
+  }
+
+  const delay = getReconnectDelayMs(wsReconnectAttempts);
+  console.debug(
+    `${LOG_PREFIX} WebSocket reconnect scheduled in ${delay}ms (attempt=${wsReconnectAttempts})`,
+  );
+
+  wsReconnectTimer = setTimeout(() => {
+    wsReconnectTimer = null;
+    wsReconnectAttempts++;
+    void connectWebSocket(port).then((ok) => {
+      if (!ok) {
+        scheduleWsReconnect(port);
+      }
+    });
+  }, delay);
+}
+
+async function triggerHostElection(port: number): Promise<void> {
+  console.log(`${LOG_PREFIX} Electing this profile to spin up local native host server...`);
+  const ok = connectNativeHost(port);
+  if (ok) {
+    // Wait for native server to start, then try to connect the WS
+    setTimeout(() => {
+      void connectWebSocket(port);
+    }, 1500);
+  }
 }
 
 /**
@@ -511,7 +739,11 @@ export const initNativeHostListener = () => {
           sendResponse({ success: true, connected, autoConnectEnabled });
         })
         .catch((e) => {
-          sendResponse({ success: false, connected: nativePort !== null, error: String(e) });
+          sendResponse({
+            success: false,
+            connected: nativePort !== null || wsClient !== null,
+            error: String(e),
+          });
         });
       return true;
     }
@@ -540,13 +772,17 @@ export const initNativeHostListener = () => {
           sendResponse({ success: true, connected });
         })
         .catch((e) => {
-          sendResponse({ success: false, connected: nativePort !== null, error: String(e) });
+          sendResponse({
+            success: false,
+            connected: nativePort !== null || wsClient !== null,
+            error: String(e),
+          });
         });
       return true;
     }
 
     if (msgType === NativeMessageType.PING_NATIVE) {
-      const connected = nativePort !== null;
+      const connected = nativePort !== null || wsClient !== null;
       sendResponse({ connected, autoConnectEnabled });
       return true;
     }
@@ -559,6 +795,15 @@ export const initNativeHostListener = () => {
         clearReconnectTimer();
         reconnectAttempts = 0;
         syncKeepaliveHold();
+
+        if (wsClient) {
+          try {
+            wsClient.close();
+          } catch {
+            // Ignore
+          }
+          wsClient = null;
+        }
 
         if (nativePort) {
           // Only set manualDisconnect if we actually have a port to disconnect.
@@ -586,7 +831,7 @@ export const initNativeHostListener = () => {
       sendResponse({
         success: true,
         serverStatus: currentServerStatus,
-        connected: nativePort !== null,
+        connected: nativePort !== null || wsClient !== null,
       });
       return true;
     }
@@ -598,7 +843,7 @@ export const initNativeHostListener = () => {
           sendResponse({
             success: true,
             serverStatus: currentServerStatus,
-            connected: nativePort !== null,
+            connected: nativePort !== null || wsClient !== null,
           });
         })
         .catch((error) => {
@@ -607,7 +852,7 @@ export const initNativeHostListener = () => {
             success: false,
             error: ERROR_MESSAGES.SERVER_STATUS_LOAD_FAILED,
             serverStatus: currentServerStatus,
-            connected: nativePort !== null,
+            connected: nativePort !== null || wsClient !== null,
           });
         });
       return true;
