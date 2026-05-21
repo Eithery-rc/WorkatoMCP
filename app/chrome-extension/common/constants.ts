@@ -1,6 +1,9 @@
 /**
  * Chrome Extension Constants
  * Centralized configuration values and magic constants
+ *
+ * Author: Roman Chikalenko
+ * Version: 1.4.0
  */
 
 // Native Host Configuration
@@ -211,6 +214,7 @@ export const STORAGE_KEYS = {
   SERVER_STATUS: 'serverStatus',
   NATIVE_SERVER_PORT: 'nativeServerPort',
   NATIVE_AUTO_CONNECT_ENABLED: 'nativeAutoConnectEnabled',
+  PROFILE_NAME: 'profileName',
   USER_PREFERENCES: 'userPreferences',
   USERSCRIPTS: 'userscripts',
   USERSCRIPTS_DISABLED: 'userscripts_disabled',

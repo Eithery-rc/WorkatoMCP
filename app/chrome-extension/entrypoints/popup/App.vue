@@ -54,6 +54,17 @@
                 class="port-input"
               />
             </div>
+            <div class="port-section">
+              <label for="profile" class="port-label">Profile Name</label>
+              <input
+                type="text"
+                id="profile"
+                :value="profileName"
+                @input="updateProfileName"
+                class="port-input"
+                placeholder="e.g. prod, staging, dev"
+              />
+            </div>
 
             <button class="connect-button" :disabled="isConnecting" @click="testNativeConnection">
               <BoltIcon />
@@ -148,6 +159,13 @@
 </template>
 
 <script lang="ts" setup>
+/**
+ * Extension popup UI main component.
+ * Allows configuring settings and viewing connection states, including Chrome profile name setup.
+ *
+ * Author: Roman Chikalenko
+ * Version: 1.4.0
+ */
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { BACKGROUND_MESSAGE_TYPES } from '@/common/message-types';
 import { LINKS } from '@/common/constants';
@@ -267,6 +285,7 @@ const runFlow = async (flowId: string) => {
 const nativeConnectionStatus = ref<'unknown' | 'connected' | 'disconnected'>('unknown');
 const isConnecting = ref(false);
 const nativeServerPort = ref<number>(12306);
+const profileName = ref<string>('default');
 
 const serverStatus = ref<{
   isRunning: boolean;
@@ -365,6 +384,14 @@ const updatePort = async (event: Event) => {
   nativeServerPort.value = newPort;
 
   await savePortPreference(newPort);
+};
+
+const updateProfileName = async (event: Event) => {
+  const target = event.target as HTMLInputElement;
+  const newName = target.value.trim() || 'default';
+  profileName.value = newName;
+
+  await saveProfileNamePreference(newName);
 };
 
 const checkNativeConnection = async () => {
@@ -487,6 +514,29 @@ const loadPortPreference = async () => {
   }
 };
 
+const saveProfileNamePreference = async (name: string) => {
+  try {
+    // eslint-disable-next-line no-undef
+    await chrome.storage.local.set({ profileName: name });
+    console.log(`Profile name preference saved: ${name}`);
+  } catch (error) {
+    console.error('Failed to save profile name preference:', error);
+  }
+};
+
+const loadProfileNamePreference = async () => {
+  try {
+    // eslint-disable-next-line no-undef
+    const result = await chrome.storage.local.get(['profileName']);
+    if (result.profileName) {
+      profileName.value = result.profileName;
+      console.log(`Profile name preference loaded: ${result.profileName}`);
+    }
+  } catch (error) {
+    console.error('Failed to load profile name preference:', error);
+  }
+};
+
 const setupServerStatusListener = () => {
   // eslint-disable-next-line no-undef
   const onMessage = (message: { type?: string; payload?: unknown }) => {
@@ -508,6 +558,7 @@ const setupServerStatusListener = () => {
 onMounted(async () => {
   await initTheme();
   await loadPortPreference();
+  await loadProfileNamePreference();
   await checkNativeConnection();
   await checkServerStatus();
   await loadFlows();

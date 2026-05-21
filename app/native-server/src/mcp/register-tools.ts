@@ -1,3 +1,10 @@
+/**
+ * MCP Tools Registry.
+ * Handles listing and dispatching MCP tool calls to the active WebSocket Chrome profile connection.
+ *
+ * Author: Roman Chikalenko
+ * Version: 1.4.0
+ */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   CallToolRequestSchema,
@@ -5,21 +12,47 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import nativeMessagingHostInstance from '../native-messaging-host';
-import { NativeMessageType, TOOL_SCHEMAS } from 'workatomcp-shared';
+import { NativeMessageType, TOOL_SCHEMAS, TOOL_NAMES } from 'workatomcp-shared';
 import { isWorkatoFileTool, prepareWorkatoCall, writePulledRecipe } from './workato-file-io';
 import {
   handleWorkatoRecipeMutatorCall,
   isWorkatoRecipeMutatorTool,
 } from './workato-recipe-mutators';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { profileRegistry } from '../server/profile-registry';
+
+async function sendRequestToActiveExtension(
+  messagePayload: any,
+  messageType: string = 'request_data',
+  timeoutMs?: number,
+): Promise<any> {
+  const activeProfile = profileRegistry.getActiveProfile();
+  if (activeProfile) {
+    try {
+      return await profileRegistry.sendRequest(
+        activeProfile,
+        messagePayload,
+        messageType,
+        timeoutMs,
+      );
+    } catch (err: any) {
+      console.warn(
+        `[register-tools] Failed to send request to active profile "${activeProfile}" via WS, falling back to native host:`,
+        err.message,
+      );
+    }
+  }
+  // Fallback
+  return await nativeMessagingHostInstance.sendRequestToExtensionAndWait(
+    messagePayload,
+    messageType,
+    timeoutMs,
+  );
+}
 
 async function listDynamicFlowTools(): Promise<Tool[]> {
   try {
-    const response = await nativeMessagingHostInstance.sendRequestToExtensionAndWait(
-      {},
-      'rr_list_published_flows',
-      20000,
-    );
+    const response = await sendRequestToActiveExtension({}, 'rr_list_published_flows', 20000);
     if (response && response.status === 'success' && Array.isArray(response.items)) {
       const tools: Tool[] = [];
       for (const item of response.items) {
@@ -86,21 +119,69 @@ export const setupTools = (server: Server) => {
 
 const handleToolCall = async (name: string, args: any): Promise<CallToolResult> => {
   try {
-    // If calling a dynamic flow tool (name starts with flow.), proxy to common flow-run tool
+    // 1. Check for Profile Management Admin Tools
+    if (name === TOOL_NAMES.WORKATO.LIST_PROFILES) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                active_profile: profileRegistry.getActiveProfile(),
+                connected_profiles: profileRegistry.getConnectedProfiles(),
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    }
+
+    if (name === TOOL_NAMES.WORKATO.SWITCH_PROFILE) {
+      const targetProfile = args.profile;
+      if (!targetProfile) {
+        return {
+          content: [{ type: 'text', text: 'Error: target profile parameter is required.' }],
+          isError: true,
+        };
+      }
+      const success = profileRegistry.switchProfile(targetProfile);
+      if (success) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Successfully switched to active profile context: "${targetProfile}"`,
+            },
+          ],
+        };
+      } else {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error: profile "${targetProfile}" is not connected. Connected profiles: ${JSON.stringify(
+                profileRegistry.getConnectedProfiles(),
+              )}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
+    // 2. If calling a dynamic flow tool (name starts with flow.), proxy to common flow-run tool
     if (name && name.startsWith('flow.')) {
       // We need to resolve flow by slug to ID
       try {
-        const resp = await nativeMessagingHostInstance.sendRequestToExtensionAndWait(
-          {},
-          'rr_list_published_flows',
-          20000,
-        );
+        const resp = await sendRequestToActiveExtension({}, 'rr_list_published_flows', 20000);
         const items = (resp && resp.items) || [];
         const slug = name.slice('flow.'.length);
         const match = items.find((it: any) => it.slug === slug);
         if (!match) throw new Error(`Flow not found for tool ${name}`);
         const flowArgs = { flowId: match.id, args };
-        const proxyRes = await nativeMessagingHostInstance.sendRequestToExtensionAndWait(
+        const proxyRes = await sendRequestToActiveExtension(
           { name: 'record_replay_flow_run', args: flowArgs },
           NativeMessageType.CALL_TOOL,
           120000,
@@ -137,7 +218,7 @@ const handleToolCall = async (name: string, args: any): Promise<CallToolResult> 
         name,
         effectiveArgs || {},
         async (toolName, toolArgs) => {
-          const response = await nativeMessagingHostInstance.sendRequestToExtensionAndWait(
+          const response = await sendRequestToActiveExtension(
             {
               name: toolName,
               args: toolArgs,
@@ -154,7 +235,7 @@ const handleToolCall = async (name: string, args: any): Promise<CallToolResult> 
       );
     }
 
-    const response = await nativeMessagingHostInstance.sendRequestToExtensionAndWait(
+    const response = await sendRequestToActiveExtension(
       {
         name,
         args: effectiveArgs,
