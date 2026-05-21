@@ -207,7 +207,10 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
               `Available steps (number:as): ${refs}`,
           );
         }
-        payload = inspectStep(code, node, args.recipe_id, args.field_query);
+        payload =
+          view === 'full'
+            ? { recipe_id: args.recipe_id, step: node, version: result.version }
+            : inspectStep(code, node, args.recipe_id, args.field_query);
       } else if (view === 'full') {
         payload = { recipe_id: args.recipe_id, code: result.code, version: result.version };
       } else {

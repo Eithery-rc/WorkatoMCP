@@ -75,6 +75,10 @@ export const TOOL_NAMES = {
     ADD_STEP: 'workato_recipe_add_step',
     SET_STEP_INPUT: 'workato_recipe_set_step_input',
     MAP_DATAPILL: 'workato_recipe_map_datapill',
+    SET_INPUT_PATH: 'workato_recipe_set_input_path',
+    DELETE_INPUT_PATH: 'workato_recipe_delete_input_path',
+    SET_PY_EVAL_CODE: 'workato_recipe_set_py_eval_code',
+    SET_EXTENDED_SCHEMA: 'workato_recipe_set_extended_schema',
   },
   WORKATO_LOOKUP: {
     TABLES_LIST: 'workato_lookup_tables_list',
@@ -1483,7 +1487,7 @@ export const TOOL_SCHEMAS: Tool[] = [
             "Whole-recipe read mode. 'compact' (default) strips UI metadata and " +
             "shortens datapills; 'outline' additionally drops every step's input " +
             "(lightest, for very large recipes); 'full' returns the lossless raw " +
-            'code tree. Ignored when [step] is set.',
+            'code tree. With [step], view:"full" returns the raw step node.',
         },
         step: {
           type: 'string',
@@ -1491,7 +1495,8 @@ export const TOOL_SCHEMAS: Tool[] = [
             "Drill into a single step. Accepts the step's 'as' anchor or its " +
             'numeric step number. Returns the step header, its `mappings` ' +
             '(classified input leaves — the wiring and logic), the settable ' +
-            '`fields`, and `available_datapills` from upstream steps.',
+            '`fields`, and `available_datapills` from upstream steps. Pass ' +
+            'view:"full" with step to return the raw step node, including schemas.',
         },
         field_query: {
           type: 'string',
@@ -2327,6 +2332,136 @@ export const TOOL_SCHEMAS: Tool[] = [
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['recipe_id', 'target_step', 'target_field', 'source_step', 'path'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_RECIPE.SET_INPUT_PATH,
+    description:
+      "Set a nested value inside an existing Workato recipe step's input via a native-server " +
+      'pull-mutate-push round trip. The target step may be identified by step number or `as` anchor. ' +
+      'The path may be a dotted string such as `records.item.items[0].amount` or an array of string/' +
+      'number segments. Creates missing intermediate objects/arrays, refuses unsafe path segments and ' +
+      'non-container parents, and preserves all unrelated code-tree fields. Supports literal values, ' +
+      'formula strings, interpolated strings, and datapill specs. Requires a logged-in Workato browser session.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'Numeric Workato recipe id.' },
+        step: {
+          oneOf: [{ type: 'string' }, { type: 'number' }],
+          description: 'Target step number or `as` anchor. Use 0 for the trigger if needed.',
+        },
+        path: {
+          oneOf: [
+            { type: 'string' },
+            { type: 'array', items: { oneOf: [{ type: 'string' }, { type: 'number' }] } },
+          ],
+          description:
+            'Input path to set. Dotted strings support numeric indexes, e.g. `filters[0].field_id`.',
+        },
+        value: {
+          description:
+            'Value to write. For literal, any JSON value. For formula/interpolated, a string. For datapill, either a datapill object {provider,line,path,pill_type?} or shorthand such as `datapill(provider.line.output.rows[].id)`.',
+        },
+        value_kind: {
+          type: 'string',
+          enum: ['literal', 'datapill', 'formula', 'interpolated'],
+          description:
+            'How to encode value. Default literal. formula prefixes `=` when absent; datapill writes a text-mode #{_dp(...)} reference.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID for the final save (optional).' },
+        windowId: { type: 'number', description: 'Window ID for the final save (optional).' },
+      },
+      required: ['recipe_id', 'step', 'path', 'value'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_RECIPE.DELETE_INPUT_PATH,
+    description:
+      "Delete a nested leaf from an existing Workato recipe step's input via a native-server " +
+      'pull-mutate-push round trip. The target step may be identified by step number or `as` anchor. ' +
+      'After deleting the leaf, empty parent objects/arrays along that path are pruned. Unrelated ' +
+      'input branches are preserved. Requires a logged-in Workato browser session.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'Numeric Workato recipe id.' },
+        step: {
+          oneOf: [{ type: 'string' }, { type: 'number' }],
+          description: 'Target step number or `as` anchor. Use 0 for the trigger if needed.',
+        },
+        path: {
+          oneOf: [
+            { type: 'string' },
+            { type: 'array', items: { oneOf: [{ type: 'string' }, { type: 'number' }] } },
+          ],
+          description: 'Input path to delete, e.g. `records.tranId` or `filters[0].field_id`.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID for the final save (optional).' },
+        windowId: { type: 'number', description: 'Window ID for the final save (optional).' },
+      },
+      required: ['recipe_id', 'step', 'path'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_RECIPE.SET_PY_EVAL_CODE,
+    description:
+      'Replace the `input.code` body of a Python by Workato action (`py_eval / invoke_custom_py_code`). ' +
+      'Accepts either inline `code` or a local `code_path`; when `code_path` is used, the native server reads ' +
+      'the file before pushing the recipe so the code body does not need to enter agent context. By default, ' +
+      'the tool refuses non-py_eval targets; set validate_step=false only when intentionally writing a compatible custom step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'Numeric Workato recipe id.' },
+        step: {
+          oneOf: [{ type: 'string' }, { type: 'number' }],
+          description: 'Target py_eval step number or `as` anchor.',
+        },
+        code: { type: 'string', description: 'Inline Python source to write to input.code.' },
+        code_path: {
+          type: 'string',
+          description:
+            'Absolute or relative local path on the bridge host. The native server reads it as UTF-8 and sends it as code.',
+        },
+        validate_step: {
+          type: 'boolean',
+          description: 'When false, skip the default provider/name check. Default true.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID for the final save (optional).' },
+        windowId: { type: 'number', description: 'Window ID for the final save (optional).' },
+      },
+      required: ['recipe_id', 'step'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_RECIPE.SET_EXTENDED_SCHEMA,
+    description:
+      'Set an explicit `extended_input_schema` or `extended_output_schema` array on a Workato recipe step. ' +
+      'This centralizes a common silent-strip risk when structured inputs or referenced outputs require schema metadata. ' +
+      'This first version accepts only an explicit schema array; it does not infer schemas automatically.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'Numeric Workato recipe id.' },
+        step: {
+          oneOf: [{ type: 'string' }, { type: 'number' }],
+          description: 'Target step number or `as` anchor.',
+        },
+        kind: {
+          type: 'string',
+          enum: ['extended_input_schema', 'extended_output_schema'],
+          description: 'Schema property to replace on the target step.',
+        },
+        schema: {
+          type: 'array',
+          items: { type: 'object', additionalProperties: true },
+          description: 'Full Workato schema array to write. Each entry is preserved as provided.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID for the final save (optional).' },
+        windowId: { type: 'number', description: 'Window ID for the final save (optional).' },
+      },
+      required: ['recipe_id', 'step', 'kind', 'schema'],
     },
   },
   {
