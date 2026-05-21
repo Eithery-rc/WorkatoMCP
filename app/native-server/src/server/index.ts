@@ -1,6 +1,9 @@
 /**
  * HTTP Server - Core server implementation.
  *
+ * Author: Roman Chikalenko
+ * Version: 1.3.2
+ *
  * Responsibilities:
  * - Fastify instance management
  * - Plugin registration (CORS, etc.)
@@ -208,13 +211,8 @@ export class Server {
   private setupMcpRoutes(): void {
     // SSE endpoint
     this.fastify.get('/sse', async (_, reply) => {
+      reply.hijack();
       try {
-        reply.raw.writeHead(HTTP_STATUS.OK, {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-        });
-
         const transport = new SSEServerTransport('/messages', reply.raw);
         this.transportsMap.set(transport.sessionId, transport);
 
@@ -224,11 +222,12 @@ export class Server {
 
         const server = createMcpServer();
         await server.connect(transport);
-
-        reply.raw.write(':\n\n');
       } catch (error) {
-        if (!reply.sent) {
-          reply.code(HTTP_STATUS.INTERNAL_SERVER_ERROR).send(ERROR_MESSAGES.INTERNAL_SERVER_ERROR);
+        if (!reply.raw.writableEnded) {
+          reply.raw.writeHead(HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            'Content-Type': 'application/json',
+          });
+          reply.raw.end(JSON.stringify({ error: ERROR_MESSAGES.INTERNAL_SERVER_ERROR }));
         }
       }
     });
