@@ -18,6 +18,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 export const PULL_RECIPE_TOOL = 'workato_pull_recipe';
 export const SAVE_RECIPE_CODE_TOOL = 'workato_ui_save_recipe_code';
+export const SET_PY_EVAL_CODE_TOOL = 'workato_recipe_set_py_eval_code';
 
 /** Recipe file envelope: written by the pull hook, read by the push hook. */
 interface RecipeFile {
@@ -43,7 +44,9 @@ interface PreparedCall {
 }
 
 export function isWorkatoFileTool(name: string): boolean {
-  return name === PULL_RECIPE_TOOL || name === SAVE_RECIPE_CODE_TOOL;
+  return (
+    name === PULL_RECIPE_TOOL || name === SAVE_RECIPE_CODE_TOOL || name === SET_PY_EVAL_CODE_TOOL
+  );
 }
 
 /** Walk a recipe code tree and collect a lightweight step list. */
@@ -110,6 +113,18 @@ function loadRecipeFile(rawArgs: Record<string, unknown>): Record<string, unknow
   return args;
 }
 
+/** Resolve a local Python file into a py_eval `code` string. */
+function loadPyEvalCodeFile(rawArgs: Record<string, unknown>): Record<string, unknown> {
+  const codePath = path.resolve(rawArgs.code_path as string);
+  if (!fs.existsSync(codePath)) {
+    throw new Error(`code_path file not found: ${codePath}`);
+  }
+  const args: Record<string, unknown> = { ...rawArgs };
+  delete args.code_path;
+  args.code = fs.readFileSync(codePath, 'utf8');
+  return args;
+}
+
 /**
  * Pre-process a tool call. For the two file-aware Workato tools this resolves
  * `code_path` / `out_file`; every other tool is returned unchanged.
@@ -117,6 +132,9 @@ function loadRecipeFile(rawArgs: Record<string, unknown>): Record<string, unknow
 export function prepareWorkatoCall(name: string, rawArgs: Record<string, unknown>): PreparedCall {
   if (name === SAVE_RECIPE_CODE_TOOL && typeof rawArgs.code_path === 'string') {
     return { args: loadRecipeFile(rawArgs) };
+  }
+  if (name === SET_PY_EVAL_CODE_TOOL && typeof rawArgs.code_path === 'string') {
+    return { args: loadPyEvalCodeFile(rawArgs) };
   }
   if (name === PULL_RECIPE_TOOL && typeof rawArgs.out_file === 'string') {
     const outFile = path.resolve(rawArgs.out_file);

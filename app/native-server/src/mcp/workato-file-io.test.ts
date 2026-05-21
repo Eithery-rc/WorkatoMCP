@@ -52,9 +52,10 @@ afterAll(() => {
 });
 
 describe('isWorkatoFileTool', () => {
-  test('matches the two file-aware tools only', () => {
+  test('matches file-aware Workato tools only', () => {
     expect(isWorkatoFileTool('workato_pull_recipe')).toBe(true);
     expect(isWorkatoFileTool('workato_ui_save_recipe_code')).toBe(true);
+    expect(isWorkatoFileTool('workato_recipe_set_py_eval_code')).toBe(true);
     expect(isWorkatoFileTool('workato_recipe_add_step')).toBe(false);
   });
 });
@@ -161,5 +162,24 @@ describe('prepareWorkatoCall — save with code_path', () => {
     expect(() => prepareWorkatoCall('workato_ui_save_recipe_code', { code_path: noId })).toThrow(
       /recipe_id is required/,
     );
+  });
+});
+
+describe('prepareWorkatoCall — py_eval code with code_path', () => {
+  test('loads a Python file into code and strips code_path', () => {
+    const py = path.join(tmpDir, 'parser.py');
+    fs.writeFileSync(py, 'def main(input):\n    return {"ok": True}\n', 'utf8');
+
+    const prepared = prepareWorkatoCall('workato_recipe_set_py_eval_code', {
+      recipe_id: 42,
+      step: '11111111',
+      code_path: py,
+    });
+
+    expect(prepared.args).toEqual({
+      recipe_id: 42,
+      step: '11111111',
+      code: 'def main(input):\n    return {"ok": True}\n',
+    });
   });
 });

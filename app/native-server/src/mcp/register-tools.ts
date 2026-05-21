@@ -7,6 +7,10 @@ import {
 import nativeMessagingHostInstance from '../native-messaging-host';
 import { NativeMessageType, TOOL_SCHEMAS } from 'workatomcp-shared';
 import { isWorkatoFileTool, prepareWorkatoCall, writePulledRecipe } from './workato-file-io';
+import {
+  handleWorkatoRecipeMutatorCall,
+  isWorkatoRecipeMutatorTool,
+} from './workato-recipe-mutators';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 
 async function listDynamicFlowTools(): Promise<Tool[]> {
@@ -126,6 +130,28 @@ const handleToolCall = async (name: string, args: any): Promise<CallToolResult> 
       const prepared = prepareWorkatoCall(name, args || {});
       effectiveArgs = prepared.args;
       pullOutFile = prepared.pullOutFile;
+    }
+
+    if (isWorkatoRecipeMutatorTool(name)) {
+      return handleWorkatoRecipeMutatorCall(
+        name,
+        effectiveArgs || {},
+        async (toolName, toolArgs) => {
+          const response = await nativeMessagingHostInstance.sendRequestToExtensionAndWait(
+            {
+              name: toolName,
+              args: toolArgs,
+            },
+            NativeMessageType.CALL_TOOL,
+            120000,
+          );
+          if (response.status === 'success') return response.data;
+          return {
+            content: [{ type: 'text', text: `Error calling tool: ${response.error}` }],
+            isError: true,
+          };
+        },
+      );
     }
 
     const response = await nativeMessagingHostInstance.sendRequestToExtensionAndWait(
