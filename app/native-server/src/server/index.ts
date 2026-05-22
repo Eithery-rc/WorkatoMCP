@@ -37,6 +37,42 @@ interface ExtensionRequestPayload {
   data?: unknown;
 }
 
+const JSON_RPC_INTERNAL_ERROR = -32603;
+const JSON_RPC_SERVER_ERROR = -32000;
+const JSON_RPC_SESSION_NOT_FOUND = -32001;
+
+function jsonRpcError(code: number, message: string) {
+  return {
+    jsonrpc: '2.0',
+    error: {
+      code,
+      message,
+    },
+    id: null,
+  };
+}
+
+function sendJsonRpcError(
+  reply: FastifyReply,
+  status: number,
+  code: number,
+  message: string,
+): void {
+  reply.code(status).type('application/json').send(jsonRpcError(code, message));
+}
+
+function writeRawJsonRpcError(
+  reply: FastifyReply,
+  status: number,
+  code: number,
+  message: string,
+): void {
+  reply.raw.writeHead(status, {
+    'Content-Type': 'application/json',
+  });
+  reply.raw.end(JSON.stringify(jsonRpcError(code, message)));
+}
+
 // ============================================================
 // Server Class
 // ============================================================
@@ -51,7 +87,13 @@ export class Server {
   constructor() {
     this.fastify = Fastify({ logger: SERVER_CONFIG.LOGGER_ENABLED });
     this.setupPlugins();
-    this.setupRoutes();
+    this.fastify.after((error) => {
+      if (error) {
+        throw error;
+      }
+
+      this.setupRoutes();
+    });
   }
 
   /**
@@ -61,9 +103,9 @@ export class Server {
     this.nativeHost = nativeHost;
   }
 
-  private async setupPlugins(): Promise<void> {
-    await this.fastify.register(fastifyWebsocket);
-    await this.fastify.register(cors, {
+  private setupPlugins(): void {
+    this.fastify.register(fastifyWebsocket);
+    this.fastify.register(cors, {
       origin: (origin, cb) => {
         // Allow requests with no origin (e.g., curl, server-to-server)
         if (!origin) {
@@ -98,7 +140,7 @@ export class Server {
   }
 
   private setupWebSocketRoutes(): void {
-    this.fastify.get('/ws-client', { websocket: true }, (connection, req) => {
+    this.fastify.get('/ws-client', { websocket: true }, (socket, req) => {
       const origin = req.headers.origin;
       const isAllowed =
         !origin ||
@@ -108,12 +150,12 @@ export class Server {
 
       if (!isAllowed) {
         req.log.warn(`WebSocket connection rejected from unauthorized origin: ${origin}`);
-        connection.socket.destroy();
+        socket.close();
         return;
       }
 
       const profileName = (req.query as any)?.profile || 'default';
-      profileRegistry.register(profileName, connection.socket);
+      profileRegistry.register(profileName, socket);
     });
   }
 
@@ -289,6 +331,7 @@ export class Server {
         const newSessionId = randomUUID();
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => newSessionId,
+          enableJsonResponse: true,
           onsessioninitialized: (initializedSessionId) => {
             if (transport && initializedSessionId === newSessionId) {
               this.transportsMap.set(initializedSessionId, transport);
@@ -303,7 +346,13 @@ export class Server {
         };
         await createMcpServer().connect(transport);
       } else {
-        reply.code(HTTP_STATUS.BAD_REQUEST).send({ error: ERROR_MESSAGES.INVALID_MCP_REQUEST });
+        const hasStaleSession = Boolean(sessionId);
+        sendJsonRpcError(
+          reply,
+          hasStaleSession ? HTTP_STATUS.NOT_FOUND : HTTP_STATUS.BAD_REQUEST,
+          hasStaleSession ? JSON_RPC_SESSION_NOT_FOUND : JSON_RPC_SERVER_ERROR,
+          hasStaleSession ? 'Session not found' : ERROR_MESSAGES.INVALID_MCP_REQUEST,
+        );
         return;
       }
 
@@ -312,10 +361,12 @@ export class Server {
         await transport.handleRequest(request.raw, reply.raw, request.body);
       } catch (error) {
         if (!reply.raw.writableEnded) {
-          reply.raw.writeHead(HTTP_STATUS.INTERNAL_SERVER_ERROR, {
-            'Content-Type': 'application/json',
-          });
-          reply.raw.end(JSON.stringify({ error: ERROR_MESSAGES.MCP_REQUEST_PROCESSING_ERROR }));
+          writeRawJsonRpcError(
+            reply,
+            HTTP_STATUS.INTERNAL_SERVER_ERROR,
+            JSON_RPC_INTERNAL_ERROR,
+            ERROR_MESSAGES.MCP_REQUEST_PROCESSING_ERROR,
+          );
         }
       }
     });
@@ -328,15 +379,16 @@ export class Server {
         : undefined;
 
       if (!transport) {
-        reply.code(HTTP_STATUS.BAD_REQUEST).send({ error: ERROR_MESSAGES.INVALID_SSE_SESSION });
+        sendJsonRpcError(
+          reply,
+          sessionId ? HTTP_STATUS.NOT_FOUND : HTTP_STATUS.BAD_REQUEST,
+          sessionId ? JSON_RPC_SESSION_NOT_FOUND : JSON_RPC_SERVER_ERROR,
+          sessionId ? 'Session not found' : ERROR_MESSAGES.INVALID_SSE_SESSION,
+        );
         return;
       }
 
       reply.hijack();
-      reply.raw.setHeader('Content-Type', 'text/event-stream');
-      reply.raw.setHeader('Cache-Control', 'no-cache');
-      reply.raw.setHeader('Connection', 'keep-alive');
-      reply.raw.flushHeaders();
 
       try {
         await transport.handleRequest(request.raw, reply.raw);
@@ -359,7 +411,12 @@ export class Server {
         : undefined;
 
       if (!transport) {
-        reply.code(HTTP_STATUS.BAD_REQUEST).send({ error: ERROR_MESSAGES.INVALID_SESSION_ID });
+        sendJsonRpcError(
+          reply,
+          sessionId ? HTTP_STATUS.NOT_FOUND : HTTP_STATUS.BAD_REQUEST,
+          sessionId ? JSON_RPC_SESSION_NOT_FOUND : JSON_RPC_SERVER_ERROR,
+          sessionId ? 'Session not found' : ERROR_MESSAGES.INVALID_SESSION_ID,
+        );
         return;
       }
 
@@ -372,10 +429,12 @@ export class Server {
         }
       } catch (error) {
         if (!reply.raw.writableEnded) {
-          reply.raw.writeHead(HTTP_STATUS.INTERNAL_SERVER_ERROR, {
-            'Content-Type': 'application/json',
-          });
-          reply.raw.end(JSON.stringify({ error: ERROR_MESSAGES.MCP_SESSION_DELETION_ERROR }));
+          writeRawJsonRpcError(
+            reply,
+            HTTP_STATUS.INTERNAL_SERVER_ERROR,
+            JSON_RPC_INTERNAL_ERROR,
+            ERROR_MESSAGES.MCP_SESSION_DELETION_ERROR,
+          );
         }
       }
     });

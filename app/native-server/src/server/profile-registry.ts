@@ -12,6 +12,10 @@ interface PendingRequest {
   timeoutId: NodeJS.Timeout;
 }
 
+function logProfileRegistry(message: string): void {
+  console.error(message);
+}
+
 export class ProfileRegistry {
   private connections: Map<string, any> = new Map(); // profileName -> WebSocket socket
   private activeProfile: string | null = null;
@@ -33,12 +37,12 @@ export class ProfileRegistry {
     }
 
     this.connections.set(profileName, socket);
-    console.log(`[ProfileRegistry] Profile "${profileName}" connected.`);
+    logProfileRegistry(`[ProfileRegistry] Profile "${profileName}" connected.`);
 
     // If no active profile, or the active profile is no longer connected, set this as active
     if (!this.activeProfile || !this.connections.has(this.activeProfile)) {
       this.activeProfile = profileName;
-      console.log(`[ProfileRegistry] Active profile automatically set to "${profileName}".`);
+      logProfileRegistry(`[ProfileRegistry] Active profile automatically set to "${profileName}".`);
     }
 
     // Set up message handling for this socket
@@ -70,19 +74,19 @@ export class ProfileRegistry {
   public deregister(profileName: string): void {
     if (this.connections.has(profileName)) {
       this.connections.delete(profileName);
-      console.log(`[ProfileRegistry] Profile "${profileName}" disconnected.`);
+      logProfileRegistry(`[ProfileRegistry] Profile "${profileName}" disconnected.`);
 
       if (this.activeProfile === profileName) {
         // Elect a new active profile from remaining connections
         const remaining = Array.from(this.connections.keys());
         if (remaining.length > 0) {
           this.activeProfile = remaining[0];
-          console.log(
+          logProfileRegistry(
             `[ProfileRegistry] Active profile automatically switched to "${this.activeProfile}".`,
           );
         } else {
           this.activeProfile = null;
-          console.log(`[ProfileRegistry] No profiles connected. Active profile is null.`);
+          logProfileRegistry(`[ProfileRegistry] No profiles connected. Active profile is null.`);
         }
       }
     }
@@ -94,7 +98,7 @@ export class ProfileRegistry {
   public switchProfile(profileName: string): boolean {
     if (this.connections.has(profileName)) {
       this.activeProfile = profileName;
-      console.log(`[ProfileRegistry] Active profile switched to "${profileName}".`);
+      logProfileRegistry(`[ProfileRegistry] Active profile switched to "${profileName}".`);
       return true;
     }
     console.warn(
