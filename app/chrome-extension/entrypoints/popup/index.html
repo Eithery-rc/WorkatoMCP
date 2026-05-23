@@ -5,8 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WorkatoMCP</title>
     <meta name="manifest.type" content="browser_action" />
+    <style>
+      html,
+      body {
+        width: 330px;
+        height: 550px;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+      }
+    </style>
   </head>
   <body>
+    <div class="orb-container">
+      <div class="orb orb-1"></div>
+      <div class="orb orb-2"></div>
+      <div class="orb orb-3"></div>
+    </div>
     <div id="app"></div>
     <script type="module" src="./main.ts"></script>
   </body>
