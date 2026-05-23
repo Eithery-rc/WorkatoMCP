@@ -1,29 +1,41 @@
-# Chrome MCP Bridge Installation Guide
+# Workato MCP Bridge Installation Guide
 
-This document explains the installation and registration flow for Chrome MCP Bridge.
+This document explains the installation and registration flow for Workato MCP Bridge.
 
 ## Installation Flow Overview
 
 ```
-npm install -g mcp-chrome-bridge
-└─ postinstall.js
-   ├─ Copy executable to npm_prefix/bin   ← always writable (user or root permissions)
-   ├─ Attempt user-level registration     ← no sudo required; succeeds in most cases
-   └─ On failure ➜ prompt user to run mcp-chrome-bridge register --system
+node app/native-server/dist/cli.js register  (or npm install -g ./app/native-server)
+└─ cli.js
+   ├─ Verify compiled files (index.js, cli.js, run_host.bat/sh)
+   ├─ Attempt user-level registration     ← no admin required; succeeds in most cases
+   └─ On failure ➜ prompt user to run register --system
       └─ Requires manual execution with admin privileges
 ```
 
-The flow above shows the complete path from global installation to final registration.
+The flow above shows the complete path from local compilation/installation to final registration.
 
 ## Detailed Installation Steps
 
-### 1. Global Installation
+### 1. Installation & Registration Options
+
+Since `workatomcp-bridge` is compiled locally from source, you can register it using one of two methods:
+
+#### Option A: Direct Registration from the Repository Clone (Recommended)
+
+This is the simplest way. From the repository root, run:
 
 ```bash
-npm install -g mcp-chrome-bridge
+node app/native-server/dist/cli.js register
 ```
 
-After installation completes, the system will automatically attempt to register the Native Messaging host in the user directory. This requires no admin privileges and is the recommended approach.
+#### Option B: Global Installation from the Local Folder
+
+If you want to install it globally on your system path so the `workatomcp-bridge` command is available anywhere, run:
+
+```bash
+npm install -g ./app/native-server
+```
 
 ### 2. User-Level Registration
 

@@ -8,12 +8,16 @@ Chrome MCP Server 在windows电脑的详细安装和配置步骤
 
 下载地址：https://github.com/hangwin/mcp-chrome/releases
 
-2. **全局安装mcp-chrome-bridge**
+2. **注册本地 workatomcp-bridge**
 
-确保电脑上已经安装了node，如果没安装请自行先安装
+确保电脑上已经安装了 Node.js (v20+)，在克隆的仓库根目录下运行：
 
 ```bash
-npm install -g mcp-chrome-bridge
+# 注册本地 Native Messaging 主机（推荐）
+node app/native-server/dist/cli.js register
+
+# 或者全局安装本地包
+npm install -g ./app/native-server
 ```
 
 3. **加载 Chrome 扩展**
