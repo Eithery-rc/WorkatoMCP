@@ -12,6 +12,7 @@ import {
 import { TOOL_SCHEMAS } from 'workatomcp-shared';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { withProfileRoutingToolSchemas } from './register-tools';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -75,7 +76,9 @@ export const ensureMcpClient = async () => {
 
 export const setupTools = (server: Server) => {
   // List tools handler
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_SCHEMAS }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: withProfileRoutingToolSchemas(TOOL_SCHEMAS),
+  }));
 
   // Call tool handler
   server.setRequestHandler(CallToolRequestSchema, async (request) =>

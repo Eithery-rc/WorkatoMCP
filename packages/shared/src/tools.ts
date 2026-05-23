@@ -3029,7 +3029,7 @@ export const TOOL_SCHEMAS: Tool[] = [
     name: TOOL_NAMES.WORKATO.LIST_PROFILES,
     description:
       'List all currently active/connected Chrome profiles (e.g. "prod", "staging", "dev") ' +
-      'and see which one is currently selected as the active profile context.',
+      'and see which one is selected for this MCP session, if any.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -3039,8 +3039,9 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO.SWITCH_PROFILE,
     description:
-      'Switch the active profile context on the server. All subsequent Workato tool calls ' +
-      'will automatically route to the browser session of the selected profile.',
+      'Switch the active profile context for this MCP session. All subsequent tool calls in ' +
+      'this session will automatically route to the selected browser profile unless an individual ' +
+      'call passes its own profile argument.',
     inputSchema: {
       type: 'object',
       properties: {

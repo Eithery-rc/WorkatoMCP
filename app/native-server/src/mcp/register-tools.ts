@@ -21,11 +21,99 @@ import {
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { profileRegistry } from '../server/profile-registry';
 
-async function sendRequestToActiveExtension(
+export const PROFILE_ROUTING_ARG = 'profile';
+
+const PROFILE_ROUTING_PROPERTY = {
+  type: 'string',
+  description:
+    'Optional connected Chrome profile name for this call only. Overrides this MCP session profile without changing it.',
+};
+
+const PROFILE_MANAGEMENT_TOOLS = new Set([
+  TOOL_NAMES.WORKATO.LIST_PROFILES,
+  TOOL_NAMES.WORKATO.SWITCH_PROFILE,
+]);
+
+type JsonObject = Record<string, any>;
+
+interface RoutedArgs {
+  args: JsonObject;
+  profile: string | null;
+}
+
+interface ToolRouter {
+  listTools: () => Promise<{ tools: Tool[] }>;
+  handleToolCall: (name: string, args: any) => Promise<CallToolResult>;
+}
+
+export function withProfileRoutingToolSchemas(tools: Tool[]): Tool[] {
+  return tools.map((tool) => {
+    if (PROFILE_MANAGEMENT_TOOLS.has(tool.name)) return tool;
+
+    const inputSchema = (tool.inputSchema || { type: 'object' }) as JsonObject;
+    if (inputSchema.type !== 'object') return tool;
+
+    const properties = { ...(inputSchema.properties || {}) };
+    if (!properties[PROFILE_ROUTING_ARG]) {
+      properties[PROFILE_ROUTING_ARG] = PROFILE_ROUTING_PROPERTY;
+    }
+
+    return {
+      ...tool,
+      inputSchema: {
+        ...inputSchema,
+        type: 'object',
+        properties,
+        required: Array.isArray(inputSchema.required) ? inputSchema.required : [],
+      },
+    };
+  });
+}
+
+function routeError(message: string): CallToolResult {
+  return { content: [{ type: 'text', text: message }], isError: true };
+}
+
+function normalizeProfile(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${PROFILE_ROUTING_ARG} must be a non-empty connected profile name`);
+  }
+  return value.trim();
+}
+
+function extractRoutedArgs(args: any): RoutedArgs {
+  const source = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+  const profile = normalizeProfile(source[PROFILE_ROUTING_ARG]);
+  const { [PROFILE_ROUTING_ARG]: _profile, ...cleanArgs } = source;
+  return { args: cleanArgs, profile };
+}
+
+function isConnectedProfile(profile: string): boolean {
+  return profileRegistry.getConnectedProfiles().includes(profile);
+}
+
+function requireConnectedProfile(profile: string): void {
+  if (!isConnectedProfile(profile)) {
+    throw new Error(
+      `profile "${profile}" is not connected. Connected profiles: ${JSON.stringify(
+        profileRegistry.getConnectedProfiles(),
+      )}`,
+    );
+  }
+}
+
+async function sendRequestToExtension(
   messagePayload: any,
   messageType: string = 'request_data',
   timeoutMs?: number,
+  profile: string | null = null,
 ): Promise<any> {
+  if (profile) {
+    requireConnectedProfile(profile);
+    return await profileRegistry.sendRequest(profile, messagePayload, messageType, timeoutMs);
+  }
+
   const activeProfile = profileRegistry.getActiveProfile();
   if (activeProfile) {
     try {
@@ -50,9 +138,9 @@ async function sendRequestToActiveExtension(
   );
 }
 
-async function listDynamicFlowTools(): Promise<Tool[]> {
+async function listDynamicFlowTools(profile: string | null): Promise<Tool[]> {
   try {
-    const response = await sendRequestToActiveExtension({}, 'rr_list_published_flows', 20000);
+    const response = await sendRequestToExtension({}, 'rr_list_published_flows', 20000, profile);
     if (response && response.status === 'success' && Array.isArray(response.items)) {
       const tools: Tool[] = [];
       for (const item of response.items) {
@@ -96,7 +184,7 @@ async function listDynamicFlowTools(): Promise<Tool[]> {
         };
         tools.push(tool);
       }
-      return tools;
+      return withProfileRoutingToolSchemas(tools);
     }
     return [];
   } catch (e) {
@@ -105,166 +193,183 @@ async function listDynamicFlowTools(): Promise<Tool[]> {
 }
 
 export const setupTools = (server: Server) => {
+  const router = createToolRouter();
+
   // List tools handler
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const dynamicTools = await listDynamicFlowTools();
-    return { tools: [...TOOL_SCHEMAS, ...dynamicTools] };
-  });
+  server.setRequestHandler(ListToolsRequestSchema, router.listTools);
 
   // Call tool handler
   server.setRequestHandler(CallToolRequestSchema, async (request) =>
-    handleToolCall(request.params.name, request.params.arguments || {}),
+    router.handleToolCall(request.params.name, request.params.arguments || {}),
   );
 };
 
-const handleToolCall = async (name: string, args: any): Promise<CallToolResult> => {
-  try {
-    // 1. Check for Profile Management Admin Tools
-    if (name === TOOL_NAMES.WORKATO.LIST_PROFILES) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(
-              {
-                active_profile: profileRegistry.getActiveProfile(),
-                connected_profiles: profileRegistry.getConnectedProfiles(),
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
-    }
+export function createToolRouter(): ToolRouter {
+  let sessionProfile: string | null = null;
 
-    if (name === TOOL_NAMES.WORKATO.SWITCH_PROFILE) {
-      const targetProfile = args.profile;
-      if (!targetProfile) {
-        return {
-          content: [{ type: 'text', text: 'Error: target profile parameter is required.' }],
-          isError: true,
-        };
-      }
-      const success = profileRegistry.switchProfile(targetProfile);
-      if (success) {
+  const getRoutingProfile = (callProfile: string | null): string | null =>
+    callProfile || sessionProfile;
+
+  const handleToolCall = async (name: string, args: any): Promise<CallToolResult> => {
+    try {
+      // 1. Check for Profile Management Admin Tools
+      if (name === TOOL_NAMES.WORKATO.LIST_PROFILES) {
+        const defaultProfile = profileRegistry.getActiveProfile();
         return {
           content: [
             {
               type: 'text',
-              text: `Successfully switched to active profile context: "${targetProfile}"`,
+              text: JSON.stringify(
+                {
+                  active_profile: sessionProfile || defaultProfile,
+                  session_profile: sessionProfile,
+                  server_default_profile: defaultProfile,
+                  connected_profiles: profileRegistry.getConnectedProfiles(),
+                },
+                null,
+                2,
+              ),
             },
           ],
         };
+      }
+
+      if (name === TOOL_NAMES.WORKATO.SWITCH_PROFILE) {
+        const targetProfile = normalizeProfile(args?.profile);
+        if (!targetProfile) {
+          return routeError('Error: target profile parameter is required.');
+        }
+        if (!isConnectedProfile(targetProfile)) {
+          return routeError(
+            `Error: profile "${targetProfile}" is not connected. Connected profiles: ${JSON.stringify(
+              profileRegistry.getConnectedProfiles(),
+            )}`,
+          );
+        }
+        sessionProfile = targetProfile;
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Successfully switched this MCP session to profile context: "${targetProfile}"`,
+            },
+          ],
+        };
+      }
+
+      const routed = extractRoutedArgs(args);
+      const routingProfile = getRoutingProfile(routed.profile);
+
+      // 2. If calling a dynamic flow tool (name starts with flow.), proxy to common flow-run tool
+      if (name && name.startsWith('flow.')) {
+        // We need to resolve flow by slug to ID
+        try {
+          const resp = await sendRequestToExtension(
+            {},
+            'rr_list_published_flows',
+            20000,
+            routingProfile,
+          );
+          const items = (resp && resp.items) || [];
+          const slug = name.slice('flow.'.length);
+          const match = items.find((it: any) => it.slug === slug);
+          if (!match) throw new Error(`Flow not found for tool ${name}`);
+          const flowArgs = { flowId: match.id, args: routed.args };
+          const proxyRes = await sendRequestToExtension(
+            { name: 'record_replay_flow_run', args: flowArgs },
+            NativeMessageType.CALL_TOOL,
+            120000,
+            routingProfile,
+          );
+          if (proxyRes.status === 'success') return proxyRes.data;
+          return {
+            content: [{ type: 'text', text: `Error calling dynamic flow tool: ${proxyRes.error}` }],
+            isError: true,
+          };
+        } catch (err: any) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Error resolving dynamic flow tool: ${err?.message || String(err)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+      // workato_pull_recipe(out_file) / workato_ui_save_recipe_code(code_path):
+      // resolve the file params here (this process has filesystem access).
+      let effectiveArgs: any = routed.args;
+      let pullOutFile: string | undefined;
+      if (isWorkatoFileTool(name)) {
+        const prepared = prepareWorkatoCall(name, routed.args || {});
+        effectiveArgs = prepared.args;
+        pullOutFile = prepared.pullOutFile;
+      }
+
+      if (isWorkatoRecipeMutatorTool(name)) {
+        return handleWorkatoRecipeMutatorCall(
+          name,
+          effectiveArgs || {},
+          async (toolName, toolArgs) => {
+            const response = await sendRequestToExtension(
+              {
+                name: toolName,
+                args: toolArgs,
+              },
+              NativeMessageType.CALL_TOOL,
+              120000,
+              routingProfile,
+            );
+            if (response.status === 'success') return response.data;
+            return {
+              content: [{ type: 'text', text: `Error calling tool: ${response.error}` }],
+              isError: true,
+            };
+          },
+        );
+      }
+
+      const response = await sendRequestToExtension(
+        {
+          name,
+          args: effectiveArgs,
+        },
+        NativeMessageType.CALL_TOOL,
+        120000,
+        routingProfile,
+      );
+      if (response.status === 'success') {
+        return pullOutFile ? writePulledRecipe(pullOutFile, response.data) : response.data;
       } else {
         return {
           content: [
             {
               type: 'text',
-              text: `Error: profile "${targetProfile}" is not connected. Connected profiles: ${JSON.stringify(
-                profileRegistry.getConnectedProfiles(),
-              )}`,
+              text: `Error calling tool: ${response.error}`,
             },
           ],
           isError: true,
         };
       }
-    }
-
-    // 2. If calling a dynamic flow tool (name starts with flow.), proxy to common flow-run tool
-    if (name && name.startsWith('flow.')) {
-      // We need to resolve flow by slug to ID
-      try {
-        const resp = await sendRequestToActiveExtension({}, 'rr_list_published_flows', 20000);
-        const items = (resp && resp.items) || [];
-        const slug = name.slice('flow.'.length);
-        const match = items.find((it: any) => it.slug === slug);
-        if (!match) throw new Error(`Flow not found for tool ${name}`);
-        const flowArgs = { flowId: match.id, args };
-        const proxyRes = await sendRequestToActiveExtension(
-          { name: 'record_replay_flow_run', args: flowArgs },
-          NativeMessageType.CALL_TOOL,
-          120000,
-        );
-        if (proxyRes.status === 'success') return proxyRes.data;
-        return {
-          content: [{ type: 'text', text: `Error calling dynamic flow tool: ${proxyRes.error}` }],
-          isError: true,
-        };
-      } catch (err: any) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Error resolving dynamic flow tool: ${err?.message || String(err)}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-    }
-    // workato_pull_recipe(out_file) / workato_ui_save_recipe_code(code_path):
-    // resolve the file params here (this process has filesystem access).
-    let effectiveArgs: any = args;
-    let pullOutFile: string | undefined;
-    if (isWorkatoFileTool(name)) {
-      const prepared = prepareWorkatoCall(name, args || {});
-      effectiveArgs = prepared.args;
-      pullOutFile = prepared.pullOutFile;
-    }
-
-    if (isWorkatoRecipeMutatorTool(name)) {
-      return handleWorkatoRecipeMutatorCall(
-        name,
-        effectiveArgs || {},
-        async (toolName, toolArgs) => {
-          const response = await sendRequestToActiveExtension(
-            {
-              name: toolName,
-              args: toolArgs,
-            },
-            NativeMessageType.CALL_TOOL,
-            120000,
-          );
-          if (response.status === 'success') return response.data;
-          return {
-            content: [{ type: 'text', text: `Error calling tool: ${response.error}` }],
-            isError: true,
-          };
-        },
-      );
-    }
-
-    const response = await sendRequestToActiveExtension(
-      {
-        name,
-        args: effectiveArgs,
-      },
-      NativeMessageType.CALL_TOOL,
-      120000,
-    );
-    if (response.status === 'success') {
-      return pullOutFile ? writePulledRecipe(pullOutFile, response.data) : response.data;
-    } else {
+    } catch (error: any) {
       return {
         content: [
           {
             type: 'text',
-            text: `Error calling tool: ${response.error}`,
+            text: `Error calling tool: ${error.message}`,
           },
         ],
         isError: true,
       };
     }
-  } catch (error: any) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Error calling tool: ${error.message}`,
-        },
-      ],
-      isError: true,
-    };
-  }
-};
+  };
+
+  const listTools = async () => {
+    const dynamicTools = await listDynamicFlowTools(sessionProfile);
+    return { tools: withProfileRoutingToolSchemas([...TOOL_SCHEMAS, ...dynamicTools]) };
+  };
+
+  return { listTools, handleToolCall };
+}
