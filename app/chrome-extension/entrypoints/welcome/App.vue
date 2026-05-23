@@ -5,13 +5,12 @@ import { LINKS, NATIVE_HOST } from '@/common/constants';
 import '@/shared/agent-theme/agent-chat.css';
 
 const COMMANDS = {
-  localRegister: 'node app/native-server/dist/cli.js register',
-  npmInstall: 'npm install -g ./app/native-server',
-  pnpmInstall: 'pnpm add -g ./app/native-server',
-  yarnInstall: 'yarn global add ./app/native-server',
+  npmInstall: 'npm install -g workatomcp-bridge',
+  pnpmInstall: 'pnpm add -g workatomcp-bridge',
+  yarnInstall: 'yarn global add workatomcp-bridge',
   mcpUrl: 'http://127.0.0.1:' + NATIVE_HOST.DEFAULT_PORT + '/mcp',
-  doctor: 'node app/native-server/dist/cli.js doctor',
-  fix: 'node app/native-server/dist/cli.js doctor --fix',
+  doctor: 'workatomcp-bridge doctor',
+  fix: 'workatomcp-bridge doctor --fix',
   workatoUrl: 'https://app.workato.com',
   claudeMcpConfig: `{
   "mcpServers": {
@@ -30,9 +29,8 @@ type CommandKey = keyof typeof COMMANDS;
 const copiedKey = ref<CommandKey | null>(null);
 
 const ALT_INSTALL = [
-  { label: 'npm (Global)', key: 'npmInstall' },
-  { label: 'pnpm (Global)', key: 'pnpmInstall' },
-  { label: 'yarn (Global)', key: 'yarnInstall' },
+  { label: 'pnpm', key: 'pnpmInstall' },
+  { label: 'yarn', key: 'yarnInstall' },
 ] as const satisfies ReadonlyArray<{ label: string; key: CommandKey }>;
 
 const DIAGNOSTICS = [
@@ -136,35 +134,27 @@ async function openDocs(): Promise<void> {
             <div class="flex items-center gap-2">
               <span class="welcome-step-num">2</span>
               <h2 class="welcome-title text-xl font-medium">
-                Register <code class="welcome-code">workatomcp-bridge</code>
+                Install <code class="welcome-code">workatomcp-bridge</code>
               </h2>
             </div>
             <p class="welcome-muted text-sm mt-2">
               The local Node.js bridge connects this extension to your MCP client over a Chrome
-              Native Messaging channel. Register it directly from your cloned repository, or
-              optionally install it globally from the local folder.
+              Native Messaging channel. Install it globally.
             </p>
 
             <div class="mt-4 space-y-3">
               <div class="welcome-command-row flex items-center justify-between gap-3 px-4 py-3">
-                <div class="min-w-0">
-                  <div
-                    class="welcome-mono welcome-subtle text-[10px] uppercase tracking-widest font-medium"
-                  >
-                    Register Local Host (Recommended)
-                  </div>
-                  <code class="welcome-code text-sm break-all">{{ COMMANDS.localRegister }}</code>
-                </div>
+                <code class="welcome-code text-sm break-all">{{ COMMANDS.npmInstall }}</code>
                 <button
                   class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
-                  :style="{ color: copyColor('localRegister') }"
-                  @click="copyCommand('localRegister')"
+                  :style="{ color: copyColor('npmInstall') }"
+                  @click="copyCommand('npmInstall')"
                 >
-                  {{ copyLabel('localRegister') }}
+                  {{ copyLabel('npmInstall') }}
                 </button>
               </div>
 
-              <div class="grid sm:grid-cols-3 gap-3">
+              <div class="grid sm:grid-cols-2 gap-3">
                 <div
                   v-for="item in ALT_INSTALL"
                   :key="item.key"
@@ -191,7 +181,9 @@ async function openDocs(): Promise<void> {
               <div class="welcome-alt-row welcome-muted px-4 py-3 text-xs">
                 Requires Node.js 20+. Check with
                 <code class="welcome-code welcome-code-inline px-1 py-0.5">node -v</code>. The
-                package registers a Chrome Native Messaging host manifest automatically.
+                package installs a Chrome Native Messaging host manifest automatically via its
+                <code class="welcome-code welcome-code-inline px-1 py-0.5">postinstall</code>
+                script.
               </div>
             </div>
           </section>
