@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   findWorkatoTab,
   isWorkatoAppHost,
+  runInWorkatoTab,
   WorkatoDispatchError,
 } from '../../entrypoints/background/tools/workato/tab-dispatch';
 
@@ -115,6 +116,53 @@ describe('findWorkatoTab', () => {
     await expect(findWorkatoTab()).rejects.toMatchObject({
       code: 'MultipleWorkatoHosts',
     });
+  });
+});
+
+describe('runInWorkatoTab', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function setScripting(executeScript: () => Promise<unknown>) {
+    (globalThis as unknown as { chrome: unknown }).chrome = {
+      scripting: { executeScript: vi.fn(executeScript) },
+    };
+  }
+
+  it('honors a custom timeout and rejects with ScriptExecutionFailed when the script never settles', async () => {
+    vi.useFakeTimers();
+    setScripting(() => new Promise<unknown>(() => {})); // never resolves
+    const p = runInWorkatoTab(1, () => 'x' as unknown, [], 5000);
+    const expectation = expect(p).rejects.toMatchObject({
+      name: 'WorkatoDispatchError',
+      code: 'ScriptExecutionFailed',
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    await expectation;
+  });
+
+  it('does not time out before the custom deadline elapses', async () => {
+    vi.useFakeTimers();
+    setScripting(() => new Promise<unknown>(() => {}));
+    let settled = false;
+    const p = runInWorkatoTab(1, () => 'x' as unknown, [], 5000).catch(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    await p;
+    expect(settled).toBe(true);
+  });
+
+  it('returns the script result and clears the timer on success', async () => {
+    vi.useFakeTimers();
+    setScripting(async () => [{ result: { ok: true } }]);
+    const result = await runInWorkatoTab(1, () => ({ ok: true }) as unknown, [], 5000);
+    expect(result).toEqual({ ok: true });
+    // No dangling timeout left to keep the service worker awake.
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 
