@@ -1765,6 +1765,15 @@ export const TOOL_SCHEMAS: Tool[] = [
           description: 'If true, return the raw Workato result envelope instead of the slim shape.',
           default: false,
         },
+        timeout_ms: {
+          type: 'number',
+          description:
+            'Max time to wait for the query before aborting, in milliseconds. Default 90000 ' +
+            '(90s). Clamped to 5000–110000. Raise this for slow connectors (e.g. NetSuite ' +
+            'SuiteQL or large scans) that return "timed out after Ns and was aborted".',
+          minimum: 5000,
+          maximum: 110000,
+        },
       },
       required: ['connection_id', 'query', 'type'],
     },

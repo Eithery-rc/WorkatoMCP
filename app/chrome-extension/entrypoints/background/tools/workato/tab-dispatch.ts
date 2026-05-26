@@ -118,11 +118,18 @@ export async function findWorkatoTab(): Promise<WorkatoTabInfo> {
  * Run `func(...args)` in the MAIN world of the given tab and return its result.
  * `func` must be self-contained (no captured closures) because Chrome serializes
  * it to a string before executing.
+ *
+ * `timeoutMs` bounds how long we wait for the in-page script. It defaults to
+ * EXECUTE_SCRIPT_TIMEOUT_MS (30s), which suits the fast tools. Slow callers
+ * (e.g. run-query against a sluggish connector) may pass a larger value, but
+ * MUST stay below the bridge/stdio ceilings (~120s) so this inner timeout still
+ * fires first and returns a clean error instead of an opaque outer one.
  */
 export async function runInWorkatoTab<TArgs extends unknown[], TResult>(
   tabId: number,
   func: (...args: TArgs) => Promise<TResult> | TResult,
   args: TArgs,
+  timeoutMs: number = EXECUTE_SCRIPT_TIMEOUT_MS,
 ): Promise<TResult> {
   const execPromise = chrome.scripting.executeScript({
     target: { tabId },
@@ -131,16 +138,20 @@ export async function runInWorkatoTab<TArgs extends unknown[], TResult>(
     args: args as unknown[],
   });
 
+  // Track the timer so it can be cleared once the race settles. Without this a
+  // long timeout (run-query uses up to ~115s) would keep the MV3 service worker
+  // awake for the full duration even after the script returned successfully.
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(
+    timeoutId = setTimeout(
       () =>
         reject(
           new WorkatoDispatchError(
             'ScriptExecutionFailed',
-            `In-page script timed out after ${EXECUTE_SCRIPT_TIMEOUT_MS / 1000}s.`,
+            `In-page script timed out after ${Math.round(timeoutMs / 1000)}s.`,
           ),
         ),
-      EXECUTE_SCRIPT_TIMEOUT_MS,
+      timeoutMs,
     );
   });
 
@@ -153,6 +164,8 @@ export async function runInWorkatoTab<TArgs extends unknown[], TResult>(
       'ScriptExecutionFailed',
       `chrome.scripting.executeScript failed: ${err instanceof Error ? err.message : String(err)}`,
     );
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
   }
 
   if (!results || results.length === 0) {
