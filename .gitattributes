@@ -1,1 +1,13 @@
+# Normalize line endings: store LF in the repo, check out per-platform default.
+* text=auto
+
+# Shell scripts MUST always be LF, even when checked out on Windows. They are
+# copied verbatim into the published bridge package and run on macOS/Linux; a
+# CRLF shebang ("#!/usr/bin/env bash\r") yields a "bad interpreter" error there.
+*.sh text eol=lf
+
+# Windows batch scripts must always be CRLF.
+*.bat text eol=crlf
+
+# ONNX model weights are binary and tracked via Git LFS.
 *.onnx filter=lfs diff=lfs merge=lfs -text
