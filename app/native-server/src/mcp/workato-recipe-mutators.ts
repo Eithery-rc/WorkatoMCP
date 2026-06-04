@@ -472,9 +472,11 @@ export async function handleWorkatoRecipeMutatorCall(
     }
     requireRecipeId(args);
 
-    const pulled = parseToolJson(
-      await callExtension('workato_pull_recipe', { recipe_id: args.recipe_id, view: 'full' }),
-    );
+    const pullArgs: JsonObject = { recipe_id: args.recipe_id, view: 'full' };
+    if (typeof args.tabId === 'number') pullArgs.tabId = args.tabId;
+    if (typeof args.windowId === 'number') pullArgs.windowId = args.windowId;
+
+    const pulled = parseToolJson(await callExtension('workato_pull_recipe', pullArgs));
     const code = pulled.code;
     if (!isRecord(code)) throw new Error('workato_pull_recipe did not return a recipe code object');
 

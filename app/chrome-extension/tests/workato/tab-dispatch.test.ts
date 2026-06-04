@@ -14,6 +14,11 @@ beforeEach(() => {
   (globalThis as unknown as { chrome: unknown }).chrome = {
     tabs: {
       query: vi.fn(async () => mockTabs.slice()),
+      get: vi.fn(async (tabId: number) => {
+        const found = mockTabs.find((candidate) => candidate.id === tabId);
+        if (!found) throw new Error(`No tab with id: ${tabId}`);
+        return found;
+      }),
     },
   };
 });
@@ -45,6 +50,25 @@ describe('findWorkatoTab', () => {
     mockTabs.push(tab(2, 'https://app.workato.com/jobs'));
     const info = await findWorkatoTab();
     expect(info.tabId).toBe(1);
+  });
+
+  it('returns an explicitly requested Workato tab', async () => {
+    mockTabs.push(tab(1, 'https://app.workato.com/recipes/123'));
+    mockTabs.push(tab(2, 'https://app.workato.com/jobs'));
+    const info = await findWorkatoTab(2);
+    expect(info).toEqual({
+      tabId: 2,
+      host: 'app.workato.com',
+      origin: 'https://app.workato.com',
+    });
+  });
+
+  it('throws TabNotFound when an explicitly requested tab is not a Workato app tab', async () => {
+    mockTabs.push(tab(3, 'https://docs.workato.com/en/formulas'));
+    await expect(findWorkatoTab(3)).rejects.toMatchObject({
+      name: 'WorkatoDispatchError',
+      code: 'TabNotFound',
+    });
   });
 
   it('throws MultipleWorkatoHosts when tabs span >1 distinct host', async () => {

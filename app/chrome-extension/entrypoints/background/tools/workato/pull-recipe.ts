@@ -16,6 +16,7 @@ interface PullRecipeArgs {
   view?: 'compact' | 'full' | 'outline';
   step?: string;
   field_query?: string;
+  tabId?: number;
 }
 
 interface InPageResult {
@@ -180,7 +181,7 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
         return createErrorResponse('Param [field_query] requires [step]');
       }
 
-      const tab = await findWorkatoTab();
+      const tab = await findWorkatoTab(args.tabId);
       const result = await runInWorkatoTab(tab.tabId, pullInPage, [args.recipe_id]);
 
       if (!result.ok) {
