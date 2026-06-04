@@ -9,6 +9,7 @@ interface CallActionArgs {
   input: Record<string, unknown>;
   allow_writes?: boolean;
   full?: boolean;
+  tabId?: number;
 }
 
 interface RawActionResponse {
@@ -156,7 +157,7 @@ class WorkatoCallActionTool extends BaseBrowserToolExecutor {
         );
       }
 
-      const tab = await findWorkatoTab();
+      const tab = await findWorkatoTab(args.tabId);
       const result = await runInWorkatoTab(tab.tabId, callActionInPage, [
         args.connection_id,
         args.action_name,

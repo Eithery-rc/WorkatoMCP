@@ -320,6 +320,7 @@ describe('native mutator orchestration helpers', () => {
         step: 2,
         path: 'message',
         value: 'changed',
+        tabId: 42,
       },
       caller,
     );
@@ -329,5 +330,7 @@ describe('native mutator orchestration helpers', () => {
       'workato_pull_recipe',
       'workato_ui_save_recipe_code',
     ]);
+    expect(calls[0].args).toMatchObject({ tabId: 42 });
+    expect(calls[1].args).toMatchObject({ tabId: 42 });
   });
 });

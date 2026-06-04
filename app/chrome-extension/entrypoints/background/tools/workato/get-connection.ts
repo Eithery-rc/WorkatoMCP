@@ -7,6 +7,7 @@ import { stripConnectionSecrets } from './strip-secrets';
 interface GetConnectionArgs {
   connection_id: number;
   full?: boolean;
+  tabId?: number;
 }
 
 interface InPageResult {
@@ -94,7 +95,7 @@ class WorkatoGetConnectionTool extends BaseBrowserToolExecutor {
       }
       const full = args?.full === true;
 
-      const tab = await findWorkatoTab();
+      const tab = await findWorkatoTab(args.tabId);
       const result = await runInWorkatoTab(tab.tabId, getConnectionInPage, [args.connection_id]);
 
       if (!result.ok) {

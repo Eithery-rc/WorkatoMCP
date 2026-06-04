@@ -63,7 +63,52 @@ export interface WorkatoTabInfo {
   origin: string;
 }
 
-export async function findWorkatoTab(): Promise<WorkatoTabInfo> {
+type ScriptableTab = chrome.tabs.Tab & { id: number; url: string };
+
+function isScriptableTab(tab: chrome.tabs.Tab): tab is ScriptableTab {
+  return typeof tab.id === 'number' && typeof tab.url === 'string';
+}
+
+function toWorkatoTabInfo(tab: ScriptableTab): WorkatoTabInfo {
+  const url = new URL(tab.url);
+  return { tabId: tab.id, host: url.host, origin: url.origin };
+}
+
+export async function findWorkatoTab(tabId?: number): Promise<WorkatoTabInfo> {
+  if (typeof tabId === 'number') {
+    let tab: chrome.tabs.Tab;
+    try {
+      tab = await chrome.tabs.get(tabId);
+    } catch (err) {
+      throw new WorkatoDispatchError(
+        'TabNotFound',
+        `Workato tab ${tabId} was not found or is no longer accessible: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        { tabId },
+      );
+    }
+
+    if (!isScriptableTab(tab)) {
+      throw new WorkatoDispatchError(
+        'TabNotFound',
+        `Tab ${tabId} does not have an id and url Chrome will let us script into.`,
+        { tabId },
+      );
+    }
+
+    const url = new URL(tab.url);
+    if (!isWorkatoAppHost(url.host)) {
+      throw new WorkatoDispatchError(
+        'TabNotFound',
+        `Tab ${tabId} is not a logged-in Workato app tab (host=${url.host}).`,
+        { tabId, host: url.host },
+      );
+    }
+
+    return toWorkatoTabInfo(tab);
+  }
+
   const tabs = await chrome.tabs.query({ url: WORKATO_URL_PATTERNS });
 
   if (tabs.length === 0) {
@@ -74,10 +119,7 @@ export async function findWorkatoTab(): Promise<WorkatoTabInfo> {
     );
   }
 
-  const usable = tabs.filter(
-    (t): t is chrome.tabs.Tab & { id: number; url: string } =>
-      typeof t.id === 'number' && typeof t.url === 'string',
-  );
+  const usable = tabs.filter(isScriptableTab);
 
   if (usable.length === 0) {
     throw new WorkatoDispatchError(
@@ -110,8 +152,7 @@ export async function findWorkatoTab(): Promise<WorkatoTabInfo> {
   }
 
   const tab = appTabs[0];
-  const url = new URL(tab.url);
-  return { tabId: tab.id, host: url.host, origin: url.origin };
+  return toWorkatoTabInfo(tab);
 }
 
 /**
