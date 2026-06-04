@@ -185,6 +185,21 @@ The older `mcp-chrome-bridge` command remains available as a compatibility alias
 
 WorkatoMCP exposes the MCP server over local HTTP once the Chrome extension launches the bridge:
 
+For Claude Desktop and similar clients that launch MCP servers with `command` / `args`, use `mcp-remote`:
+
+```json
+{
+  "mcpServers": {
+    "workato": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://127.0.0.1:12306/mcp", "--allow-http"]
+    }
+  }
+}
+```
+
+For clients that support streamable HTTP directly, you can use the local URL without `mcp-remote`:
+
 ```json
 {
   "mcpServers": {
