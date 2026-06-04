@@ -110,21 +110,80 @@ Anything else (e.g. `add_record`, `upsert_record`, `delete_record`, `__adhoc_htt
 
 ## Install
 
-The extension's RSA public key is pinned in `app/chrome-extension/wxt.config.ts`, so every clone of this repo builds to the same deterministic extension ID (`bpjpdgkeelhkijkllcmogemkmndgeana`). That ID is hardcoded in the bridge's `allowed_origins` list — meaning native messaging works out of the box without per-machine setup.
+You build the Chrome extension from this repository, then install the local bridge from npm.
+
+### Prerequisites
+
+- Node.js 20+
+- pnpm 8+
+- Google Chrome or Chromium
+- An active Workato account session in the browser
+
+### 1. Build the extension
 
 ```bash
 git clone https://github.com/Eithery-rc/WorkatoMCP
 cd WorkatoMCP
 pnpm install
-pnpm build
-node app/native-server/dist/cli.js register
+pnpm build:shared
+pnpm build:extension
 ```
 
-Then in Chrome:
+This creates the unpacked Chrome extension at:
 
-1. `chrome://extensions/` → enable Developer mode → "Load unpacked" → select `app/chrome-extension/.output/chrome-mv3`
-2. Open `https://app.workato.com` (or your region) and sign in
-3. Add this to your MCP client config (Claude Code: `~/.claude.json`):
+```text
+app/chrome-extension/.output/chrome-mv3
+```
+
+The extension's RSA public key is pinned in `app/chrome-extension/wxt.config.ts`, so every clone builds to the same deterministic extension ID:
+
+```text
+bpjpdgkeelhkijkllcmogemkmndgeana
+```
+
+The npm bridge package already allows that extension ID for native messaging.
+
+### 2. Load the extension in Chrome
+
+1. Open `chrome://extensions/`
+2. Enable Developer mode
+3. Click "Load unpacked"
+4. Select `app/chrome-extension/.output/chrome-mv3`
+5. Confirm Chrome shows extension ID `bpjpdgkeelhkijkllcmogemkmndgeana`
+
+If Chrome shows a different ID, delete `app/chrome-extension/.output/` and `app/chrome-extension/.wxt/`, then rebuild. Also check that `CHROME_EXTENSION_KEY` is not overriding the default key.
+
+### 3. Install the bridge from npm
+
+Install the native bridge globally:
+
+```bash
+npm install -g workatomcp-bridge
+```
+
+The npm package runs a postinstall step that attempts user-level native-messaging registration for detected browsers. If you need to rerun registration manually:
+
+```bash
+workatomcp-bridge register --detect
+```
+
+Check the installation:
+
+```bash
+workatomcp-bridge doctor
+```
+
+If doctor reports fixable issues:
+
+```bash
+workatomcp-bridge doctor --fix
+```
+
+The older `mcp-chrome-bridge` command remains available as a compatibility alias, but new installs should use `workatomcp-bridge`.
+
+### 4. Configure your MCP client
+
+WorkatoMCP exposes the MCP server over local HTTP once the Chrome extension launches the bridge:
 
 ```json
 {
@@ -137,64 +196,26 @@ Then in Chrome:
 }
 ```
 
-The bridge auto-launches via Chrome native-messaging on the first MCP call. If a tool errors with `WorkatoTabNotFound`, double-check you have a Workato tab open + signed in.
+Restart your MCP client after changing its config.
 
-If pnpm v7+ skips postinstall scripts, add to `.npmrc`:
+### 5. Use it
 
-```
-enable-pre-post-scripts=true
-```
+1. Open `https://app.workato.com` or your Workato region URL in Chrome.
+2. Sign in.
+3. Keep at least one Workato tab open.
+4. Call a WorkatoMCP tool from your MCP client.
 
-### Verifying the deterministic ID
-
-After `pnpm build`, your `chrome://extensions` should show extension ID `bpjpdgkeelhkijkllcmogemkmndgeana`. If you see a different ID, either your build picked up a stale state (delete `.wxt/`, rebuild) or someone overrode `CHROME_EXTENSION_KEY` via env var.
+The bridge auto-launches through Chrome native messaging on the first MCP call. If a tool returns `WorkatoTabNotFound`, open a signed-in Workato tab and retry.
 
 ### Troubleshooting
 
-If the popup says "Service Not Started" and your MCP client gets `ConnectionRefused`:
+If the extension popup says "Service Not Started" or your MCP client gets `ConnectionRefused`, run:
 
 ```bash
-node app/native-server/dist/cli.js doctor
+workatomcp-bridge doctor --fix
 ```
 
-Then `--fix` if anything reports an error. Typical fix is a re-register after the dist directory was regenerated.
-
-## Manual smoke test
-
-After loading the extension and starting the bridge:
-
-1. Open Chrome and sign in to Workato (`https://app.workato.com` or your region).
-2. Open any recipe — note its numeric id from the URL.
-3. From an MCP client, call `workato_pull_recipe({ recipe_id: <id> })`. Verify `version.version_no` is a positive integer and `code` is an object.
-4. Pick a recent job for that recipe. Call `workato_job_trace({ recipe_id: <id>, job_id: <jid> })`. Verify `steps[]` is non-empty (or that `error` is set if the job failed).
-5. Repeat with `full: true` — verify `meta` and `line_details` keys are populated with raw responses.
-
-### v1.1 smoke test additions
-
-Run after the v1 smoke test passes:
-
-7. **search_recipes by name** — `workato_search_recipes({ text: "<a known recipe name>" })` → verify `count >= 1`, slim shape includes the recipe id you expected.
-8. **search_recipes pagination** — `workato_search_recipes({})` then `workato_search_recipes({ page: 2 })` → verify the two pages have distinct first ids.
-9. **search_connections** — `workato_search_connections({ text: "salesforce" })` → verify all matches have `provider === 'salesforce'` OR a name containing "salesforce"/"sfdc" (text matches the name, not the provider).
-10. **get_connection metadata** — `workato_get_connection({ connection_id: <known id> })` → verify slim shape has the documented metadata fields plus `config`. Critically, **grep the output for any value matching `eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`** (JWT shape), `^[A-Fa-f0-9]{40,}$` (long hex), or `^[A-Za-z0-9_+/=]{60,}$` (long opaque base64). **Expected: zero matches.**
-11. **get_connection with full=true** — `workato_get_connection({ connection_id: <known id>, full: true })` → repeat the secret-shaped-value grep. Still zero matches. The strip applies in full mode.
-12. **list_jobs default** — `workato_list_jobs({ recipe_id: <known id> })` → verify returns up to 25 jobs, `total` matches lifetime count, `next_cursor` set if more remain.
-13. **list_jobs auto-walk** — `workato_list_jobs({ recipe_id: <known id>, limit: 50 })` → verify exactly 50 jobs returned (tool walked 2 internal pages of 25).
-14. **list_jobs status filter** — `workato_list_jobs({ recipe_id: <known id>, status: "failed" })` → verify `scope < total` and only `status: "failed"` jobs returned.
-15. **list_jobs cursor resume** — call `workato_list_jobs({ recipe_id, limit: 25 })`, take its `next_cursor`, then `workato_list_jobs({ recipe_id, limit: 25, cursor: <that> })` → verify the second call returns the next 25 jobs (distinct ids from the first call).
-16. **Provider denylist audit** — for each adapter present in your workspace (run `workato_search_connections({ sort: 'updated_at' })` and collect distinct `provider` values), call `workato_get_connection({ connection_id: <one id per provider> })` and run the secret-shape grep from step 10. Zero matches across all providers.
-
-### v1.2 smoke test additions
-
-Run after the v1.1 smoke tests pass:
-
-17. **run_query SOQL** — `workato_run_query({ type: 'soql', query: 'SELECT Id, Name FROM Account', connection_id: <SFDC id> })` → verify `schema[]` includes `Id` and `Name` fields, `rows[]` returns ≤100 Salesforce account records, `truncated_to_100` set when count === 100.
-18. **run_query SuiteQL** — `workato_run_query({ type: 'suiteql', query: 'SELECT id, tranid FROM transaction WHERE rownum < 5', connection_id: <NS id> })` → verify `rows[]` has up to 4 transactions with `id` and `tranid`.
-19. **run_query schema_only** — same query with `schema_only: true` → verify `rows` is absent, `schema` is present.
-20. **call_action read** — `workato_call_action({ connection_id: <NS id>, action_name: 'execute_suiteql', input: { query: 'SELECT id FROM transaction WHERE rownum < 3' } })` → verify `result.items` is populated, no `WorkatoUnsafeAction` error.
-21. **call_action write blocked** — `workato_call_action({ connection_id: <NS id>, action_name: 'add_record', input: { record_type: 'customer', /* anything */ } })` → expect `WorkatoUnsafeAction` error, no network call to Workato (the gate runs first).
-22. **call_action write override** — same call with `allow_writes: true` → expect Workato to actually attempt the write. **Run in a sandbox connection only.** If you don't have a safe sandbox, skip this step.
-23. **call_action HTTP via SFDC** — `workato_call_action({ connection_id: <SFDC id>, action_name: '__adhoc_http_action', input: { verb: 'get', path: 'services/data', response_type: 'json' } })` → verify `result` contains Salesforce API version array.
+Then reload the unpacked extension in `chrome://extensions/` and restart your MCP client.
 
 ## Tab selection
 
@@ -219,15 +240,6 @@ Full design rationale per release:
 - v1: `docs/superpowers/specs/2026-05-11-workatomcp-design.md`
 - v1.1: `docs/superpowers/specs/2026-05-12-workatomcp-v11-design.md`
 - v1.2: `docs/superpowers/specs/2026-05-12-workatomcp-v12-design.md`
-
-## Upstream typecheck baseline
-
-`pnpm typecheck` at the root surfaces ~115 pre-existing TypeScript errors in upstream files (`gif-recorder.ts`, `network-capture-web-request.ts`, sidepanel composables, and some `record-replay-v3` test fixtures). These are inherited from `hangwin/mcp-chrome@f48e717` and are not specific to our Workato additions. Our own files (`packages/shared/src/tools.ts`, everything under `app/chrome-extension/entrypoints/background/tools/workato/`) typecheck cleanly. For Workato-only verification use:
-
-```powershell
-pnpm --filter workatomcp-shared exec tsc --noEmit
-pnpm --filter workatomcp-extension exec tsc --noEmit 2>&1 | Select-String "workato"
-```
 
 ## Repo layout
 
