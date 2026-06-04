@@ -12,6 +12,7 @@ interface ListJobsArgs {
   group_by_master_job?: boolean;
   cursor?: string;
   full?: boolean;
+  tabId?: number;
 }
 
 interface RawJobsPage {
@@ -206,7 +207,7 @@ class WorkatoListJobsTool extends BaseBrowserToolExecutor {
       const cursor = typeof args?.cursor === 'string' && args.cursor ? args.cursor : null;
       const full = args?.full === true;
 
-      const tab = await findWorkatoTab();
+      const tab = await findWorkatoTab(args.tabId);
       const result = await runInWorkatoTab(tab.tabId, listJobsInPage, [
         args.recipe_id,
         limit,

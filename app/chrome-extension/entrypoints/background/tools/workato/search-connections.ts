@@ -10,6 +10,7 @@ interface SearchConnectionsArgs {
   page?: number;
   sort?: 'latest_activity' | 'name' | 'updated_at';
   full?: boolean;
+  tabId?: number;
 }
 
 interface RawSearchResponse {
@@ -109,7 +110,7 @@ class WorkatoSearchConnectionsTool extends BaseBrowserToolExecutor {
       const sort = args?.sort ?? 'latest_activity';
       const full = args?.full === true;
 
-      const tab = await findWorkatoTab();
+      const tab = await findWorkatoTab(args.tabId);
       const result = await runInWorkatoTab(tab.tabId, searchConnectionsInPage, [
         text,
         folderId,

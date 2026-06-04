@@ -15,8 +15,12 @@ const COMMANDS = {
   claudeMcpConfig: `{
   "mcpServers": {
     "workato": {
-      "transport": "http",
-      "url": "http://127.0.0.1:${NATIVE_HOST.DEFAULT_PORT}/mcp"
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://127.0.0.1:${NATIVE_HOST.DEFAULT_PORT}/mcp",
+        "--allow-http"
+      ]
     }
   }
 }`,
@@ -195,9 +199,9 @@ async function openDocs(): Promise<void> {
               <h2 class="welcome-title text-xl font-medium">Register with your MCP client</h2>
             </div>
             <p class="welcome-muted text-sm mt-2">
-              Add this to your MCP client config (Claude Code:
-              <code class="welcome-code">~/.claude.json</code>; Claude Desktop:
-              <code class="welcome-code">claude_desktop_config.json</code>):
+              Add this to your MCP client config for Claude Desktop and similar clients that launch
+              MCP servers with <code class="welcome-code">command</code> /
+              <code class="welcome-code">args</code>:
             </p>
 
             <div class="mt-3">

@@ -1523,6 +1523,11 @@ export const TOOL_SCHEMAS: Tool[] = [
             '[view]/[step]/[field_query] are ignored. Edit the file, then push it back ' +
             'with workato_ui_save_recipe_code(code_path).',
         },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
       },
       required: ['recipe_id'],
     },
@@ -1551,6 +1556,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'boolean',
           description: 'If true, return raw responses instead of the slim shape. Default false.',
           default: false,
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
         },
       },
       required: ['recipe_id', 'job_id'],
@@ -1594,6 +1604,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description: 'If true, return the raw Workato response shape instead of the slim shape.',
           default: false,
         },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
       },
       required: [],
     },
@@ -1636,6 +1651,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description: 'If true, return raw Workato shape instead of slim shape.',
           default: false,
         },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
       },
       required: [],
     },
@@ -1662,6 +1682,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'If true, return the secret-stripped raw response instead of the slim metadata+config shape.',
           default: false,
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
         },
       },
       required: ['connection_id'],
@@ -1721,6 +1746,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description: 'If true, return raw concatenated pages instead of the slim shape.',
           default: false,
         },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
       },
       required: ['recipe_id'],
     },
@@ -1774,6 +1804,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           minimum: 5000,
           maximum: 110000,
         },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
       },
       required: ['connection_id', 'query', 'type'],
     },
@@ -1826,6 +1861,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'If true, return the full Workato response envelope instead of just the result.',
           default: false,
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
         },
       },
       required: ['connection_id', 'action_name', 'input'],
@@ -3050,7 +3090,8 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'Switch the active profile context for this MCP session. All subsequent tool calls in ' +
       'this session will automatically route to the selected browser profile unless an individual ' +
-      'call passes its own profile argument.',
+      'call passes its own profile argument. Optionally pins subsequent Workato tools to a ' +
+      'specific Workato tab id so browser focus changes do not retarget the session.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3058,6 +3099,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'string',
           description:
             'The name of the connected profile to switch context to (e.g. "prod", "staging", "dev").',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Optional Workato tab id to pin for this MCP session. Get it from get_windows_and_tabs.',
         },
       },
       required: ['profile'],
