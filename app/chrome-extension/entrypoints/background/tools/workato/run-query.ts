@@ -12,6 +12,7 @@ interface RunQueryArgs {
   schema_only?: boolean;
   full?: boolean;
   timeout_ms?: number;
+  tabId?: number;
 }
 
 // How long to wait for Workato's synchronous schema endpoint before aborting.
@@ -206,7 +207,7 @@ class WorkatoRunQueryTool extends BaseBrowserToolExecutor {
         timeoutMs = Math.min(Math.max(args.timeout_ms, MIN_QUERY_TIMEOUT_MS), MAX_QUERY_TIMEOUT_MS);
       }
 
-      const tab = await findWorkatoTab();
+      const tab = await findWorkatoTab(args.tabId);
       const result = await runInWorkatoTab(
         tab.tabId,
         runQueryInPage,

@@ -8,6 +8,7 @@ interface JobTraceArgs {
   recipe_id: number;
   job_id: string | number;
   full?: boolean;
+  tabId?: number;
 }
 
 interface InPageResult {
@@ -101,7 +102,7 @@ class WorkatoJobTraceTool extends BaseBrowserToolExecutor {
       }
       const full = args.full === true;
 
-      const tab = await findWorkatoTab();
+      const tab = await findWorkatoTab(args.tabId);
       const result = await runInWorkatoTab(tab.tabId, tracePageFn, [args.recipe_id, jobId]);
 
       if (!result.ok) {

@@ -22,6 +22,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { profileRegistry } from '../server/profile-registry';
 
 export const PROFILE_ROUTING_ARG = 'profile';
+export const TAB_ROUTING_ARG = 'tabId';
 
 const PROFILE_ROUTING_PROPERTY = {
   type: 'string',
@@ -87,6 +88,36 @@ function extractRoutedArgs(args: any): RoutedArgs {
   const profile = normalizeProfile(source[PROFILE_ROUTING_ARG]);
   const { [PROFILE_ROUTING_ARG]: _profile, ...cleanArgs } = source;
   return { args: cleanArgs, profile };
+}
+
+function normalizeTabId(value: unknown): number | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${TAB_ROUTING_ARG} must be a non-negative integer Chrome tab id`);
+  }
+  return value;
+}
+
+function shouldApplySessionTab(
+  name: string,
+  args: JsonObject,
+  sessionTabId: number | null,
+): boolean {
+  if (sessionTabId === null) return false;
+  if (!name.startsWith('workato_')) return false;
+  if (PROFILE_MANAGEMENT_TOOLS.has(name)) return false;
+  if (typeof args.tabId === 'number') return false;
+  if (typeof args.windowId === 'number') return false;
+  return true;
+}
+
+function withSessionTabTarget(
+  name: string,
+  args: JsonObject,
+  sessionTabId: number | null,
+): JsonObject {
+  if (!shouldApplySessionTab(name, args, sessionTabId)) return args;
+  return { ...args, tabId: sessionTabId };
 }
 
 function isConnectedProfile(profile: string): boolean {
@@ -206,6 +237,7 @@ export const setupTools = (server: Server) => {
 
 export function createToolRouter(): ToolRouter {
   let sessionProfile: string | null = null;
+  let sessionTabId: number | null = null;
 
   const getRoutingProfile = (callProfile: string | null): string | null =>
     callProfile || sessionProfile;
@@ -223,6 +255,7 @@ export function createToolRouter(): ToolRouter {
                 {
                   active_profile: sessionProfile || defaultProfile,
                   session_profile: sessionProfile,
+                  session_tab_id: sessionTabId,
                   server_default_profile: defaultProfile,
                   connected_profiles: profileRegistry.getConnectedProfiles(),
                 },
@@ -246,12 +279,21 @@ export function createToolRouter(): ToolRouter {
             )}`,
           );
         }
+        const nextSessionTabId = normalizeTabId(args?.tabId);
+        const profileChanged = sessionProfile !== targetProfile;
         sessionProfile = targetProfile;
+        if (nextSessionTabId !== null) {
+          sessionTabId = nextSessionTabId;
+        } else if (profileChanged) {
+          sessionTabId = null;
+        }
         return {
           content: [
             {
               type: 'text',
-              text: `Successfully switched this MCP session to profile context: "${targetProfile}"`,
+              text:
+                `Successfully switched this MCP session to profile context: "${targetProfile}"` +
+                (sessionTabId !== null ? ` and Workato tab ID: ${sessionTabId}` : ''),
             },
           ],
         };
@@ -300,10 +342,10 @@ export function createToolRouter(): ToolRouter {
       }
       // workato_pull_recipe(out_file) / workato_ui_save_recipe_code(code_path):
       // resolve the file params here (this process has filesystem access).
-      let effectiveArgs: any = routed.args;
+      let effectiveArgs: any = withSessionTabTarget(name, routed.args || {}, sessionTabId);
       let pullOutFile: string | undefined;
       if (isWorkatoFileTool(name)) {
-        const prepared = prepareWorkatoCall(name, routed.args || {});
+        const prepared = prepareWorkatoCall(name, effectiveArgs || {});
         effectiveArgs = prepared.args;
         pullOutFile = prepared.pullOutFile;
       }
