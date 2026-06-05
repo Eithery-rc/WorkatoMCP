@@ -108,6 +108,37 @@ Anything else (e.g. `add_record`, `upsert_record`, `delete_record`, `__adhoc_htt
 - `execute_suiteql` — SuiteQL query on NetSuite. Input: `{query}`.
 - `search_sobjects_soql_v2` — SOQL search on Salesforce. Input: `{query, output_schema, ...}`.
 
+## Recipe control and metadata tools
+
+These tools mutate recipe state or metadata through the user's authenticated Workato browser session. They require an open Workato tab.
+
+### `workato_rename_recipe`
+
+```
+input:  { recipe_id: number, name: string }
+output: { recipe_id, name, version_no, updated_at, folders, code_errors, job_report_config_errors, requirements_errors }
+```
+
+Renames a recipe with `PUT /recipes/<id>.json` and `{ flow: { name } }`. It does not pull or replace the recipe code tree.
+
+### `workato_start_recipe`
+
+```
+input:  { recipe_id: number }
+output: { recipe_id, action: "start", status }
+```
+
+Starts a recipe with `POST /web_api/recipes/<id>/start.json`.
+
+### `workato_stop_recipe`
+
+```
+input:  { recipe_id: number, force?: boolean }
+output: { recipe_id, action: "stop", status, force }
+```
+
+Stops a recipe with `POST /web_api/recipes/<id>/stop.json`. Pass `force: true` when Workato reports active dependent recipes and you still want to enqueue the stop.
+
 ## Install
 
 You build the Chrome extension from this repository, then install the local bridge from npm.
