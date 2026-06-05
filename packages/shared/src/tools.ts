@@ -56,6 +56,9 @@ export const TOOL_NAMES = {
   },
   WORKATO: {
     PULL_RECIPE: 'workato_pull_recipe',
+    RENAME_RECIPE: 'workato_rename_recipe',
+    START_RECIPE: 'workato_start_recipe',
+    STOP_RECIPE: 'workato_stop_recipe',
     JOB_TRACE: 'workato_job_trace',
     SEARCH_RECIPES: 'workato_search_recipes',
     SEARCH_CONNECTIONS: 'workato_search_connections',
@@ -1522,6 +1525,83 @@ export const TOOL_SCHEMAS: Tool[] = [
             'step list — the raw tree never enters the agent context. Forces full view; ' +
             '[view]/[step]/[field_query] are ignored. Edit the file, then push it back ' +
             'with workato_ui_save_recipe_code(code_path).',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.RENAME_RECIPE,
+    description:
+      'Rename a Workato recipe by PUTting /recipes/<id>.json with {flow:{name}}. ' +
+      'Returns the recipe id, new name, version number, updated_at, folders, and validation errors if Workato returns them. ' +
+      'Requires an open Workato tab (*.workato.com or *.workato.is) using the same session as the recipe account.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description:
+            'Numeric Workato recipe id. Found in the recipe URL: app.workato.com/recipes/<recipe_id>-<slug>.',
+        },
+        name: {
+          type: 'string',
+          description: 'New recipe name.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id', 'name'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.START_RECIPE,
+    description:
+      'Start a Workato recipe by POSTing /web_api/recipes/<id>/start.json. ' +
+      'Returns the enqueue status. Requires an open Workato tab (*.workato.com or *.workato.is) using the same session as the recipe account.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description:
+            'Numeric Workato recipe id. Found in the recipe URL: app.workato.com/recipes/<recipe_id>-<slug>.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.STOP_RECIPE,
+    description:
+      'Stop a Workato recipe by POSTing /web_api/recipes/<id>/stop.json. ' +
+      'Pass force:true when Workato reports active dependent recipes and you still want to enqueue the stop. ' +
+      'Returns the enqueue status. Requires an open Workato tab (*.workato.com or *.workato.is) using the same session as the recipe account.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description:
+            'Numeric Workato recipe id. Found in the recipe URL: app.workato.com/recipes/<recipe_id>-<slug>.',
+        },
+        force: {
+          type: 'boolean',
+          description:
+            'When true, sends {"force":true} to stop even if Workato reports active dependent recipes.',
         },
         tabId: {
           type: 'number',

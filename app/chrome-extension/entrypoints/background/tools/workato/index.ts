@@ -1,4 +1,6 @@
 export { workatoPullRecipeTool } from './pull-recipe';
+export { workatoRenameRecipeTool } from './rename-recipe';
+export { workatoStartRecipeTool, workatoStopRecipeTool } from './recipe-lifecycle';
 export { workatoJobTraceTool } from './job-trace';
 export { workatoSearchRecipesTool } from './search-recipes';
 export { workatoSearchConnectionsTool } from './search-connections';
