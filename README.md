@@ -121,6 +121,15 @@ output: { recipe_id, name, version_no, updated_at, folders, code_errors, job_rep
 
 Renames a recipe with `PUT /recipes/<id>.json` and `{ flow: { name } }`. It does not pull or replace the recipe code tree.
 
+### `workato_set_version_comment`
+
+```
+input:  { recipe_id: number, version: number, comment: string }
+output: { recipe_id, version, comment }
+```
+
+Sets the comment on a specific recipe version (the annotation shown in the Versions tab) with `PUT /recipes/<id>/versions/<version>.json` and `{ comment }`. Pass an empty string to clear the comment.
+
 ### `workato_start_recipe`
 
 ```

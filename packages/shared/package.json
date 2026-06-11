@@ -1,6 +1,6 @@
 {
   "name": "workatomcp-shared",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "author": "Roman Chikalenko <chikalenkor@gmail.com>",
   "main": "dist/index.js",
   "module": "./dist/index.mjs",
