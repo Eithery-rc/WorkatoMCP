@@ -57,6 +57,7 @@ export const TOOL_NAMES = {
   WORKATO: {
     PULL_RECIPE: 'workato_pull_recipe',
     RENAME_RECIPE: 'workato_rename_recipe',
+    SET_VERSION_COMMENT: 'workato_set_version_comment',
     START_RECIPE: 'workato_start_recipe',
     STOP_RECIPE: 'workato_stop_recipe',
     JOB_TRACE: 'workato_job_trace',
@@ -1560,6 +1561,38 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['recipe_id', 'name'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.SET_VERSION_COMMENT,
+    description:
+      'Set the comment on a specific Workato recipe version by PUTting /recipes/<id>/versions/<version>.json with {comment}. ' +
+      'Use it to annotate a version in the recipe Versions tab (e.g. what changed and why). Pass an empty string to clear the comment. ' +
+      'Returns the recipe id, version, and comment. Requires an open Workato tab (*.workato.com or *.workato.is) using the same session as the recipe account.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description:
+            'Numeric Workato recipe id. Found in the recipe URL: app.workato.com/recipes/<recipe_id>-<slug>.',
+        },
+        version: {
+          type: 'number',
+          description:
+            'Recipe version number to annotate, as shown in the recipe Versions tab (version_no from workato_pull_recipe).',
+        },
+        comment: {
+          type: 'string',
+          description: 'Comment text to attach to the version. Empty string clears the comment.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id', 'version', 'comment'],
     },
   },
   {
