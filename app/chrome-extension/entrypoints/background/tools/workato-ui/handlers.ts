@@ -1624,8 +1624,175 @@ const SAVE_RECIPE_CODE_PAGE_FN = `
 })
 `;
 
+/**
+ * Slim recipe status probe (GET /recipes/<id>.json — no code tree, ~4 KB).
+ * Used for the optimistic lock, the restart_if_running dance, and to verify
+ * whether a timed-out save actually landed (version_no bumped).
+ */
+const RECIPE_STATUS_PAGE_FN = `
+(async (recipeId) => {
+  try {
+    const res = await fetch('/recipes/' + recipeId + '.json', {
+      credentials: 'include',
+      headers: { 'accept': 'application/json', 'x-requested-with': 'XMLHttpRequest' },
+    });
+    if (!res.ok) return { ok: false, error: 'GET /recipes/' + recipeId + '.json failed: HTTP ' + res.status };
+    const j = await res.json().catch(() => null);
+    const rd = j && j.result && j.result.recipe_data;
+    const flow = rd && rd.flow;
+    if (!flow) return { ok: false, error: 'status response missing result.recipe_data.flow' };
+    return {
+      ok: true,
+      running: !!(rd.running || flow.running),
+      state: String(rd.state || flow.state || 'unknown'),
+      version_no: Number(flow.version_no || 0),
+    };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+})
+`;
+
+/** POST /web_api/recipes/<id>/<start|stop>.json — same call the workato_start/stop_recipe tools make. */
+const LIFECYCLE_PAGE_FN = `
+(async (recipeId, action) => {
+  try {
+    function readCookie(n) {
+      const m = document.cookie.match(new RegExp('(?:^|; )' + n.replace(/[-.+*]/g, '\\\\$&') + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    let csrf = readCookie('XSRF-TOKEN-V2') || readCookie('XSRF-TOKEN') || readCookie('csrf-token');
+    if (!csrf) {
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      csrf = csrfMeta && csrfMeta.getAttribute('content');
+    }
+    if (!csrf) return { ok: false, error: 'could not find CSRF token' };
+    const res = await fetch('/web_api/recipes/' + recipeId + '/' + action + '.json', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'accept': 'application/json',
+        'content-type': 'application/json',
+        'x-csrf-token': csrf,
+        'x-requested-with': 'XMLHttpRequest',
+      },
+      body: '{}',
+    });
+    const t = await res.text().catch(() => '');
+    if (!res.ok) return { ok: false, error: action + ' failed: HTTP ' + res.status + ' ' + t.slice(0, 300) };
+    let j = null;
+    try { j = JSON.parse(t); } catch (e) { /* keep null */ }
+    if (j && j.error) return { ok: false, error: action + ' rejected: ' + JSON.stringify(j.error).slice(0, 300) };
+    return { ok: true, status: j && j.status ? String(j.status) : 'enqueued' };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+})
+`;
+
+/** PUT /recipes/<id>/versions/<version>.json {comment} — same call as workato_set_version_comment. */
+const SET_COMMENT_PAGE_FN = `
+(async (recipeId, version, comment) => {
+  try {
+    function readCookie(n) {
+      const m = document.cookie.match(new RegExp('(?:^|; )' + n.replace(/[-.+*]/g, '\\\\$&') + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    let csrf = readCookie('XSRF-TOKEN-V2') || readCookie('XSRF-TOKEN') || readCookie('csrf-token');
+    if (!csrf) {
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      csrf = csrfMeta && csrfMeta.getAttribute('content');
+    }
+    if (!csrf) return { ok: false, error: 'could not find CSRF token' };
+    const res = await fetch('/recipes/' + recipeId + '/versions/' + version + '.json', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: {
+        'accept': 'application/json',
+        'content-type': 'application/json; charset=utf-8',
+        'x-csrf-token': csrf,
+        'x-requested-with': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({ comment: comment }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      return { ok: false, error: 'set comment failed: HTTP ' + res.status + ' ' + t.slice(0, 300) };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+})
+`;
+
+interface SaveRecipeCodePageResult {
+  ok: boolean;
+  stage?: string;
+  error?: string;
+  recipe_id?: number;
+  version_no?: number;
+  updated_at?: string;
+  code_errors?: unknown[];
+}
+
+interface RecipeStatusPageResult {
+  ok: boolean;
+  error?: string;
+  running?: boolean;
+  state?: string;
+  version_no?: number;
+}
+
 class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.WORKATO_UI.SAVE_RECIPE_CODE;
+
+  private async fetchStatus(tabId: number, recipeId: number): Promise<RecipeStatusPageResult> {
+    try {
+      const result = await evaluateInPage<RecipeStatusPageResult>(
+        tabId,
+        `(${RECIPE_STATUS_PAGE_FN})(${JSON.stringify(recipeId)})`,
+        { awaitPromise: true },
+      );
+      return result ?? { ok: false, error: 'status probe returned no value' };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  private async lifecycle(
+    tabId: number,
+    recipeId: number,
+    action: 'start' | 'stop',
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const result = await evaluateInPage<{ ok: boolean; error?: string }>(
+        tabId,
+        `(${LIFECYCLE_PAGE_FN})(${JSON.stringify(recipeId)}, ${JSON.stringify(action)})`,
+        { awaitPromise: true },
+      );
+      return result ?? { ok: false, error: `${action} returned no value` };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /** Poll status until `running` equals `wantRunning` or the deadline passes. */
+  private async pollRunning(
+    tabId: number,
+    recipeId: number,
+    wantRunning: boolean,
+    timeoutMs: number,
+  ): Promise<RecipeStatusPageResult | null> {
+    const deadline = Date.now() + timeoutMs;
+    let last: RecipeStatusPageResult | null = null;
+    for (;;) {
+      last = await this.fetchStatus(tabId, recipeId);
+      if (last.ok && last.running === wantRunning) return last;
+      if (Date.now() >= deadline) return last;
+      await sleep(1200);
+    }
+  }
 
   async execute(args: SaveRecipeCodeArgs): Promise<ToolResult> {
     console.log('[workato-ui] save_recipe_code requested:', { ...args, code: '<omitted>' });
@@ -1647,44 +1814,184 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
       const url = await getTabUrl(tabId);
       if (!/workato\.(com|is)/.test(url)) {
         return createErrorResponse(
-          `workato_ui_save_recipe_code: active tab is not a Workato page (url=${url}).`,
+          `workato_ui_save_recipe_code: resolved tab is not a Workato page (url=${url}).`,
         );
       }
 
+      // --- Preflight: status probe (optimistic lock + running check) -------
+      const preflight = await this.fetchStatus(tabId, args.recipe_id);
+      const baseVersion = preflight.ok ? (preflight.version_no ?? null) : null;
+
+      if (
+        typeof args.expected_base_version_no === 'number' &&
+        preflight.ok &&
+        typeof preflight.version_no === 'number' &&
+        preflight.version_no !== args.expected_base_version_no
+      ) {
+        return createErrorResponse(
+          `workato_ui_save_recipe_code: version drift — expected base version ` +
+            `${args.expected_base_version_no} but recipe ${args.recipe_id} is at ` +
+            `${preflight.version_no}. Someone (or something) saved since you pulled. ` +
+            `Re-pull, re-apply your change, then save. (retriable: false)`,
+        );
+      }
+
+      let stoppedForSave = false;
+      let stoppedAt: string | undefined;
+      if (preflight.ok && preflight.running === true) {
+        if (args.restart_if_running !== true) {
+          return createErrorResponse(
+            `workato_ui_save_recipe_code: recipe ${args.recipe_id} is RUNNING — Workato ` +
+              `rejects code saves on running recipes. Pass restart_if_running:true to ` +
+              `stop → save → restart in one call, or stop it yourself first. (retriable: false as-is)`,
+          );
+        }
+        const stopRes = await this.lifecycle(tabId, args.recipe_id, 'stop');
+        if (!stopRes.ok) {
+          return createErrorResponse(
+            `workato_ui_save_recipe_code (restart_if_running): stop failed — ${stopRes.error}. ` +
+              `Nothing was saved. (retriable: true)`,
+          );
+        }
+        const stopped = await this.pollRunning(tabId, args.recipe_id, false, 30_000);
+        if (!stopped || !stopped.ok || stopped.running !== false) {
+          return createErrorResponse(
+            `workato_ui_save_recipe_code (restart_if_running): stop was enqueued but the ` +
+              `recipe did not report stopped within 30s (state=${stopped?.state ?? 'unknown'}). ` +
+              `Nothing was saved; check workato_recipe_status and retry. (retriable: true)`,
+          );
+        }
+        stoppedForSave = true;
+        stoppedAt = new Date().toISOString();
+      }
+
+      // --- Save -------------------------------------------------------------
       const expr = `(${SAVE_RECIPE_CODE_PAGE_FN})(${JSON.stringify(args.recipe_id)}, ${JSON.stringify(
         args.code,
       )}, ${JSON.stringify(args.config ?? null)}, ${JSON.stringify(
         args.name ?? null,
       )}, ${JSON.stringify(args.description ?? null)})`;
 
-      const result = await evaluateInPage<{
-        ok: boolean;
-        stage?: string;
-        error?: string;
-        recipe_id?: number;
-        version_no?: number;
-        updated_at?: string;
-        code_errors?: unknown[];
-      }>(tabId, expr, { awaitPromise: true });
+      let result: SaveRecipeCodePageResult | undefined;
+      let saveStatus: string | undefined;
+      try {
+        result = await evaluateInPage<SaveRecipeCodePageResult>(tabId, expr, {
+          awaitPromise: true,
+        });
+      } catch (saveErr) {
+        // Timeout ≠ failure: the PUT may have landed. Verify via version_no.
+        const after = await this.fetchStatus(tabId, args.recipe_id);
+        if (
+          after.ok &&
+          typeof after.version_no === 'number' &&
+          baseVersion !== null &&
+          after.version_no > baseVersion
+        ) {
+          result = {
+            ok: true,
+            recipe_id: args.recipe_id,
+            version_no: after.version_no,
+            code_errors: [],
+          };
+          saveStatus = 'succeeded_after_timeout';
+        } else {
+          const suffix = stoppedForSave
+            ? ` NOTE: the recipe was stopped for this save and has NOT been restarted (stopped_at=${stoppedAt}).`
+            : '';
+          return createErrorResponse(
+            `workato_ui_save_recipe_code failed: ${
+              saveErr instanceof Error ? saveErr.message : String(saveErr)
+            }.` +
+              (baseVersion !== null
+                ? ` Verified recipe is still at version ${after.ok ? after.version_no : baseVersion} — the save did NOT apply. (retriable: true)`
+                : ' Could not verify whether the save applied — check version_no via workato_recipe_status before retrying.') +
+              suffix,
+          );
+        }
+      }
 
       if (!result?.ok) {
+        const errText = result?.error ?? 'unknown error';
+        const runningHint = /can'?t modify running recipe/i.test(errText)
+          ? ' (retriable: false — pass restart_if_running:true)'
+          : '';
+        const suffix = stoppedForSave
+          ? ` NOTE: the recipe was stopped for this save and has NOT been restarted (stopped_at=${stoppedAt}).`
+          : '';
         return createErrorResponse(
-          `workato_ui_save_recipe_code: ${result?.error ?? 'unknown error'}` +
-            (result?.stage ? ` (stage=${result.stage})` : ''),
+          `workato_ui_save_recipe_code: ${errText}` +
+            (result?.stage ? ` (stage=${result.stage})` : '') +
+            runningHint +
+            suffix,
         );
       }
 
+      // --- Post-save: version comment --------------------------------------
+      let commentSet: boolean | undefined;
+      let commentError: string | undefined;
+      if (typeof args.comment === 'string' && typeof result.version_no === 'number') {
+        try {
+          const c = await evaluateInPage<{ ok: boolean; error?: string }>(
+            tabId,
+            `(${SET_COMMENT_PAGE_FN})(${JSON.stringify(args.recipe_id)}, ${JSON.stringify(
+              result.version_no,
+            )}, ${JSON.stringify(args.comment)})`,
+            { awaitPromise: true },
+          );
+          commentSet = c?.ok === true;
+          if (!c?.ok) commentError = c?.error ?? 'unknown error';
+        } catch (e) {
+          commentSet = false;
+          commentError = e instanceof Error ? e.message : String(e);
+        }
+      }
+
+      // --- Post-save: restart -----------------------------------------------
+      let restarted: boolean | undefined;
+      let restartError: string | undefined;
+      if (stoppedForSave) {
+        const startRes = await this.lifecycle(tabId, args.recipe_id, 'start');
+        if (startRes.ok) {
+          const runningAgain = await this.pollRunning(tabId, args.recipe_id, true, 20_000);
+          restarted = runningAgain?.ok === true && runningAgain.running === true;
+          if (!restarted) {
+            restartError = `start enqueued but recipe not running after 20s (state=${runningAgain?.state ?? 'unknown'})`;
+          }
+        } else {
+          restarted = false;
+          restartError = startRes.error;
+        }
+      }
+
       const errCount = Array.isArray(result.code_errors) ? result.code_errors.length : 0;
+      const payload: Record<string, unknown> = {
+        recipe_id: result.recipe_id,
+        version_no: result.version_no,
+        updated_at: result.updated_at,
+        code_errors: result.code_errors,
+      };
+      if (baseVersion !== null) payload.base_version_no = baseVersion;
+      if (saveStatus) payload.save_status = saveStatus;
+      if (stoppedForSave) {
+        payload.stopped_at = stoppedAt;
+        payload.restarted = restarted;
+        if (restartError) payload.restart_error = restartError;
+      }
+      if (commentSet !== undefined) {
+        payload.comment_set = commentSet;
+        if (commentError) payload.comment_error = commentError;
+      }
+
       const text =
         `saved recipe ${result.recipe_id} (version ${result.version_no}` +
         (errCount > 0 ? `, ${errCount} validation error${errCount === 1 ? '' : 's'}` : '') +
+        (stoppedForSave
+          ? restarted
+            ? ', restarted'
+            : ', RESTART FAILED — recipe is stopped'
+          : '') +
         `)\n` +
-        JSON.stringify({
-          recipe_id: result.recipe_id,
-          version_no: result.version_no,
-          updated_at: result.updated_at,
-          code_errors: result.code_errors,
-        });
+        JSON.stringify(payload);
       return {
         content: [{ type: 'text', text }],
         isError: false,

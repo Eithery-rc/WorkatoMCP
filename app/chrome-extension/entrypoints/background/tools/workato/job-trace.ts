@@ -2,12 +2,29 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
-import { buildSlimTrace, type RawMetaResponse, type RawLineDetailsResponse } from './slim-trace';
+import {
+  buildSlimTrace,
+  stripSchemaNoise,
+  type RawMetaResponse,
+  type RawLineDetailsResponse,
+} from './slim-trace';
 
 interface JobTraceArgs {
   recipe_id: number;
   job_id: string | number;
   full?: boolean;
+  /** Only return steps whose recipe_line_number is in this exact set. */
+  lines?: number[];
+  /** Only return steps whose recipe_line_number falls in [from, to] inclusive. */
+  line_range?: [number, number];
+  /**
+   * 'summary' (default): truncated input/output summaries.
+   * 'full': exact, untruncated (schema-stripped) input/output — requires
+   * [lines] or [line_range] selecting at most 20 steps.
+   */
+  detail?: 'summary' | 'full';
+  /** In-page script timeout. Default 30000, clamped 10000–110000. Raise for huge traces. */
+  timeout_ms?: number;
   tabId?: number;
 }
 
@@ -102,8 +119,38 @@ class WorkatoJobTraceTool extends BaseBrowserToolExecutor {
       }
       const full = args.full === true;
 
+      // Line selection: exact set and/or inclusive range.
+      const lineSet =
+        Array.isArray(args.lines) && args.lines.length > 0
+          ? new Set(args.lines.filter((n) => typeof n === 'number' && Number.isFinite(n)))
+          : null;
+      const range =
+        Array.isArray(args.line_range) &&
+        args.line_range.length === 2 &&
+        typeof args.line_range[0] === 'number' &&
+        typeof args.line_range[1] === 'number'
+          ? ([args.line_range[0], args.line_range[1]] as [number, number])
+          : null;
+      const hasSelection = lineSet !== null || range !== null;
+      const lineSelected = (n: number): boolean => {
+        if (!hasSelection) return true;
+        if (lineSet?.has(n)) return true;
+        if (range && n >= range[0] && n <= range[1]) return true;
+        return false;
+      };
+      const detail = args.detail === 'full' ? 'full' : 'summary';
+      if (detail === 'full' && !hasSelection) {
+        return createErrorResponse(
+          "detail:'full' requires [lines] or [line_range] — select the specific step(s) you need " +
+            '(max 20) to avoid flooding the response with a whole trace of untruncated payloads.',
+        );
+      }
+
+      const timeoutMs = Math.min(Math.max(args.timeout_ms ?? 30_000, 10_000), 110_000);
       const tab = await findWorkatoTab(args.tabId);
-      const result = await runInWorkatoTab(tab.tabId, tracePageFn, [args.recipe_id, jobId]);
+      const result = await runInWorkatoTab(tab.tabId, tracePageFn, [args.recipe_id, jobId], {
+        timeoutMs,
+      });
 
       if (!result.ok) {
         return createErrorResponse(
@@ -114,9 +161,35 @@ class WorkatoJobTraceTool extends BaseBrowserToolExecutor {
         );
       }
 
-      const payload = full
-        ? { job_id: jobId, meta: result.meta, line_details: result.lineDetails }
-        : buildSlimTrace(jobId, result.meta!, result.lineDetails!);
+      let payload: unknown;
+      if (full) {
+        payload = { job_id: jobId, meta: result.meta, line_details: result.lineDetails };
+      } else if (detail === 'full') {
+        const selected = (result.lineDetails?.line_details ?? []).filter((l) =>
+          lineSelected(Number(l.recipe_line_number ?? -1)),
+        );
+        if (selected.length > 20) {
+          return createErrorResponse(
+            `detail:'full' selection matched ${selected.length} steps — narrow [lines]/[line_range] to at most 20.`,
+          );
+        }
+        const slim = buildSlimTrace(jobId, result.meta!, result.lineDetails!);
+        payload = {
+          ...slim,
+          steps: selected.map((l) => ({
+            recipe_line_number: Number(l.recipe_line_number ?? -1),
+            adapter_name: String(l.adapter_name ?? ''),
+            adapter_operation: String(l.adapter_operation ?? ''),
+            input: stripSchemaNoise(l.input),
+            output: stripSchemaNoise(l.output),
+          })),
+        };
+      } else {
+        const slim = buildSlimTrace(jobId, result.meta!, result.lineDetails!);
+        payload = hasSelection
+          ? { ...slim, steps: slim.steps.filter((s) => lineSelected(s.recipe_line_number)) }
+          : slim;
+      }
 
       return {
         content: [{ type: 'text', text: JSON.stringify(payload) }],

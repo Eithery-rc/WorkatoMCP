@@ -155,22 +155,105 @@ export async function findWorkatoTab(tabId?: number): Promise<WorkatoTabInfo> {
   return toWorkatoTabInfo(tab);
 }
 
+/** Options for runInWorkatoTab / runInWorkatoTabDetailed. */
+export interface RunInTabOptions {
+  /** In-page script timeout. Default EXECUTE_SCRIPT_TIMEOUT_MS (30s). */
+  timeoutMs?: number;
+  /**
+   * Retry the script ONCE when the first attempt times out. Default true —
+   * safe for read-only page functions (the observed failure mode is the 30s
+   * window expiring while the underlying fetch still succeeds, so a retry
+   * with identical args returns normally). Writes MUST pass false and do
+   * their own post-timeout state verification instead, otherwise a retry can
+   * double-apply (e.g. bump a recipe version twice).
+   */
+  retryOnTimeout?: boolean;
+}
+
+export interface DetailedRunResult<TResult> {
+  value: TResult;
+  /** True when the first attempt timed out and the automatic retry succeeded. */
+  retried: boolean;
+}
+
+function isDispatchTimeout(err: unknown): boolean {
+  return (
+    err instanceof WorkatoDispatchError &&
+    err.code === 'ScriptExecutionFailed' &&
+    /timed out/i.test(err.message)
+  );
+}
+
 /**
  * Run `func(...args)` in the MAIN world of the given tab and return its result.
  * `func` must be self-contained (no captured closures) because Chrome serializes
  * it to a string before executing.
  *
- * `timeoutMs` bounds how long we wait for the in-page script. It defaults to
- * EXECUTE_SCRIPT_TIMEOUT_MS (30s), which suits the fast tools. Slow callers
- * (e.g. run-query against a sluggish connector) may pass a larger value, but
- * MUST stay below the bridge/stdio ceilings (~120s) so this inner timeout still
- * fires first and returns a clean error instead of an opaque outer one.
+ * The 4th param accepts either a number (timeoutMs, legacy signature) or a
+ * RunInTabOptions object. `timeoutMs` bounds how long we wait for the in-page
+ * script. It defaults to EXECUTE_SCRIPT_TIMEOUT_MS (30s), which suits the fast
+ * tools. Slow callers (e.g. run-query against a sluggish connector) may pass a
+ * larger value, but MUST stay below the bridge/stdio ceilings (~120s) so this
+ * inner timeout still fires first and returns a clean error instead of an
+ * opaque outer one.
+ *
+ * On timeout the call is retried once automatically (unless
+ * retryOnTimeout:false). Use runInWorkatoTabDetailed when the caller wants to
+ * surface `retried: true` in its response payload.
  */
 export async function runInWorkatoTab<TArgs extends unknown[], TResult>(
   tabId: number,
   func: (...args: TArgs) => Promise<TResult> | TResult,
   args: TArgs,
-  timeoutMs: number = EXECUTE_SCRIPT_TIMEOUT_MS,
+  options: number | RunInTabOptions = {},
+): Promise<TResult> {
+  const detailed = await runInWorkatoTabDetailed(tabId, func, args, options);
+  return detailed.value;
+}
+
+export async function runInWorkatoTabDetailed<TArgs extends unknown[], TResult>(
+  tabId: number,
+  func: (...args: TArgs) => Promise<TResult> | TResult,
+  args: TArgs,
+  options: number | RunInTabOptions = {},
+): Promise<DetailedRunResult<TResult>> {
+  const opts: RunInTabOptions = typeof options === 'number' ? { timeoutMs: options } : options;
+  const timeoutMs = opts.timeoutMs ?? EXECUTE_SCRIPT_TIMEOUT_MS;
+  // Long-timeout callers (run-query at up to ~110s) must not auto-retry: a
+  // second attempt would blow through the ~120s bridge ceiling and surface an
+  // opaque outer timeout instead of this module's clean error.
+  const retryOnTimeout = opts.retryOnTimeout ?? timeoutMs <= 45_000;
+
+  try {
+    const value = await runInWorkatoTabOnce(tabId, func, args, timeoutMs);
+    return { value, retried: false };
+  } catch (err) {
+    if (!retryOnTimeout || !isDispatchTimeout(err)) {
+      if (isDispatchTimeout(err) && err instanceof WorkatoDispatchError) {
+        err.message += ' (retriable: verify state before retrying — this call may have writes)';
+      }
+      throw err;
+    }
+    try {
+      const value = await runInWorkatoTabOnce(tabId, func, args, timeoutMs);
+      return { value, retried: true };
+    } catch (retryErr) {
+      if (isDispatchTimeout(retryErr) && retryErr instanceof WorkatoDispatchError) {
+        retryErr.message +=
+          ' (auto-retried once, timed out both times; retriable: true — the page may be slow or ' +
+          'the Workato API degraded. If this tool accepts timeout_ms, retry with a larger value, ' +
+          'up to 110000)';
+      }
+      throw retryErr;
+    }
+  }
+}
+
+async function runInWorkatoTabOnce<TArgs extends unknown[], TResult>(
+  tabId: number,
+  func: (...args: TArgs) => Promise<TResult> | TResult,
+  args: TArgs,
+  timeoutMs: number,
 ): Promise<TResult> {
   const execPromise = chrome.scripting.executeScript({
     target: { tabId },

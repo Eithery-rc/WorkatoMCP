@@ -8,20 +8,65 @@
 
 const SUMMARY_LIMIT = 500;
 
-function summarize(value: unknown): string {
+/**
+ * Keys that carry schema metadata, not data. A single SOQL step's input can
+ * embed hundreds of tokens of escaped output_schema that crowd out the
+ * actually-useful payload before truncation. Same strip pull_recipe's compact
+ * view applies.
+ */
+const SCHEMA_NOISE_KEYS = new Set([
+  'output_schema',
+  'input_schema',
+  'extended_input_schema',
+  'extended_output_schema',
+  'dynamicPickListSelection',
+  'visible_config_fields',
+]);
+
+/** Recursively drop schema-noise keys (depth-limited; never mutates input). */
+export function stripSchemaNoise(value: unknown, depth = 0): unknown {
+  if (depth > 8 || value === null || typeof value !== 'object') {
+    // Strings sometimes contain an escaped JSON object with the same noise
+    // (Workato stringifies step input). Try to parse-strip-restringify.
+    if (typeof value === 'string' && value.length > 200 && /output_schema/.test(value)) {
+      try {
+        const parsed = JSON.parse(value);
+        if (parsed && typeof parsed === 'object') {
+          return JSON.stringify(stripSchemaNoise(parsed, depth + 1));
+        }
+      } catch {
+        /* not JSON — leave as-is */
+      }
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((v) => stripSchemaNoise(v, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (SCHEMA_NOISE_KEYS.has(k)) {
+      out[k] = '<stripped>';
+      continue;
+    }
+    out[k] = stripSchemaNoise(v, depth + 1);
+  }
+  return out;
+}
+
+function summarize(value: unknown, limit: number = SUMMARY_LIMIT): string {
+  const cleaned = stripSchemaNoise(value);
   let s: string;
   try {
-    if (typeof value === 'string') {
-      s = value;
+    if (typeof cleaned === 'string') {
+      s = cleaned;
     } else {
-      const stringified = JSON.stringify(value);
-      s = stringified === undefined ? String(value) : stringified;
+      const stringified = JSON.stringify(cleaned);
+      s = stringified === undefined ? String(cleaned) : stringified;
     }
   } catch {
-    s = String(value);
+    s = String(cleaned);
   }
-  if (s.length <= SUMMARY_LIMIT) return s;
-  return s.slice(0, SUMMARY_LIMIT) + '...';
+  if (s.length <= limit) return s;
+  return s.slice(0, limit) + '...';
 }
 
 export interface RawMetaResponse {

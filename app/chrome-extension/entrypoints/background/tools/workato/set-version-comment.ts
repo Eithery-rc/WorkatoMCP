@@ -2,6 +2,7 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
+import { fetchRecipeVersionsInPage } from './recipe-versions';
 
 interface SetVersionCommentArgs {
   recipe_id: number;
@@ -136,11 +137,48 @@ class WorkatoSetVersionCommentTool extends BaseBrowserToolExecutor {
       }
 
       const tab = await findWorkatoTab(args.tabId);
-      const result = await runInWorkatoTab(tab.tabId, setVersionCommentInPage, [
-        args.recipe_id,
-        args.version,
-        args.comment,
-      ]);
+
+      // Write: no blind auto-retry. On timeout, verify whether the comment
+      // actually landed before reporting failure.
+      let result: SetVersionCommentResult;
+      let succeededAfterTimeout = false;
+      try {
+        result = await runInWorkatoTab(
+          tab.tabId,
+          setVersionCommentInPage,
+          [args.recipe_id, args.version, args.comment],
+          { retryOnTimeout: false },
+        );
+      } catch (err) {
+        const isTimeout =
+          err instanceof WorkatoDispatchError &&
+          err.code === 'ScriptExecutionFailed' &&
+          /timed out/i.test(err.message);
+        if (!isTimeout) throw err;
+        let verifiedComment: string | null | undefined;
+        try {
+          const versions = await runInWorkatoTab(
+            tab.tabId,
+            fetchRecipeVersionsInPage,
+            [args.recipe_id, 1],
+            { timeoutMs: 15_000 },
+          );
+          verifiedComment = versions.versions?.find((v) => v.version_no === args.version)?.comment;
+        } catch {
+          /* verification failed — fall through to original error */
+        }
+        if (verifiedComment !== undefined && (verifiedComment ?? '') === args.comment) {
+          result = {
+            ok: true,
+            recipe_id: args.recipe_id,
+            version: args.version,
+            comment: args.comment,
+          };
+          succeededAfterTimeout = true;
+        } else {
+          throw err;
+        }
+      }
 
       if (!result.ok) {
         return createErrorResponse(
@@ -151,11 +189,12 @@ class WorkatoSetVersionCommentTool extends BaseBrowserToolExecutor {
         );
       }
 
-      const payload = {
+      const payload: Record<string, unknown> = {
         recipe_id: result.recipe_id,
         version: result.version,
         comment: result.comment,
       };
+      if (succeededAfterTimeout) payload.succeeded_after_timeout = true;
       return {
         content: [
           {

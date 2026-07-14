@@ -60,6 +60,8 @@ export const TOOL_NAMES = {
     SET_VERSION_COMMENT: 'workato_set_version_comment',
     START_RECIPE: 'workato_start_recipe',
     STOP_RECIPE: 'workato_stop_recipe',
+    RECIPE_STATUS: 'workato_recipe_status',
+    VERSION_DIFF: 'workato_recipe_version_diff',
     JOB_TRACE: 'workato_job_trace',
     SEARCH_RECIPES: 'workato_search_recipes',
     SEARCH_CONNECTIONS: 'workato_search_connections',
@@ -127,10 +129,19 @@ export const TOOL_NAMES = {
 export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.GET_WINDOWS_AND_TABS,
-    description: 'Get all currently open browser windows and tabs',
+    description:
+      'Get all currently open browser windows and tabs. Pass filter to return only tabs whose ' +
+      'URL or title contains the substring (e.g. filter:"workato") — strongly preferred when ' +
+      'looking for a specific app tab, so unrelated personal tabs never enter the context.',
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        filter: {
+          type: 'string',
+          description:
+            'Case-insensitive substring matched against each tab URL and title. Windows with no matching tabs are dropped.',
+        },
+      },
       required: [],
     },
   },
@@ -1527,6 +1538,14 @@ export const TOOL_SCHEMAS: Tool[] = [
             '[view]/[step]/[field_query] are ignored. Edit the file, then push it back ' +
             'with workato_ui_save_recipe_code(code_path).',
         },
+        timeout_ms: {
+          type: 'number',
+          description:
+            'In-page fetch timeout in milliseconds. Default 30000, clamped 10000–110000. ' +
+            'Raise for very large recipes (300 KB+ code trees) that time out at the default.',
+          minimum: 10000,
+          maximum: 110000,
+        },
         tabId: {
           type: 'number',
           description:
@@ -1568,6 +1587,10 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'Set the comment on a specific Workato recipe version by PUTting /recipes/<id>/versions/<version>.json with {comment}. ' +
       'Use it to annotate a version in the recipe Versions tab (e.g. what changed and why). Pass an empty string to clear the comment. ' +
+      'TIP: when the comment belongs to a save you are about to make, pass comment: directly to ' +
+      'workato_ui_save_recipe_code instead — one call, one timeout window. ' +
+      'If this request times out, the tool verifies whether the comment landed before reporting failure ' +
+      '(succeeded_after_timeout:true in the response). ' +
       'Returns the recipe id, version, and comment. Requires an open Workato tab (*.workato.com or *.workato.is) using the same session as the recipe account.',
     inputSchema: {
       type: 'object',
@@ -1599,7 +1622,10 @@ export const TOOL_SCHEMAS: Tool[] = [
     name: TOOL_NAMES.WORKATO.START_RECIPE,
     description:
       'Start a Workato recipe by POSTing /web_api/recipes/<id>/start.json. ' +
-      'Returns the enqueue status. Requires an open Workato tab (*.workato.com or *.workato.is) using the same session as the recipe account.',
+      'Returns the enqueue status; pass wait:true to poll until the recipe actually reports running. ' +
+      'If the request times out, the tool verifies actual recipe state before reporting failure ' +
+      '(status "succeeded_after_timeout" means the start landed despite the timeout). ' +
+      'Requires an open Workato tab (*.workato.com or *.workato.is) using the same session as the recipe account.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1607,6 +1633,16 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description:
             'Numeric Workato recipe id. Found in the recipe URL: app.workato.com/recipes/<recipe_id>-<slug>.',
+        },
+        wait: {
+          type: 'boolean',
+          description:
+            'Poll workato_recipe_status until running=true (or the wait window expires). Response includes state, running, waited_ms, state_flipped.',
+          default: false,
+        },
+        wait_timeout_ms: {
+          type: 'number',
+          description: 'Max polling window for wait:true. Default 20000, clamped 1000–60000.',
         },
         tabId: {
           type: 'number',
@@ -1622,7 +1658,11 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'Stop a Workato recipe by POSTing /web_api/recipes/<id>/stop.json. ' +
       'Pass force:true when Workato reports active dependent recipes and you still want to enqueue the stop. ' +
-      'Returns the enqueue status. Requires an open Workato tab (*.workato.com or *.workato.is) using the same session as the recipe account.',
+      'Returns the enqueue status; pass wait:true to poll until the recipe actually reports stopped. ' +
+      'If the request times out, the tool verifies actual recipe state before reporting failure ' +
+      '(status "succeeded_after_timeout" means the stop landed despite the timeout). ' +
+      'NOTE: to edit a running recipe, prefer workato_ui_save_recipe_code(restart_if_running:true) over a manual stop→save→start. ' +
+      'Requires an open Workato tab (*.workato.com or *.workato.is) using the same session as the recipe account.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1636,6 +1676,16 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'When true, sends {"force":true} to stop even if Workato reports active dependent recipes.',
         },
+        wait: {
+          type: 'boolean',
+          description:
+            'Poll workato_recipe_status until running=false (or the wait window expires). Response includes state, running, waited_ms, state_flipped.',
+          default: false,
+        },
+        wait_timeout_ms: {
+          type: 'number',
+          description: 'Max polling window for wait:true. Default 20000, clamped 1000–60000.',
+        },
         tabId: {
           type: 'number',
           description:
@@ -1646,13 +1696,87 @@ export const TOOL_SCHEMAS: Tool[] = [
     },
   },
   {
+    name: TOOL_NAMES.WORKATO.RECIPE_STATUS,
+    description:
+      "Cheap read of a recipe's live state: {running, state, version_no, last_run_at, stopped_at, " +
+      'stop_reason, stopped_for_error, job_succeeded_count, job_failed_count}. ~4 KB fetch, no code tree. ' +
+      'THE post-write verification tool: call after start/stop/save to confirm the change took effect, ' +
+      'instead of re-running search_recipes or pulling the recipe. Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description: 'Numeric Workato recipe id.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.VERSION_DIFF,
+    description:
+      'Compare two saved versions of a recipe and return ONLY the changed steps (compact). ' +
+      'Fetches both code trees via /recipes/<id>/code.json?version_no=N, diffs them in the ' +
+      'background, and returns {summary, added, removed, changed} where each changed step lists ' +
+      'field-level changes as {path, from, to} excerpts. Steps that merely got renumbered by an ' +
+      'insertion above them are counted in summary.moved but not listed. Use for "what did I just ' +
+      'change" verification (from=base, to=new version_no returned by save) and for version ' +
+      'archaeology ("what changed between v46 and v47"). Read-only. Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description: 'Numeric Workato recipe id.',
+        },
+        from: {
+          type: 'number',
+          description: 'Older version_no (as shown in the Versions tab).',
+        },
+        to: {
+          type: 'number',
+          description: 'Newer version_no to compare against.',
+        },
+        value_excerpt_chars: {
+          type: 'number',
+          description:
+            'Max characters per old/new value excerpt in field changes. Default 200, clamped 40–2000.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description:
+            'In-page fetch timeout in milliseconds (two full code trees are fetched). ' +
+            'Default 40000, clamped 10000–110000.',
+          minimum: 10000,
+          maximum: 110000,
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id', 'from', 'to'],
+    },
+  },
+  {
     name: TOOL_NAMES.WORKATO.JOB_TRACE,
     description:
       "Fetch a Workato job's per-step execution trace. Read-only. Returns a slimmed " +
-      'shape by default (step list, status, error, truncated input/output). Pass ' +
-      'full=true to get raw responses for both the job metadata and line details ' +
-      'endpoints. Requires an open Workato tab. Both recipe_id and job_id are ' +
-      'required — Workato job trace endpoints are recipe-scoped.',
+      'shape by default (step list, status, error, truncated input/output; schema noise ' +
+      'like output_schema/extended_*_schema is stripped from summaries). ' +
+      'For long recipes, narrow with lines:[104,118] (exact set) or line_range:[91,123] ' +
+      "(inclusive). Pass detail:'full' with a line selection to get a step's EXACT " +
+      'untruncated input/output — the way to answer "what exactly did step 118 receive ' +
+      'in this job". Pass full=true to get raw responses for both the job metadata and ' +
+      'line details endpoints. Requires an open Workato tab. Both recipe_id and job_id ' +
+      'are required — Workato job trace endpoints are recipe-scoped.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1665,10 +1789,38 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Workato job id. May be string or number depending on source; both accepted.',
         },
+        lines: {
+          type: 'array',
+          items: { type: 'number' },
+          description:
+            'Only return steps with these exact recipe_line_number values, e.g. [104, 118].',
+        },
+        line_range: {
+          type: 'array',
+          items: { type: 'number' },
+          minItems: 2,
+          maxItems: 2,
+          description: 'Only return steps whose recipe_line_number is within [from, to] inclusive.',
+        },
+        detail: {
+          type: 'string',
+          enum: ['summary', 'full'],
+          description:
+            "'summary' (default): truncated summaries. 'full': exact untruncated input/output " +
+            '(schema-stripped) for the selected steps — requires lines/line_range matching ≤20 steps.',
+        },
         full: {
           type: 'boolean',
           description: 'If true, return raw responses instead of the slim shape. Default false.',
           default: false,
+        },
+        timeout_ms: {
+          type: 'number',
+          description:
+            'In-page fetch timeout in milliseconds. Default 30000, clamped 10000–110000. ' +
+            'Raise for very large job traces.',
+          minimum: 10000,
+          maximum: 110000,
         },
         tabId: {
           type: 'number',
@@ -1731,18 +1883,27 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'Search Workato connections by name. Same paginated endpoint as ' +
       'workato_search_recipes but filters to connections. Note: text= ' +
-      'matches connection NAMES, not the provider field. To find all ' +
-      'salesforce connections, either search a name pattern or page through ' +
-      'all and filter client-side on the per-item provider field. Slim ' +
-      'response includes `count` for pagination decisions. Pass full=true ' +
-      'for the raw 18-key per-item Workato shape. Requires an open Workato ' +
-      'tab (*.workato.com or *.workato.is).',
+      'matches connection NAMES, not the provider field — to find "the ' +
+      'salesforce connection" pass provider:"salesforce" instead (the tool ' +
+      'walks up to 5 pages and filters client-side). Alternative pattern: ' +
+      "read the connection id straight from the recipe's config " +
+      '(pull_recipe version.config account_id entries) — often the better ' +
+      'source when you already have the recipe. Slim response includes ' +
+      '`count` for pagination decisions. Pass full=true for the raw 18-key ' +
+      'per-item Workato shape. Requires an open Workato tab (*.workato.com ' +
+      'or *.workato.is).',
     inputSchema: {
       type: 'object',
       properties: {
         text: {
           type: 'string',
           description: 'Connection name substring search.',
+        },
+        provider: {
+          type: 'string',
+          description:
+            'Exact provider/adapter name filter (case-insensitive), e.g. "salesforce", "netsuite". ' +
+            'Applied client-side across up to 5 pages; response sets provider_filtered:true and pages_scanned.',
         },
         folder_id: {
           type: 'number',
@@ -1812,9 +1973,14 @@ export const TOOL_SCHEMAS: Tool[] = [
       'pagination under the hood up to `limit` (default 25, max 100). When ' +
       '`cursor` is supplied, auto-walk begins from that job id (useful for ' +
       'resuming a previous fetch). Supports server-side filters: status ' +
-      '(singular), query (full-text against title/error), started_at ' +
-      'window, group_by_master_job. Pass full=true for raw page responses ' +
-      'instead of the slim shape. Requires an open Workato tab.',
+      '(singular), query, started_at window, group_by_master_job. ' +
+      'query is full-text: it matches the job title, error message, AND the ' +
+      'custom job-report columns — so searching a record id (e.g. an asset ' +
+      'or transaction id shown in the job report) finds its job directly. ' +
+      'If the walk runs out of time mid-pagination the tool returns what it ' +
+      'scanned with partial:true, scanned_through (timestamp) and next_cursor ' +
+      'to resume — partial results are never discarded. Pass full=true for ' +
+      'raw page responses instead of the slim shape. Requires an open Workato tab.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1858,6 +2024,15 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'boolean',
           description: 'If true, return raw concatenated pages instead of the slim shape.',
           default: false,
+        },
+        timeout_ms: {
+          type: 'number',
+          description:
+            'Overall timeout in milliseconds. Default 30000, clamped 10000–110000. The internal ' +
+            'page-walk budget is timeout_ms minus ~8s headroom, so raising this lets one call scan ' +
+            'deeper before returning partial results.',
+          minimum: 10000,
+          maximum: 110000,
         },
         tabId: {
           type: 'number',
@@ -1945,7 +2120,17 @@ export const TOOL_SCHEMAS: Tool[] = [
       'step structure to learn what actions exist on a connector. Common ' +
       "names: '__adhoc_http_action' (any HTTP connector), 'execute_suiteql' " +
       "(NetSuite), 'search_sobjects_soql_v2' (Salesforce), 'add_record'/" +
-      "'upsert_record'/'delete_record' (NetSuite — writes).",
+      "'upsert_record'/'delete_record' (NetSuite — writes)." +
+      '\n\nAD-HOC SOQL (the killer use case — query Salesforce through the ' +
+      "recipe's own connection, no SFDC UI access needed): action_name " +
+      "'search_sobjects_soql_v2' with minimal input {query:'SELECT Id FROM " +
+      'Asset WHERE ...\', limit:100, output_schema:\'[{"name":"Id"}]\'}. ' +
+      'output_schema is REQUIRED but need not match the selected fields — a ' +
+      'one-field dummy schema works; all selected fields come back anyway. ' +
+      'Omitting output_schema/limit makes Workato introspect the full object ' +
+      'schema and the call usually times out (which looks like a wrong input ' +
+      'shape but is not). Prefer workato_run_query(type:"soql") when you just ' +
+      'need rows; call_action is for when you need the raw action behavior.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2128,7 +2313,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           enum: ['view', 'edit'],
           description: 'Open in view or edit mode (default: view).',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: {
           type: 'number',
           description: 'Window ID to select active tab from (when tabId is omitted).',
@@ -2146,7 +2335,11 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: [],
@@ -2163,7 +2356,11 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: [],
@@ -2178,7 +2375,11 @@ export const TOOL_SCHEMAS: Tool[] = [
       type: 'object',
       properties: {
         step_number: { type: 'number', description: 'Step number to focus (1-indexed).' },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['step_number'],
@@ -2214,7 +2415,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           enum: ['action', 'if', 'repeat', 'stop', 'handle_errors'],
           description: 'Step kind (default: action).',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['after_step', 'app', 'action'],
@@ -2240,7 +2445,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           enum: ['text', 'formula'],
           description: 'Optionally toggle the text/formula switcher before writing.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['field', 'value'],
@@ -2271,7 +2480,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Path through the source step\'s output tree to the leaf (e.g. ["body","id"]).',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['field', 'source_step', 'path'],
@@ -2286,7 +2499,11 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: [],
@@ -2306,7 +2523,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'If a confirm dialog appears, true=discard changes, false=stay (default false).',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: [],
@@ -2342,7 +2563,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Optional description. When creating a project it is applied to the project; the recipe description defaults to empty.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['name'],
@@ -2356,8 +2581,14 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Pair with workato_pull_recipe to fetch the current code, mutate it client-side, then save. ' +
       'For large recipes use the file round-trip: workato_pull_recipe(out_file:...) then save with ' +
       '[code_path] so the recipe tree never has to be passed inline. ' +
+      'RUNNING RECIPES: Workato rejects code saves on running recipes — pass restart_if_running:true ' +
+      'to have the tool stop → save → verify → restart atomically (response reports stopped_at + restarted). ' +
+      'SAFETY: pass expected_base_version_no (the version_no you pulled) to refuse saving over someone ' +
+      "else's concurrent edit; pass comment to annotate the new version in the same call. " +
+      'If the save request times out, the tool verifies via version_no whether the save actually landed ' +
+      'and reports save_status:"succeeded_after_timeout" instead of a false failure. ' +
       'Returns the new version_no plus any validation errors Workato emits about the saved tree. ' +
-      'Prerequisite: the active tab must be a logged-in Workato page (for CSRF + session cookies).',
+      'Targets the session pinned tab or any open Workato app tab (never whatever tab is focused).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2390,7 +2621,30 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'string',
           description: 'Optional description. Omit to leave unchanged.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        restart_if_running: {
+          type: 'boolean',
+          description:
+            'When the recipe is running: stop it, save, then start it again — one atomic call ' +
+            'with the smallest possible trigger downtime. Response includes stopped_at and restarted. ' +
+            'Without this flag, saving a running recipe fails fast with a clear error.',
+          default: false,
+        },
+        comment: {
+          type: 'string',
+          description:
+            'Version comment to set on the newly created version (replaces a separate workato_set_version_comment call).',
+        },
+        expected_base_version_no: {
+          type: 'number',
+          description:
+            'Optimistic lock: refuse to save when the current version_no differs from this value ' +
+            '(someone else saved since you pulled). Pass the version_no from your pull_recipe call.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: [],
@@ -2404,7 +2658,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       'sits on top of workato_pull_recipe + workato_ui_save_recipe_code: one call per logical change, ' +
       'no manual code-tree manipulation. Generates a fresh `as` (8-char hex) and `uuid`, renumbers the ' +
       'block sequentially, deduplicates the `config` array of providers, and returns the new step number. ' +
-      'Prerequisite: the active tab must be a logged-in Workato page (for CSRF + session cookies).',
+      'Requires an open logged-in Workato tab (uses the session pinned tab or first Workato app tab — never whatever tab is focused).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2434,7 +2688,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           enum: ['action', 'if', 'repeat_each', 'stop', 'return_result'],
           description: 'Step keyword. Defaults to "action".',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['recipe_id', 'after_step', 'provider', 'action_name'],
@@ -2443,25 +2701,37 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO_RECIPE.SET_STEP_INPUT,
     description:
-      'Set a single input field on an existing recipe step (GET /recipes/<id>/code.json, mutate, ' +
-      'PUT /recipes/<id>.json). Targets the trigger when step_number is 0, otherwise the action with ' +
-      'matching `number` in the block. Preserves all other fields on the step. ' +
-      'Prerequisite: the active tab must be a logged-in Workato page (for CSRF + session cookies).',
+      'Set an input field on an existing recipe step (GET /recipes/<id>/code.json, mutate, ' +
+      'PUT /recipes/<id>.json). NESTED PATHS SUPPORTED: field accepts dotted paths like ' +
+      '"parameters.sysid_param.asset_id" or "filters[0].value" — no file round-trip needed for ' +
+      'one-field fixes deep in a step. Steps anywhere in the tree are reachable: step_number ' +
+      'accepts the numeric step number (0 = trigger) OR the step `as` anchor string, and nested ' +
+      'blocks (if / foreach / try) are searched recursively. Preserves all other fields. ' +
+      'For datapill/formula values with validation, prefer workato_recipe_set_input_path. ' +
+      'Requires a logged-in Workato browser session.',
     inputSchema: {
       type: 'object',
       properties: {
         recipe_id: { type: 'number', description: 'Numeric Workato recipe id.' },
         step_number: {
-          type: 'number',
+          oneOf: [{ type: 'number' }, { type: 'string' }],
           description:
-            'Step to modify. 0 targets the trigger; 1+ targets an action by its `number`.',
+            'Step to modify: numeric step number (0 = trigger) or `as` anchor string (e.g. "c0a385ab"). Nested blocks are searched.',
         },
-        field: { type: 'string', description: 'Input field name to set (e.g. "message").' },
+        field: {
+          type: 'string',
+          description:
+            'Input field name or nested dotted path, e.g. "message" or "parameters.sysid_param.asset_id" or "filters[0].value". Missing intermediate objects/arrays are created.',
+        },
         value: {
           description:
-            'Literal value to write into step.input[field]. Accepts string, number, or boolean.',
+            'Value to write into the path. Accepts string, number, boolean, object, or array.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['recipe_id', 'step_number', 'field', 'value'],
@@ -2472,33 +2742,45 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       "Map a target step field to a datapill from another step's output (GET /recipes/<id>/code.json, " +
       'mutate, PUT /recipes/<id>.json). Builds the canonical Workato `=_dp(...)` formula from the source ' +
-      "step's `as` (line id) and `provider`, then writes it into target.input[target_field]. " +
-      'Source step 0 references the trigger; otherwise the source step is matched by its `number`. ' +
-      'Prerequisite: the active tab must be a logged-in Workato page (for CSRF + session cookies).',
+      "step's `as` (line id) and `provider`, then writes it into the target path. " +
+      'NESTED PATHS SUPPORTED: target_field accepts dotted paths like "parameters.sysid_param.asset_id"; ' +
+      'target_step/source_step accept step numbers (0 = trigger) or `as` anchor strings, and nested ' +
+      'blocks are searched recursively. LIST PILLS: a path element "list_items[]" expands to ' +
+      '"list_items" + {path_element_type:"current_item"} (referencing the foreach current item, e.g. ' +
+      '"f95ce216.list_items[].AssetId" → source_step:"f95ce216", path:["list_items[]","AssetId"]); ' +
+      'raw path objects also pass through unchanged. Requires a logged-in Workato browser session.',
     inputSchema: {
       type: 'object',
       properties: {
         recipe_id: { type: 'number', description: 'Numeric Workato recipe id.' },
         target_step: {
-          type: 'number',
-          description: 'Step where the field being mapped lives. 0 for trigger; 1+ for an action.',
+          oneOf: [{ type: 'number' }, { type: 'string' }],
+          description:
+            'Step where the field being mapped lives: numeric step number (0 = trigger) or `as` anchor string.',
         },
         target_field: {
           type: 'string',
-          description: 'Field name on the target step that will hold the datapill formula.',
+          description:
+            'Field name or nested dotted path on the target step that will hold the datapill formula, e.g. "parameters.sysid_param.asset_id".',
         },
         source_step: {
-          type: 'number',
+          oneOf: [{ type: 'number' }, { type: 'string' }],
           description:
-            'Step whose output is being referenced. 0 for trigger; 1+ for an action. Must already have an `as` and `provider`.',
+            'Step whose output is being referenced: numeric step number (0 = trigger) or `as` anchor string. Must already have an `as` and `provider`.',
         },
         path: {
           type: 'array',
-          items: { type: 'string' },
+          items: { oneOf: [{ type: 'string' }, { type: 'object', additionalProperties: true }] },
           description:
-            'Path into the source step output, e.g. ["records"] or ["body", "id"]. Empty array references the root output.',
+            'Path into the source step output, e.g. ["records"] or ["body","id"]. "name[]" expands to ' +
+            'name + {path_element_type:"current_item"}; raw objects (e.g. {path_element_type:"current_item"}) ' +
+            'pass through as-is. Empty array references the root output.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['recipe_id', 'target_step', 'target_field', 'source_step', 'path'],
@@ -2508,11 +2790,16 @@ export const TOOL_SCHEMAS: Tool[] = [
     name: TOOL_NAMES.WORKATO_RECIPE.SET_INPUT_PATH,
     description:
       "Set a nested value inside an existing Workato recipe step's input via a native-server " +
-      'pull-mutate-push round trip. The target step may be identified by step number or `as` anchor. ' +
-      'The path may be a dotted string such as `records.item.items[0].amount` or an array of string/' +
-      'number segments. Creates missing intermediate objects/arrays, refuses unsafe path segments and ' +
+      'pull-mutate-push round trip. NESTED PATHS are first-class here: the target step may be ' +
+      'identified by step number or `as` anchor (nested blocks searched), and the path may be a ' +
+      'dotted string such as `records.item.items[0].amount` or an array of string/number segments. ' +
+      'Creates missing intermediate objects/arrays, refuses unsafe path segments and ' +
       'non-container parents, and preserves all unrelated code-tree fields. Supports literal values, ' +
-      'formula strings, interpolated strings, and datapill specs. Requires a logged-in Workato browser session.',
+      'formula strings, interpolated strings, and datapill specs — datapill shorthand ' +
+      '`datapill(provider.line.list_items[].AssetId)` expresses current-item (foreach) pills. ' +
+      'THE preferred tool for one-field fixes deep inside a step (no file round-trip needed). ' +
+      'Accepts restart_if_running/comment/expected_base_version_no, forwarded to the underlying save. ' +
+      'Requires a logged-in Workato browser session.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2538,6 +2825,21 @@ export const TOOL_SCHEMAS: Tool[] = [
           enum: ['literal', 'datapill', 'formula', 'interpolated'],
           description:
             'How to encode value. Default literal. formula prefixes `=` when absent; datapill writes a text-mode #{_dp(...)} reference.',
+        },
+        restart_if_running: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: stop a running recipe, save, restart — one atomic call.',
+          default: false,
+        },
+        comment: {
+          type: 'string',
+          description: 'Forwarded to the underlying save: version comment for the new version.',
+        },
+        expected_base_version_no: {
+          type: 'number',
+          description:
+            'Optimistic lock forwarded to the save. Defaults to the version_no this call just pulled, so concurrent edits are refused automatically.',
         },
         tabId: { type: 'number', description: 'Target tab ID for the final save (optional).' },
         windowId: { type: 'number', description: 'Window ID for the final save (optional).' },
@@ -2639,11 +2941,15 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'List all Workato lookup tables visible to the signed-in user (GET /lookup_tables.json). ' +
       'Returns a slim shape: [{id, name, entry_count, updated_at}]. ' +
-      'Prerequisite: the active tab must be a logged-in Workato page (for CSRF + session cookies).',
+      'Requires an open logged-in Workato tab (uses the session pinned tab or first Workato app tab — never whatever tab is focused).',
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
     },
@@ -2666,7 +2972,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'string',
           description: 'Server-side full-text filter applied to rows. Optional.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id'],
@@ -2694,7 +3004,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Optional initial column labels (1–10). Each becomes the user-facing name for col1..colN; remaining slots are padded with placeholders.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
     },
@@ -2709,7 +3023,11 @@ export const TOOL_SCHEMAS: Tool[] = [
       properties: {
         table_id: { type: 'number', description: 'Numeric lookup-table id.' },
         name: { type: 'string', description: 'New name (non-empty).' },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'name'],
@@ -2733,7 +3051,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             '1–10 user-facing column labels. The first N slots are named; the rest are padded with placeholders.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'columns'],
@@ -2748,7 +3070,11 @@ export const TOOL_SCHEMAS: Tool[] = [
       type: 'object',
       properties: {
         table_id: { type: 'number', description: 'Numeric lookup-table id.' },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id'],
@@ -2772,7 +3098,11 @@ export const TOOL_SCHEMAS: Tool[] = [
             'Row values keyed by user-facing column label (e.g. {"Email": "a@b", "Country": "US"}). Missing columns are sent as null. Only labels that match the table\'s schema are kept.',
           additionalProperties: true,
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'row'],
@@ -2797,7 +3127,11 @@ export const TOOL_SCHEMAS: Tool[] = [
             'Partial row keyed by user-facing column label. Only provided labels are overwritten; the rest are preserved from the current row.',
           additionalProperties: true,
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'row_id', 'row'],
@@ -2814,7 +3148,11 @@ export const TOOL_SCHEMAS: Tool[] = [
       properties: {
         table_id: { type: 'number', description: 'Numeric lookup-table id.' },
         row_id: { type: 'number', description: 'Numeric row id.' },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'row_id'],
@@ -2834,7 +3172,11 @@ export const TOOL_SCHEMAS: Tool[] = [
         qterm: { type: 'string', description: 'Server-side full-text query.' },
         page: { type: 'number', description: 'Page number (1-based). Optional.' },
         per_page: { type: 'number', description: 'Rows per page. Optional.' },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'qterm'],
@@ -2885,7 +3227,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Optional filename to send in the multipart part. Defaults to "data.csv" or, when csv_path is used, the basename of the path.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id'],
@@ -2908,7 +3254,11 @@ export const TOOL_SCHEMAS: Tool[] = [
             'Numeric folder id to list data tables under. Optional — falls back to the folder in the current URL when possible.',
         },
         page: { type: 'number', description: 'Page number (1-based). Optional.' },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
     },
@@ -2928,7 +3278,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'When true, also returns the 3 system columns (Record ID, Created time, Last modified time). Default false.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id'],
@@ -2963,7 +3317,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           },
           description: 'Optional user columns to create after the table is provisioned.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['name', 'folder_id'],
@@ -2978,7 +3336,11 @@ export const TOOL_SCHEMAS: Tool[] = [
       properties: {
         table_id: { type: 'string', description: 'Data Table id (UUID string).' },
         name: { type: 'string', description: 'New name (non-empty).' },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'name'],
@@ -2992,7 +3354,11 @@ export const TOOL_SCHEMAS: Tool[] = [
       type: 'object',
       properties: {
         table_id: { type: 'string', description: 'Data Table id (UUID string).' },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id'],
@@ -3013,7 +3379,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Column type: short-text (default), long-text, integer, decimal, boolean, date, date-time, file, multi-value, link-to-table.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'name'],
@@ -3042,7 +3412,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'New column type. Optional. Must be one of: short-text, long-text, integer, decimal, boolean, date, date-time, file, multi-value, link-to-table.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id'],
@@ -3065,7 +3439,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'string',
           description: 'Existing column UUID to delete (provide this OR column_name).',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id'],
@@ -3096,7 +3474,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'string',
           description: 'Opaque cursor returned by a prior page. Optional.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id'],
@@ -3118,7 +3500,11 @@ export const TOOL_SCHEMAS: Tool[] = [
             'Row values keyed by user-facing column label. Only labels matching the table schema are sent.',
           additionalProperties: true,
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'row'],
@@ -3144,7 +3530,11 @@ export const TOOL_SCHEMAS: Tool[] = [
             'Partial row keyed by user-facing column label. Only provided labels are updated.',
           additionalProperties: true,
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'record_id', 'row'],
@@ -3163,7 +3553,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
           description: 'Row UUID, or array of row UUIDs, to delete.',
         },
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['table_id', 'record_ids'],
@@ -3182,7 +3576,11 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Target tab ID (default: active tab).' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
     },

@@ -69,6 +69,15 @@ export interface SaveRecipeCodeArgs extends TabTargetArgs {
   config?: unknown[] | string;
   name?: string;
   description?: string;
+  /** Stop a running recipe, save, then start it again — one atomic call. */
+  restart_if_running?: boolean;
+  /** Version comment to set on the newly created version after a successful save. */
+  comment?: string;
+  /**
+   * Optimistic lock: refuse to save when the recipe's current version_no is
+   * not exactly this value (someone else edited since you pulled).
+   */
+  expected_base_version_no?: number;
 }
 
 export interface StepInfo {

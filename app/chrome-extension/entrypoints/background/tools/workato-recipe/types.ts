@@ -26,15 +26,23 @@ export interface RecipeAddStepArgs extends TabTargetArgs {
 
 export interface RecipeSetStepInputArgs extends TabTargetArgs {
   recipe_id: number;
-  step_number: number;
+  /** Step number (0 = trigger) or `as` anchor string. Nested blocks are searched. */
+  step_number: number | string;
+  /** Field name or nested dotted path, e.g. "parameters.sysid_param.asset_id" or "filters[0].value". */
   field: string;
-  value: string | number | boolean;
+  value: unknown;
 }
+
+/** A datapill path element: plain name, "name[]" (expands to name + current_item), or a raw path object. */
+export type DatapillPathElement = string | Record<string, unknown>;
 
 export interface RecipeMapDatapillArgs extends TabTargetArgs {
   recipe_id: number;
-  target_step: number;
+  /** Step number (0 = trigger) or `as` anchor string. Nested blocks are searched. */
+  target_step: number | string;
+  /** Field name or nested dotted path on the target step. */
   target_field: string;
-  source_step: number;
-  path: string[];
+  /** Step number (0 = trigger) or `as` anchor string. */
+  source_step: number | string;
+  path: DatapillPathElement[];
 }

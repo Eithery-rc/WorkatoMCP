@@ -9,3 +9,5 @@ export { workatoGetConnectionTool } from './get-connection';
 export { workatoListJobsTool } from './list-jobs';
 export { workatoRunQueryTool } from './run-query';
 export { workatoCallActionTool } from './call-action';
+export { workatoRecipeStatusTool } from './recipe-status';
+export { workatoRecipeVersionDiffTool } from './version-diff';
