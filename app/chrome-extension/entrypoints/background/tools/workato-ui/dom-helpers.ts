@@ -207,27 +207,49 @@ export async function callFunctionOnObject<T = unknown>(
 // Tab resolution
 // ---------------------------------------------------------------------------
 
-import { ERROR_MESSAGES } from '@/common/constants';
+import { findWorkatoTab, isWorkatoAppHost, WORKATO_URL_PATTERNS } from '../workato/tab-dispatch';
 
+/**
+ * Resolve the tab every workato_* tool should target.
+ *
+ * Resolution order (unified across all tool families — spec: "never the
+ * active tab"):
+ *   1. Explicit `tabId` — validated to still exist.
+ *   2. A Workato app tab in `windowId`, when provided.
+ *   3. Any open Workato app tab (same algorithm as findWorkatoTab, which the
+ *      workato_* read tools already use).
+ *   4. Error — never fall back to whatever tab happens to be focused. The
+ *      previous active-tab fallback made writes fail (or worse, target the
+ *      wrong page) whenever the user was in another app while the agent
+ *      worked.
+ */
 export async function resolveTabId(args: { tabId?: number; windowId?: number }): Promise<number> {
   if (typeof args.tabId === 'number') {
     try {
       const t = await chrome.tabs.get(args.tabId);
       if (t && typeof t.id === 'number') return t.id;
     } catch {
-      /* fall through */
+      /* fall through to Workato-tab discovery */
     }
   }
-  const tabs = await chrome.tabs.query(
-    typeof args.windowId === 'number'
-      ? { active: true, windowId: args.windowId }
-      : { active: true, currentWindow: true },
-  );
-  const t = tabs && tabs[0];
-  if (!t || typeof t.id !== 'number') {
-    throw new Error(ERROR_MESSAGES.TAB_NOT_FOUND);
+
+  if (typeof args.windowId === 'number') {
+    const tabs = await chrome.tabs.query({
+      url: WORKATO_URL_PATTERNS,
+      windowId: args.windowId,
+    });
+    const appTab = tabs.find(
+      (t) =>
+        typeof t.id === 'number' &&
+        typeof t.url === 'string' &&
+        isWorkatoAppHost(new URL(t.url).host),
+    );
+    if (appTab && typeof appTab.id === 'number') return appTab.id;
+    /* no Workato tab in that window — fall through to global discovery */
   }
-  return t.id;
+
+  const info = await findWorkatoTab();
+  return info.tabId;
 }
 
 export async function getTabUrl(tabId: number): Promise<string> {

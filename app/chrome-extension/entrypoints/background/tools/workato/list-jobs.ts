@@ -1,7 +1,7 @@
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
-import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
+import { findWorkatoTab, runInWorkatoTabDetailed, WorkatoDispatchError } from './tab-dispatch';
 
 interface ListJobsArgs {
   recipe_id: number;
@@ -12,6 +12,8 @@ interface ListJobsArgs {
   group_by_master_job?: boolean;
   cursor?: string;
   full?: boolean;
+  /** In-page script timeout. Default 30000, clamped 10000–110000. */
+  timeout_ms?: number;
   tabId?: number;
 }
 
@@ -28,6 +30,13 @@ interface RawJobsPage {
 interface InPageResult {
   ok: boolean;
   pages?: RawJobsPage[];
+  /**
+   * True when the in-page time budget ran out mid-walk. `pages` holds
+   * everything scanned so far; resume with the returned cursor.
+   */
+  partial?: boolean;
+  /** started_at of the last job scanned (partial walks only). */
+  scanned_through?: string;
   failure?: {
     stage: 'meta' | 'page' | 'shape';
     status?: number;
@@ -54,9 +63,13 @@ function listJobsInPage(
   startedAt: string | null,
   groupByMaster: boolean,
   startCursor: string | null,
+  budgetMs: number,
 ): Promise<InPageResult> {
   const PER_PAGE = 25;
   const HARD_CAP = 100;
+  // Stop walking pages once the budget expires and return what was scanned,
+  // instead of letting the outer 30s script timeout discard everything.
+  const deadline = Date.now() + (typeof budgetMs === 'number' && budgetMs > 0 ? budgetMs : 22000);
 
   function buildUrl(cursor: string | null): string {
     const params = new URLSearchParams();
@@ -143,6 +156,14 @@ function listJobsInPage(
       const lastJob = res.page.jobs![res.page.jobs!.length - 1];
       const nextCursor = lastJob && typeof lastJob.id === 'string' ? lastJob.id : null;
       if (!nextCursor) return { ok: true, pages };
+      if (Date.now() >= deadline) {
+        return {
+          ok: true,
+          pages,
+          partial: true,
+          scanned_through: lastJob && lastJob.started_at ? String(lastJob.started_at) : undefined,
+        };
+      }
       return loop(nextCursor, pages);
     });
   }
@@ -207,16 +228,18 @@ class WorkatoListJobsTool extends BaseBrowserToolExecutor {
       const cursor = typeof args?.cursor === 'string' && args.cursor ? args.cursor : null;
       const full = args?.full === true;
 
+      const timeoutMs = Math.min(Math.max(args.timeout_ms ?? 30_000, 10_000), 110_000);
+      // In-page budget: leave ~8s headroom so the walk returns partial results
+      // gracefully before the outer script timeout would discard everything.
+      const budgetMs = Math.max(timeoutMs - 8_000, 8_000);
+
       const tab = await findWorkatoTab(args.tabId);
-      const result = await runInWorkatoTab(tab.tabId, listJobsInPage, [
-        args.recipe_id,
-        limit,
-        status,
-        query,
-        startedAt,
-        groupByMaster,
-        cursor,
-      ]);
+      const { value: result, retried } = await runInWorkatoTabDetailed(
+        tab.tabId,
+        listJobsInPage,
+        [args.recipe_id, limit, status, query, startedAt, groupByMaster, cursor, budgetMs],
+        { timeoutMs },
+      );
 
       if (!result.ok) {
         return createErrorResponse(
@@ -247,7 +270,8 @@ class WorkatoListJobsTool extends BaseBrowserToolExecutor {
       const collected = trimmedJobs.length;
       const lastPageJobs = lastPage.jobs ?? [];
       const lastPageFull = lastPageJobs.length >= 25;
-      const moreRemains = meta.scope > collected && lastPageFull;
+      const partial = result.partial === true;
+      const moreRemains = partial || (meta.scope > collected && lastPageFull);
       const lastJobId =
         moreRemains && trimmedJobs.length > 0
           ? String(trimmedJobs[trimmedJobs.length - 1]?.id ?? '')
@@ -256,10 +280,19 @@ class WorkatoListJobsTool extends BaseBrowserToolExecutor {
 
       // In full mode, return raw jobs (untrimmed, truncated only at the auto-walk
       // limit, not by .slice). Drop `pages` so the response isn't doubled.
+      const extras: Record<string, unknown> = {};
+      if (partial) {
+        extras.partial = true;
+        if (result.scanned_through) extras.scanned_through = result.scanned_through;
+        extras.note =
+          'Time budget ran out mid-walk; results cover jobs scanned so far. Resume with cursor=next_cursor.';
+      }
+      if (retried) extras.retried = true;
       const payload = full
-        ? { ...meta, next_cursor: nextCursor, jobs: trimmedJobs }
+        ? { ...meta, ...extras, next_cursor: nextCursor, jobs: trimmedJobs }
         : {
             ...meta,
+            ...extras,
             next_cursor: nextCursor,
             jobs: trimmedJobs.map(shapeSlimJob),
           };

@@ -489,6 +489,17 @@ export async function handleWorkatoRecipeMutatorCall(
     };
     if (typeof args.tabId === 'number') saveArgs.tabId = args.tabId;
     if (typeof args.windowId === 'number') saveArgs.windowId = args.windowId;
+    // Pass through save modifiers so one mutator call can also handle a
+    // running recipe (stop→save→restart) and annotate the new version.
+    if (args.restart_if_running === true) saveArgs.restart_if_running = true;
+    if (typeof args.comment === 'string') saveArgs.comment = args.comment;
+    // Optimistic lock: the mutator just pulled the recipe, so pin the save to
+    // the version it mutated unless the caller supplied their own expectation.
+    if (typeof args.expected_base_version_no === 'number') {
+      saveArgs.expected_base_version_no = args.expected_base_version_no;
+    } else if (typeof version.version_no === 'number') {
+      saveArgs.expected_base_version_no = version.version_no;
+    }
 
     const saved = parseToolJson(await callExtension('workato_ui_save_recipe_code', saveArgs));
     return buildMutatorSummary(name, {

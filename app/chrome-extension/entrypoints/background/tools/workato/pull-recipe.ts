@@ -16,6 +16,8 @@ interface PullRecipeArgs {
   view?: 'compact' | 'full' | 'outline';
   step?: string;
   field_query?: string;
+  /** In-page script timeout. Default 30000, clamped 10000–110000. Raise for very large recipes. */
+  timeout_ms?: number;
   tabId?: number;
 }
 
@@ -181,8 +183,11 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
         return createErrorResponse('Param [field_query] requires [step]');
       }
 
+      const timeoutMs = Math.min(Math.max(args.timeout_ms ?? 30_000, 10_000), 110_000);
       const tab = await findWorkatoTab(args.tabId);
-      const result = await runInWorkatoTab(tab.tabId, pullInPage, [args.recipe_id]);
+      const result = await runInWorkatoTab(tab.tabId, pullInPage, [args.recipe_id], {
+        timeoutMs,
+      });
 
       if (!result.ok) {
         return createErrorResponse(

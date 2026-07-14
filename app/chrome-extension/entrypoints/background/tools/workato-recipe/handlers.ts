@@ -127,13 +127,80 @@ function renumberBlock(block, start) {
     }
   }
 }
-function findStepByNumber(code, stepNumber) {
-  if (stepNumber === 0) return code;
-  if (!Array.isArray(code.block)) return null;
-  for (let i = 0; i < code.block.length; i++) {
-    if (code.block[i] && code.block[i].number === stepNumber) return code.block[i];
+function findStepRef(code, ref) {
+  // Accepts a step number (0 = trigger/root) or an 'as' anchor string.
+  // Recurses into nested blocks (if/foreach/try...), unlike the old
+  // top-level-only lookup that made nested steps unreachable.
+  if (ref === 0 || ref === '0') return code;
+  const wantNumber = typeof ref === 'number' ? ref
+    : (typeof ref === 'string' && /^[0-9]+$/.test(ref)) ? Number(ref) : null;
+  const wantAs = typeof ref === 'string' && !/^[0-9]+$/.test(ref) ? ref : null;
+  function visit(node) {
+    if (!node || typeof node !== 'object') return null;
+    if (wantNumber !== null && node.number === wantNumber) return node;
+    if (wantAs !== null && node.as === wantAs) return node;
+    if (Array.isArray(node.block)) {
+      for (let i = 0; i < node.block.length; i++) {
+        const found = visit(node.block[i]);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+  if (wantAs !== null && code && code.as === wantAs) return code;
+  if (Array.isArray(code && code.block)) {
+    for (let i = 0; i < code.block.length; i++) {
+      const found = visit(code.block[i]);
+      if (found) return found;
+    }
   }
   return null;
+}
+function findStepByNumber(code, stepNumber) {
+  return findStepRef(code, stepNumber);
+}
+function parsePathSegs(path) {
+  // 'a.b[0].c' -> ['a', 'b', 0, 'c']. Plain field names pass through as [name].
+  const segs = [];
+  let token = '';
+  for (let i = 0; i < path.length; i++) {
+    const ch = path[i];
+    if (ch === '.') {
+      if (token) { segs.push(token); token = ''; }
+      continue;
+    }
+    if (ch === '[') {
+      if (token) { segs.push(token); token = ''; }
+      const end = path.indexOf(']', i + 1);
+      if (end < 0) throw new Error('unclosed [ in path: ' + path);
+      const raw = path.slice(i + 1, end);
+      if (!/^[0-9]+$/.test(raw)) throw new Error('invalid array index in path: ' + path);
+      segs.push(Number(raw));
+      i = end;
+      continue;
+    }
+    token += ch;
+  }
+  if (token) segs.push(token);
+  if (!segs.length) throw new Error('empty path');
+  return segs;
+}
+function setAtPath(root, segs, value) {
+  let cur = root;
+  for (let i = 0; i < segs.length - 1; i++) {
+    const k = segs[i];
+    const nxt = segs[i + 1];
+    let child = cur[k];
+    if (child === undefined || child === null) {
+      child = typeof nxt === 'number' ? [] : {};
+      cur[k] = child;
+    }
+    if (typeof child !== 'object') {
+      throw new Error('path segment "' + k + '" exists but is not an object/array');
+    }
+    cur = child;
+  }
+  cur[segs[segs.length - 1]] = value;
 }
 async function putRecipe(recipeId, code, config) {
   const csrf = getCsrf();
@@ -344,12 +411,12 @@ const SET_STEP_INPUT_PAGE_FN = `
     if (!code || typeof code !== 'object') {
       return { ok: false, stage: 'pull', error: 'pulled code was not an object' };
     }
-    const step = findStepByNumber(code, stepNumber);
+    const step = findStepRef(code, stepNumber);
     if (!step) {
-      return { ok: false, stage: 'locate', error: 'step ' + stepNumber + ' not found in recipe' };
+      return { ok: false, stage: 'locate', error: 'step ' + stepNumber + ' not found in recipe (searched nested blocks; accepts number or as-anchor)' };
     }
     if (!step.input || typeof step.input !== 'object') step.input = {};
-    step.input[fieldName] = value;
+    setAtPath(step.input, parsePathSegs(fieldName), value);
 
     const config = collectProviders(code);
     const saved = await putRecipe(recipeId, code, config);
@@ -378,23 +445,25 @@ class WorkatoRecipeSetStepInputImpl extends BaseBrowserToolExecutor {
           ERROR_MESSAGES.INVALID_PARAMETERS + ': recipe_id (number) is required',
         );
       }
-      if (typeof args.step_number !== 'number' || !Number.isFinite(args.step_number)) {
+      const stepRefOk =
+        (typeof args.step_number === 'number' && Number.isFinite(args.step_number)) ||
+        (typeof args.step_number === 'string' && args.step_number.length > 0);
+      if (!stepRefOk) {
         return createErrorResponse(
-          ERROR_MESSAGES.INVALID_PARAMETERS + ': step_number (number) is required',
+          ERROR_MESSAGES.INVALID_PARAMETERS +
+            ': step_number (number, or `as` anchor string) is required',
         );
       }
       if (typeof args.field !== 'string' || args.field.length === 0) {
         return createErrorResponse(
-          ERROR_MESSAGES.INVALID_PARAMETERS + ': field (string) is required',
+          ERROR_MESSAGES.INVALID_PARAMETERS +
+            ': field (string; nested dotted paths like "parameters.sysid_param.asset_id" supported) is required',
         );
       }
-      if (
-        typeof args.value !== 'string' &&
-        typeof args.value !== 'number' &&
-        typeof args.value !== 'boolean'
-      ) {
+      if (args.value === undefined) {
         return createErrorResponse(
-          ERROR_MESSAGES.INVALID_PARAMETERS + ': value must be string, number, or boolean',
+          ERROR_MESSAGES.INVALID_PARAMETERS +
+            ': value is required (string, number, boolean, object, or array)',
         );
       }
 
@@ -476,23 +545,39 @@ const MAP_DATAPILL_PAGE_FN = `
       return { ok: false, stage: 'pull', error: 'pulled code was not an object' };
     }
 
-    const src = findStepByNumber(code, sourceStep);
+    const src = findStepRef(code, sourceStep);
     if (!src) {
-      return { ok: false, stage: 'locate', error: 'source step ' + sourceStep + ' not found in recipe' };
+      return { ok: false, stage: 'locate', error: 'source step ' + sourceStep + ' not found in recipe (searched nested blocks; accepts number or as-anchor)' };
     }
     if (!src.as || !src.provider) {
       return { ok: false, error: 'source step ' + sourceStep + ' has no as/provider — configure it first' };
     }
 
-    const tgt = findStepByNumber(code, targetStep);
+    const tgt = findStepRef(code, targetStep);
     if (!tgt) {
-      return { ok: false, stage: 'locate', error: 'target step ' + targetStep + ' not found in recipe' };
+      return { ok: false, stage: 'locate', error: 'target step ' + targetStep + ' not found in recipe (searched nested blocks; accepts number or as-anchor)' };
     }
     if (!tgt.input || typeof tgt.input !== 'object') tgt.input = {};
 
-    const dp = { pill_type: 'output', provider: src.provider, line: src.as, path: Array.isArray(pathArr) ? pathArr : [] };
+    // Normalize path elements: strings pass through; 'items[]' expands to
+    // 'items' + {path_element_type:'current_item'} (list/current-item pills);
+    // bare '[]' is just the current_item marker; objects pass through as-is.
+    const dpPath = [];
+    const rawPath = Array.isArray(pathArr) ? pathArr : [];
+    for (let i = 0; i < rawPath.length; i++) {
+      const el = rawPath[i];
+      if (typeof el === 'string' && el.slice(-2) === '[]') {
+        const name = el.slice(0, -2);
+        if (name.length > 0) dpPath.push(name);
+        dpPath.push({ path_element_type: 'current_item' });
+      } else {
+        dpPath.push(el);
+      }
+    }
+
+    const dp = { pill_type: 'output', provider: src.provider, line: src.as, path: dpPath };
     const formula = "=_dp('" + JSON.stringify(dp).replace(/'/g, "\\'") + "')";
-    tgt.input[targetField] = formula;
+    setAtPath(tgt.input, parsePathSegs(targetField), formula);
 
     const config = collectProviders(code);
     const saved = await putRecipe(recipeId, code, config);
@@ -522,24 +607,34 @@ class WorkatoRecipeMapDatapillImpl extends BaseBrowserToolExecutor {
           ERROR_MESSAGES.INVALID_PARAMETERS + ': recipe_id (number) is required',
         );
       }
-      if (typeof args.target_step !== 'number' || !Number.isFinite(args.target_step)) {
+      const targetOk =
+        (typeof args.target_step === 'number' && Number.isFinite(args.target_step)) ||
+        (typeof args.target_step === 'string' && args.target_step.length > 0);
+      if (!targetOk) {
         return createErrorResponse(
-          ERROR_MESSAGES.INVALID_PARAMETERS + ': target_step (number) is required',
+          ERROR_MESSAGES.INVALID_PARAMETERS +
+            ': target_step (number, or `as` anchor string) is required',
         );
       }
       if (typeof args.target_field !== 'string' || args.target_field.length === 0) {
         return createErrorResponse(
-          ERROR_MESSAGES.INVALID_PARAMETERS + ': target_field (string) is required',
+          ERROR_MESSAGES.INVALID_PARAMETERS +
+            ': target_field (string; nested dotted paths like "parameters.sysid_param.asset_id" supported) is required',
         );
       }
-      if (typeof args.source_step !== 'number' || !Number.isFinite(args.source_step)) {
+      const sourceOk =
+        (typeof args.source_step === 'number' && Number.isFinite(args.source_step)) ||
+        (typeof args.source_step === 'string' && args.source_step.length > 0);
+      if (!sourceOk) {
         return createErrorResponse(
-          ERROR_MESSAGES.INVALID_PARAMETERS + ': source_step (number) is required',
+          ERROR_MESSAGES.INVALID_PARAMETERS +
+            ': source_step (number, or `as` anchor string) is required',
         );
       }
       if (!Array.isArray(args.path)) {
         return createErrorResponse(
-          ERROR_MESSAGES.INVALID_PARAMETERS + ': path (string[]) is required',
+          ERROR_MESSAGES.INVALID_PARAMETERS +
+            ': path (array of strings/objects; "items[]" expands to a current_item segment) is required',
         );
       }
 

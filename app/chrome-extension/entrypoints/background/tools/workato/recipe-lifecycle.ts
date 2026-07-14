@@ -2,12 +2,17 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
+import { fetchRecipeStatus, type RecipeStatusSlim } from './recipe-status';
 
 type RecipeLifecycleAction = 'start' | 'stop';
 
 interface RecipeLifecycleArgs {
   recipe_id: number;
   force?: boolean;
+  /** Poll recipe status until it actually flips (start→running / stop→not running). */
+  wait?: boolean;
+  /** Max time to poll when wait:true. Default 20000, clamped 1000–60000. */
+  wait_timeout_ms?: number;
   tabId?: number;
 }
 
@@ -137,6 +142,19 @@ export function changeRecipeLifecycleInPage(
   );
 }
 
+/** Does the observed status satisfy the desired lifecycle end-state? */
+function statusMatchesAction(status: RecipeStatusSlim, action: RecipeLifecycleAction): boolean {
+  return action === 'start' ? status.running === true : status.running === false;
+}
+
+function isDispatchTimeout(err: unknown): err is WorkatoDispatchError {
+  return (
+    err instanceof WorkatoDispatchError &&
+    err.code === 'ScriptExecutionFailed' &&
+    /timed out/i.test(err.message)
+  );
+}
+
 abstract class WorkatoRecipeLifecycleTool extends BaseBrowserToolExecutor {
   protected abstract readonly action: RecipeLifecycleAction;
 
@@ -148,38 +166,102 @@ abstract class WorkatoRecipeLifecycleTool extends BaseBrowserToolExecutor {
 
       const force = this.action === 'stop' && args.force === true;
       const tab = await findWorkatoTab(args.tabId);
-      const result = await runInWorkatoTab(tab.tabId, changeRecipeLifecycleInPage, [
-        args.recipe_id,
-        this.action,
-        force,
-      ]);
 
-      if (!result.ok) {
-        const details =
-          result.failure.details !== undefined
-            ? `\n--- details ---\n${JSON.stringify(result.failure.details)}`
-            : '';
-        return createErrorResponse(
-          `WorkatoApiError (${result.failure.stage}): ${result.failure.message}` +
-            (result.failure.body_excerpt
-              ? `\n--- body excerpt ---\n${result.failure.body_excerpt}`
-              : '') +
-            details,
+      // Writes must not auto-retry (a blind retry can double-apply); instead,
+      // on timeout we verify the actual recipe state before reporting failure.
+      let enqueueStatus: string;
+      let succeededAfterTimeout = false;
+      try {
+        const result = await runInWorkatoTab(
+          tab.tabId,
+          changeRecipeLifecycleInPage,
+          [args.recipe_id, this.action, force],
+          { retryOnTimeout: false },
         );
+
+        if (!result.ok) {
+          const details =
+            result.failure.details !== undefined
+              ? `\n--- details ---\n${JSON.stringify(result.failure.details)}`
+              : '';
+          return createErrorResponse(
+            `WorkatoApiError (${result.failure.stage}): ${result.failure.message}` +
+              (result.failure.body_excerpt
+                ? `\n--- body excerpt ---\n${result.failure.body_excerpt}`
+                : '') +
+              details +
+              '\n(retriable: false — inspect the failure before retrying)',
+          );
+        }
+        enqueueStatus = result.status;
+      } catch (err) {
+        if (!isDispatchTimeout(err)) throw err;
+        // Timeout ≠ failure: the POST may have landed. Verify actual state.
+        let verified: RecipeStatusSlim | null = null;
+        try {
+          verified = await fetchRecipeStatus(tab.tabId, args.recipe_id);
+        } catch {
+          /* verification itself failed — fall through to the original error */
+        }
+        if (verified && statusMatchesAction(verified, this.action)) {
+          enqueueStatus = 'succeeded_after_timeout';
+          succeededAfterTimeout = true;
+        } else if (verified) {
+          return createErrorResponse(
+            `${this.name}: request timed out and verification shows the recipe is still ` +
+              `${verified.running ? 'running' : 'not running'} (state=${verified.state}). ` +
+              'The action may still be enqueued — re-check with workato_recipe_status before retrying. (retriable: true)',
+          );
+        } else {
+          throw err;
+        }
       }
 
-      const payload = {
-        recipe_id: result.recipe_id,
-        action: result.action,
-        status: result.status,
+      // wait:true — poll until the state actually flips (start/stop only enqueue).
+      let finalState: RecipeStatusSlim | undefined;
+      let waitedMs: number | undefined;
+      if (args.wait === true) {
+        const timeoutMs = Math.min(Math.max(args.wait_timeout_ms ?? 20_000, 1_000), 60_000);
+        const startedAt = Date.now();
+        const deadline = startedAt + timeoutMs;
+        for (;;) {
+          try {
+            finalState = await fetchRecipeStatus(tab.tabId, args.recipe_id);
+            if (statusMatchesAction(finalState, this.action)) break;
+          } catch {
+            /* transient status fetch failure — keep polling */
+          }
+          if (Date.now() >= deadline) break;
+          await new Promise((resolve) => setTimeout(resolve, 1_000));
+        }
+        waitedMs = Date.now() - startedAt;
+      }
+
+      const flipped = finalState ? statusMatchesAction(finalState, this.action) : undefined;
+      const payload: Record<string, unknown> = {
+        recipe_id: args.recipe_id,
+        action: this.action,
+        status: enqueueStatus,
         force,
       };
+      if (succeededAfterTimeout) payload.succeeded_after_timeout = true;
+      if (finalState) {
+        payload.state = finalState.state;
+        payload.running = finalState.running;
+        payload.waited_ms = waitedMs;
+        payload.state_flipped = flipped;
+      }
       return {
         content: [
           {
             type: 'text',
             text:
-              `${result.action} recipe ${result.recipe_id}: ${result.status}` +
+              `${this.action} recipe ${args.recipe_id}: ${enqueueStatus}` +
+              (finalState
+                ? ` (state=${finalState.state}, running=${finalState.running}${
+                    flipped === false ? ' — did NOT flip within wait window' : ''
+                  })`
+                : '') +
               `\n${JSON.stringify(payload)}`,
           },
         ],
