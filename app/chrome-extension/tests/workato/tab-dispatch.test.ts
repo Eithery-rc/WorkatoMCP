@@ -157,7 +157,10 @@ describe('runInWorkatoTab', () => {
   it('honors a custom timeout and rejects with ScriptExecutionFailed when the script never settles', async () => {
     vi.useFakeTimers();
     setScripting(() => new Promise<unknown>(() => {})); // never resolves
-    const p = runInWorkatoTab(1, () => 'x' as unknown, [], 5000);
+    const p = runInWorkatoTab(1, () => 'x' as unknown, [], {
+      timeoutMs: 5000,
+      retryOnTimeout: false,
+    });
     const expectation = expect(p).rejects.toMatchObject({
       name: 'WorkatoDispatchError',
       code: 'ScriptExecutionFailed',
@@ -170,7 +173,10 @@ describe('runInWorkatoTab', () => {
     vi.useFakeTimers();
     setScripting(() => new Promise<unknown>(() => {}));
     let settled = false;
-    const p = runInWorkatoTab(1, () => 'x' as unknown, [], 5000).catch(() => {
+    const p = runInWorkatoTab(1, () => 'x' as unknown, [], {
+      timeoutMs: 5000,
+      retryOnTimeout: false,
+    }).catch(() => {
       settled = true;
     });
     await vi.advanceTimersByTimeAsync(4999);
@@ -178,6 +184,20 @@ describe('runInWorkatoTab', () => {
     await vi.advanceTimersByTimeAsync(2);
     await p;
     expect(settled).toBe(true);
+  });
+
+  it('auto-retries once on timeout when retryOnTimeout is enabled (default for short timeouts)', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    setScripting(() => {
+      calls += 1;
+      if (calls === 1) return new Promise<unknown>(() => {}); // first attempt hangs
+      return Promise.resolve([{ result: 'second-attempt' }]);
+    });
+    const p = runInWorkatoTab(1, () => 'x' as unknown, [], 5000);
+    await vi.advanceTimersByTimeAsync(5000); // first attempt times out → retry fires
+    await expect(p).resolves.toBe('second-attempt');
+    expect(calls).toBe(2);
   });
 
   it('returns the script result and clears the timer on success', async () => {

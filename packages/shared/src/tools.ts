@@ -71,6 +71,13 @@ export const TOOL_NAMES = {
     CALL_ACTION: 'workato_call_action',
     LIST_PROFILES: 'workato_list_profiles',
     SWITCH_PROFILE: 'workato_switch_profile',
+    LIST_FOLDERS: 'workato_list_folders',
+    CREATE_FOLDER: 'workato_create_folder',
+    UPDATE_FOLDER: 'workato_update_folder',
+    DELETE_FOLDER: 'workato_delete_folder',
+    MOVE_RECIPE: 'workato_move_recipe',
+    CREATE_PROJECT: 'workato_create_project',
+    UPDATE_PROJECT: 'workato_update_project',
   },
   WORKATO_UI: {
     OPEN_RECIPE: 'workato_ui_open_recipe',
@@ -1763,6 +1770,229 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['recipe_id', 'from', 'to'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.LIST_FOLDERS,
+    description:
+      'List the full Workato project/folder tree (GET /folders?projects_mode=true). ' +
+      'Top-level entries are project root folders: their `id` is the folder id to use as ' +
+      'parent_id (create/move folder) or folder_id (move recipe), and `project_id` is the owning ' +
+      "project's id. Each node reports flow_count/active_flow_count (recipes) plus non-zero asset " +
+      'counts under `counts`, and nested `children`. Slim by default; totals holds account-wide ' +
+      'asset counters. THE tool to call before creating/moving folders or recipes — it is the ' +
+      'source of folder ids. Read-only. Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: {
+          type: 'string',
+          description:
+            'Optional filter: return only the project whose name (case-insensitive) or project_id ' +
+            'matches. Errors with the list of available projects when nothing matches.',
+        },
+        full: {
+          type: 'boolean',
+          description: 'Return the raw untrimmed API response instead of the slim tree.',
+          default: false,
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.CREATE_FOLDER,
+    description:
+      'Create a folder by POSTing /folders with {name, parent_id}. parent_id is a folder id from ' +
+      "workato_list_folders — use a project's root folder id to create at the top of a project, " +
+      'or another folder id to nest. Returns the new folder_id (use it as parent_id/folder_id in ' +
+      'later calls). If the request times out, the tool re-reads the folder tree to check whether ' +
+      'the folder actually got created before reporting failure (succeeded_after_timeout:true). ' +
+      'Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Name for the new folder.',
+        },
+        parent_id: {
+          type: 'number',
+          description:
+            'Parent folder id (from workato_list_folders). Project root folders work here.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['name', 'parent_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.UPDATE_FOLDER,
+    description:
+      'Rename and/or move a folder by PUTting /folders/<id> with {name?, parent_id?}. ' +
+      'Pass name to rename, parent_id to move it under another folder (must be in the same ' +
+      'project tree), or both. At least one is required; omitted fields are left unchanged. ' +
+      'If the request times out, the tool re-reads the folder tree to verify the change landed ' +
+      'before reporting failure (succeeded_after_timeout:true). Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        folder_id: {
+          type: 'number',
+          description: 'Folder id to update (from workato_list_folders).',
+        },
+        name: {
+          type: 'string',
+          description: 'New folder name. Omit to keep the current name.',
+        },
+        parent_id: {
+          type: 'number',
+          description: 'New parent folder id to move the folder under. Omit to keep it in place.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['folder_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.DELETE_FOLDER,
+    description:
+      'Delete a folder by DELETEing /folders/<id>. DANGER: Workato CASCADES this delete — a ' +
+      'non-empty folder is deleted together with everything inside it (recipes, subfolders, ' +
+      'connections...), verified live. This tool therefore pre-checks the folder tree and refuses ' +
+      'when the folder is not empty unless force:true; it also refuses project root folders ' +
+      'outright. Only pass force:true when the user explicitly confirmed cascading deletion. ' +
+      'Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        folder_id: {
+          type: 'number',
+          description: 'Folder id to delete (from workato_list_folders).',
+        },
+        force: {
+          type: 'boolean',
+          description:
+            'Delete even when the folder is not empty — CASCADES to all contents. Requires ' +
+            'explicit user confirmation.',
+          default: false,
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['folder_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.MOVE_RECIPE,
+    description:
+      'Move a recipe into another folder by PUTting /recipes/<id>/update_folder.json with ' +
+      '{folder_id}. Get the target folder id from workato_list_folders (project root folder ids ' +
+      'work — that puts the recipe at the top level of the project). Moving across projects ' +
+      'changes which project owns the recipe. If the request times out, the tool re-reads the ' +
+      "recipe's folder_id to verify the move landed before reporting failure " +
+      '(succeeded_after_timeout:true). Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description:
+            'Numeric Workato recipe id. Found in the recipe URL: app.workato.com/recipes/<recipe_id>-<slug>.',
+        },
+        folder_id: {
+          type: 'number',
+          description: 'Destination folder id (from workato_list_folders).',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id', 'folder_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.CREATE_PROJECT,
+    description:
+      'Create a new Workato project by POSTing /web_api/projects.json with {name}. Returns ' +
+      "{project_id, name, folder_id, project_type} — folder_id is the project's root folder, the " +
+      'parent_id to use for workato_create_folder and the folder_id for placing recipes in the ' +
+      'new project. If the request times out, the tool re-reads the folder tree to check whether ' +
+      'the project got created before reporting failure (succeeded_after_timeout:true). ' +
+      'NOTE: there is no delete-project tool — creating a project is easy to do but manual to ' +
+      'undo, so only create when the user asked for it. Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Name for the new project.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.UPDATE_PROJECT,
+    description:
+      'Rename a project and/or change its color/icon by PUTting /web_api/projects/f<folder_id>.json ' +
+      "with {name?, color?, icon?}. Takes the project's ROOT FOLDER id (top-level `id` from " +
+      'workato_list_folders, or folder_id from workato_create_project) — NOT the project_id. ' +
+      'Omitted fields keep their current value. If the request times out, the tool re-reads the ' +
+      'folder tree to verify the change landed before reporting failure ' +
+      '(succeeded_after_timeout:true). Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        folder_id: {
+          type: 'number',
+          description:
+            "The project's root folder id (top-level `id` in workato_list_folders). Not the project_id.",
+        },
+        name: {
+          type: 'string',
+          description: 'New project name. Omit to keep the current name.',
+        },
+        color: {
+          type: 'string',
+          description:
+            'Project color slug as used by the Workato UI (e.g. "forest", "purple", "gold", ' +
+            '"plum", "slate", "neutral"). Omit to keep the current color.',
+        },
+        icon: {
+          type: 'string',
+          description: 'Project icon identifier. Omit to keep the current icon.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['folder_id'],
     },
   },
   {
