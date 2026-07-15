@@ -24,6 +24,9 @@ const IS_DEV = process.env.NODE_ENV !== 'production' && process.env.MODE !== 'pr
 // See https://wxt.dev/api/config.html
 export default defineConfig({
   modules: ['@wxt-dev/module-vue'],
+  // Build into dist/ instead of WXT's default .output/ — dot-folders are hidden
+  // in macOS Finder, which made "Load unpacked" painful for Mac users.
+  outDir: 'dist',
   runner: {
     disabled: true,
 

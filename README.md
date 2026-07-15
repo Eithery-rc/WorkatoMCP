@@ -172,7 +172,7 @@ pnpm build:extension
 This creates the unpacked Chrome extension at:
 
 ```text
-app/chrome-extension/.output/chrome-mv3
+app/chrome-extension/dist/chrome-mv3
 ```
 
 The extension's RSA public key is pinned in `app/chrome-extension/wxt.config.ts`, so every clone builds to the same deterministic extension ID:
@@ -188,10 +188,10 @@ The npm bridge package already allows that extension ID for native messaging.
 1. Open `chrome://extensions/`
 2. Enable Developer mode
 3. Click "Load unpacked"
-4. Select `app/chrome-extension/.output/chrome-mv3`
+4. Select `app/chrome-extension/dist/chrome-mv3`
 5. Confirm Chrome shows extension ID `bpjpdgkeelhkijkllcmogemkmndgeana`
 
-If Chrome shows a different ID, delete `app/chrome-extension/.output/` and `app/chrome-extension/.wxt/`, then rebuild. Also check that `CHROME_EXTENSION_KEY` is not overriding the default key.
+If Chrome shows a different ID, delete `app/chrome-extension/dist/` and `app/chrome-extension/.wxt/`, then rebuild. Also check that `CHROME_EXTENSION_KEY` is not overriding the default key.
 
 ### 3. Install the bridge from npm
 
