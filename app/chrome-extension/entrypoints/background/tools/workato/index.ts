@@ -3,6 +3,7 @@ export { workatoRenameRecipeTool } from './rename-recipe';
 export { workatoSetVersionCommentTool } from './set-version-comment';
 export { workatoStartRecipeTool, workatoStopRecipeTool } from './recipe-lifecycle';
 export { workatoJobTraceTool } from './job-trace';
+export { workatoRepeatJobTool } from './repeat-job';
 export { workatoSearchRecipesTool } from './search-recipes';
 export { workatoSearchConnectionsTool } from './search-connections';
 export { workatoGetConnectionTool } from './get-connection';
