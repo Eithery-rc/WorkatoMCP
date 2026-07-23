@@ -63,6 +63,7 @@ export const TOOL_NAMES = {
     RECIPE_STATUS: 'workato_recipe_status',
     VERSION_DIFF: 'workato_recipe_version_diff',
     JOB_TRACE: 'workato_job_trace',
+    REPEAT_JOB: 'workato_repeat_job',
     SEARCH_RECIPES: 'workato_search_recipes',
     SEARCH_CONNECTIONS: 'workato_search_connections',
     GET_CONNECTION: 'workato_get_connection',
@@ -2271,6 +2272,39 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['recipe_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.REPEAT_JOB,
+    description:
+      'Repeat (re-run) one or more Workato jobs by master job id. WRITE operation — ' +
+      "each repeated job re-executes the recipe against that job's original trigger " +
+      'data. job_ids are the string master job ids as returned by workato_list_jobs / ' +
+      "workato_job_trace (e.g. 'j-Aaxc9bm4-egoMDh-CD'). Returns a per-job ok flag " +
+      'from Workato. Not auto-retried on timeout (a blind retry could double-run ' +
+      'jobs) — re-check with workato_list_jobs before retrying. Requires an open ' +
+      'Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description: 'Numeric Workato recipe id the jobs belong to.',
+        },
+        job_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          maxItems: 50,
+          description: "Master job ids to repeat, e.g. ['j-Aaxc9bm4-egoMDh-CD']. Max 50 per call.",
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id', 'job_ids'],
     },
   },
   {
