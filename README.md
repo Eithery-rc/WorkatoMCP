@@ -230,12 +230,14 @@ WorkatoMCP/
 pnpm install
 pnpm build          # shared → bridge → extension
 pnpm dev            # watch mode across packages
-pnpm typecheck      # tsc --noEmit everywhere
+pnpm typecheck      # tsc --noEmit everywhere (see Known debt below)
 pnpm lint           # eslint
 pnpm format         # prettier
 ```
 
 Adding a tool means touching two places: the schema in `packages/shared/src/tools.ts` and the handler under `app/chrome-extension/entrypoints/background/tools/`. Rebuild `shared` before the extension, then reload the unpacked extension and restart the MCP client so the new schema is picked up.
+
+**Known debt:** `pnpm typecheck` reports around 100 errors, all in code inherited from the upstream project (`record-replay-v3`, `element-marker`, `gif-recorder`). None are in the Workato tool families, and the build is unaffected. CI gates on the bridge and shared schemas and reports the extension separately — details in [docs/ROADMAP.md](docs/ROADMAP.md#known-debt).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and [docs/ROADMAP.md](docs/ROADMAP.md) for what's planned.
 
