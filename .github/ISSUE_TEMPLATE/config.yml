@@ -1,0 +1,14 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Eithery-rc/WorkatoMCP/security/advisories/new
+    about: Report privately through a GitHub security advisory, not a public issue.
+  - name: Installation and connection problems
+    url: https://github.com/Eithery-rc/WorkatoMCP/blob/master/docs/TROUBLESHOOTING.md
+    about: Most setup failures are covered here — start with `workatomcp-bridge doctor --fix`.
+  - name: Tool reference
+    url: https://github.com/Eithery-rc/WorkatoMCP/blob/master/docs/TOOLS.md
+    about: Parameters, response shapes, and error codes for all 66 Workato tools.
+  - name: Upstream browser automation
+    url: https://github.com/hangwin/mcp-chrome/issues
+    about: Issues with the inherited chrome_* tools usually belong to the parent project.

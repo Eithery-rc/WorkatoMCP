@@ -1,0 +1,53 @@
+name: Tool or feature request
+description: Propose a new Workato tool or an improvement to an existing one
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [docs/ROADMAP.md](../blob/master/docs/ROADMAP.md) first — the idea may already be
+        planned, superseded, or deliberately rejected.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The repeated task
+      description: |
+        What are you doing by hand today, and how often? The bar for a new tool is a
+        frequent narrow operation, not a one-off change that's better written as a script.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed tool
+      description: Name, inputs, and the response shape you'd want back.
+      placeholder: |
+        workato_recipe_apply_to_steps(recipe_id, steps[], operation)
+        → { results: [{ step, status, version_no }] }
+
+  - type: textarea
+    id: endpoint
+    attributes:
+      label: Known endpoint
+      description: |
+        If you've captured the request from the Workato UI's network tab, paste the
+        method, path, headers, and body shape. This is the hard part of any new tool.
+      render: text
+
+  - type: dropdown
+    id: writes
+    attributes:
+      label: Does it write?
+      options:
+        - Read-only
+        - Writes recipe or workspace state
+        - Writes data in a connected SaaS
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
