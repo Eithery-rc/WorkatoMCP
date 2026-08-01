@@ -4,7 +4,7 @@
  *
  * Source: /web_api/mixed_assets.json items with asset_type=recipe or
  * asset_type=connection respectively. See spec §4.1, §4.2 and
- * docs/superpowers/specs/2026-05-12-v11-discovery-endpoints.md for the
+ * docs/design/specs/2026-05-12-v11-discovery-endpoints.md for the
  * full per-item shapes Workato returns.
  */
 
