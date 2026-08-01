@@ -1,163 +1,88 @@
+<div align="center">
+
+<img src="docs/assets/logo.png" alt="WorkatoMCP" width="140" />
+
 # WorkatoMCP
 
-A Chrome extension + local MCP bridge that exposes typed Workato recipe operations to AI agents (Claude Code, Claude Desktop, etc.) by piggybacking on the user's already-authenticated Workato browser session.
+**An MCP server that gives AI agents typed, first-class access to your Workato workspace — through the browser session you are already signed in to.**
 
-Forked from [hangwin/mcp-chrome](https://github.com/hangwin/mcp-chrome) — see `README.upstream.md` for the parent project, and `LICENSE.upstream` for its MIT license.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![npm](https://img.shields.io/npm/v/workatomcp-bridge?label=workatomcp-bridge)](https://www.npmjs.com/package/workatomcp-bridge)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
+[![MCP](https://img.shields.io/badge/Model%20Context%20Protocol-compatible-6E56CF)](https://modelcontextprotocol.io)
 
-## v1 tools (shipped)
+[Quick start](#quick-start) · [Tool reference](docs/TOOLS.md) · [Architecture](docs/ARCHITECTURE.md) · [Security model](SECURITY.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
 
-Both are read-only and require an open Workato tab.
+</div>
 
-### `workato_pull_recipe`
+---
 
-```
-input:  { recipe_id: number }
-output: { recipe_id, code: <parsed flow tree>, version: { version_no, name, folder_id, ... } }
-```
+## What it is
 
-### `workato_job_trace`
+WorkatoMCP is a Chrome extension plus a local MCP bridge. It exposes **66 Workato tools** — recipes, jobs, connections, folders and projects, lookup tables, data tables, and the recipe editor itself — to any MCP client (Claude Code, Claude Desktop, Cursor, and others).
 
-```
-input:  { recipe_id: number, job_id: string|number, full?: boolean }
-output (default): { job_id, recipe, status, started_at, completed_at, duration_ms, error?, steps[], lines_truncated, kms_error }
-output (full=true): { job_id, meta: <raw>, line_details: <raw> }
-```
+Instead of asking you to mint API tokens, it borrows the authenticated Workato session already open in your browser. Every request goes out from a real Workato tab, with your cookies, your CSRF token, your permissions, and your environment. Nothing is stored, and nothing leaves the machine.
 
-Per-step `input_summary` / `output_summary` are truncated to 500 chars. Pass `full: true` for the raw responses.
-
-## v1.1 tools (shipped)
-
-All four are read-only, all return a slim shape by default with `full: true` for raw, all require an open Workato tab.
-
-### `workato_search_recipes`
+That makes an agent able to do the things a Workato developer actually spends the day on:
 
 ```
-input:  { text?, folder_id?, page?, sort?, full? }
-output: { count, page, per_page: 20, recipes: [{ id, name, folder_id, project_id, running, state, last_run_at, job_succeeded_count, job_failed_count, trigger_application, trigger_business_object, action_applications }] }
+"Recipe 67992145 has been failing since this morning — find out why and fix it."
+
+→ workato_list_jobs(recipe_id: 67992145, status: "failed")
+→ workato_job_trace(recipe_id: 67992145, job_id: 8412…, lines: [104, 118])
+→ workato_pull_recipe(recipe_id: 67992145, step: "1616311d")
+→ workato_recipe_set_input_path(recipe_id: …, path: "records.custbody_status.refName", value: …)
+→ workato_recipe_status(recipe_id: 67992145)   # verify the write landed
 ```
 
-Workato caps pagination at 20 items/page server-side. Step through with `page: N`.
+## Why a browser extension
 
-### `workato_search_connections`
+Workato's public Developer API covers a fraction of what the web app can do — there is no public endpoint for the recipe code tree, job traces, lookup-table CRUD, data tables, or the connector test-action runner. All of it exists behind the same `web_api` endpoints the UI calls.
 
-```
-input:  { text?, folder_id?, page?, sort?, full? }
-output: { count, page, per_page: 20, connections: [{ id, name, provider, folder_id, project_id, recipe_count, authorization_status, authorized_at, connection_lost_at, connection_lost_reason, updated_at }] }
-```
+Piggybacking on the browser session gets you:
 
-`text=` matches connection NAMES, not the `provider` field. For "all my Salesforce connections" search by name pattern (e.g. "SFDC") or page through and filter client-side.
+- **No API tokens.** Nothing to provision, rotate, leak, or commit.
+- **Your exact permissions.** The agent can do what you can do — no more.
+- **Multi-region and multi-workspace out of the box.** `app.workato.com`, `app.eu.workato.com`, `*.workato.is`, and custom tenants all work; `workato_switch_profile` moves between Chrome profiles.
+- **Read/write parity with the UI.** If you can click it, a tool can usually do it.
 
-### `workato_get_connection`
+## How it works
 
-```
-input:  { connection_id, full? }
-output: { id, name, provider, folder_id, project_id, recipe_count, authorization_status, authorized_at, connection_lost_at, connection_lost_reason, created_at, updated_at, config: <per-provider config with secret-shaped keys stripped> }
-```
-
-**Auth material is always stripped, including under `full: true`.** Agents that need a token must reuse the user's existing session (in-tab fetch via this MCP), not extract one from this tool.
-
-### `workato_list_jobs`
-
-```
-input:  { recipe_id, limit?, status?, query?, started_at?, group_by_master_job?, cursor?, full? }
-output: { total, scope, succeeded, failed, next_cursor?, jobs: [{ id, status, started_at, completed_at, duration_ms, error_summary?, error_line_number?, title, report: { col_0, col_1, col_2 } }] }
+```mermaid
+flowchart LR
+    A["MCP client<br/>(Claude Code / Desktop / Cursor)"] -->|streamable HTTP<br/>127.0.0.1:12306/mcp| B["Local bridge<br/>workatomcp-bridge"]
+    B <-->|Chrome native messaging| C["Chrome extension<br/>(MV3 service worker)"]
+    C -->|in-tab fetch, session cookies| D["Workato tab<br/>app.workato.com"]
+    D --> E["Workato web_api"]
 ```
 
-Tool auto-walks Workato's cursor pagination under the hood up to `limit` (default 25, max 100). For more results, pass `cursor: <prev next_cursor>`. Server-side filters: singular `status` (`failed`/`succeeded`/etc.), `query` (full-text against title and error), `started_at` window, `group_by_master_job`.
+The bridge is a local Fastify server on `127.0.0.1:12306`. It is launched by Chrome through native messaging on the first tool call — you never start it manually. The extension resolves a signed-in Workato tab, runs the request inside that tab's origin, and returns a slimmed, agent-friendly payload.
 
-## v1.2 tools (shipped)
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full request path, tab resolution rules, and timeout behaviour.
 
-Two more read tools — and one **gated** universal action runner — that close the loop on agent-driven SaaS access via your Workato connections. No separate API tokens. Both require an open Workato tab.
+## Highlights
 
-### `workato_run_query`
+|                                  |                                                                                                                                                                                                                 |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Recipe round-trip**            | Pull the code tree in four views (`full`, `compact`, `outline`, `step`), edit it, push it back with an optimistic version lock. Large recipes stream through a file path so they never hit the model's context. |
+| **Surgical edits**               | Set a nested input path, map a datapill, replace a Python step's code, or rewrite an extended schema — without downloading the whole tree.                                                                      |
+| **Job forensics**                | Per-step traces with schema noise stripped, line ranges, error summaries, cursor-paginated job lists, and job re-runs by master job id.                                                                         |
+| **Any SaaS behind a connection** | `workato_run_query` speaks SOQL, SuiteQL, and SQL through your existing connections. `workato_call_action` invokes any connector action — behind a write-safety gate.                                           |
+| **Tables**                       | Full CRUD for both Lookup Tables (11 tools, incl. CSV bulk import) and the newer relational Data Tables (12 tools).                                                                                             |
+| **Workspace management**         | Project and folder trees, create/rename/move/delete, and recipe relocation.                                                                                                                                     |
+| **Write safety**                 | Mutating connector actions are refused unless the caller passes `allow_writes: true`. Connection secrets are stripped on every path.                                                                            |
+| **Recipe authoring skill**       | A companion [Claude Code skill](#companion-skill) documents Workato's code-tree JSON and its Ruby-allowlist formula language.                                                                                   |
 
-```
-input:  { connection_id, query, type: 'soql' | 'suiteql' | 'sql', schema_only?, full? }
-output: { type, count, truncated_to_100, schema: [{ name, label, type, control_type }], rows?: [{...}] }
-```
+WorkatoMCP also inherits ~32 general browser-automation tools from its upstream project (navigation, snapshots, DOM interaction, network capture, screenshots, console). They are useful when a Workato flow needs UI driving that no endpoint covers.
 
-Runs a SQL-style query against any connection backed by an adapter that supports the chosen dialect. Returns a consistent `{schema, rows}` shape regardless of SaaS. **Hard-capped at ~100 rows server-side** — narrow via WHERE clause for more.
-
-- **SOQL:** any trailing `LIMIT N` clause is automatically stripped before sending (Workato auto-appends `LIMIT 100`; user-supplied `LIMIT` would collide).
-- **SuiteQL:** works against both NS REST and NS SOAP connections.
-- **SQL:** depends on adapter — some support, some don't. Tool surfaces "Connector doesn't support SQL to schema" via `WorkatoConnectorError` if not.
-- `schema_only: true` returns only field metadata, no rows.
-- `full: true` returns the raw Workato `result` envelope.
-
-### `workato_call_action`
-
-```
-input:  { connection_id, action_name, input, allow_writes?, full? }
-output (slim): { action_name, result: <native SaaS response shape> }
-output (full=true): the entire {result|error} envelope
-```
-
-**MOST POWERFUL TOOL IN THE KIT — CAN MUTATE SAAS DATA.** Backed by `POST /connections/<id>/test_action.json` — the same endpoint the recipe editor's Test button uses. With the right `action_name` and `input`, this can invoke any connector action, including writes.
-
-**Safety gate.** By default, only read-shaped actions are allowed. An action is considered read-only if any of:
-
-- `action_name` starts with `search_`, `get_`, `list_`, `query_`, `find_`, `describe_`, `read_`, `fetch_`
-- `action_name` is exactly `execute_suiteql`
-- `action_name` is exactly `__adhoc_http_action` AND `input.verb` is `get`, `head`, or `options`
-
-Anything else (e.g. `add_record`, `upsert_record`, `delete_record`, `__adhoc_http_action` with `verb: 'post'`) is rejected with `WorkatoUnsafeAction` unless caller explicitly passes `allow_writes: true`. The override exists for legitimate write use cases — use it deliberately; it can create, modify, or delete real production records.
-
-**Discovering `action_name` values.** Every step in a recipe has a `name` field that's a valid `action_name`. Pull a representative recipe with `workato_pull_recipe` and read its step structure. Common confirmed names:
-
-- `__adhoc_http_action` — arbitrary HTTP via any HTTP-capable connector (SFDC, NS REST, SAP, etc.). Input: `{mnemonic, verb, path, response_type, inspect, request_headers?}`. **Both `mnemonic: "Custom action"` and `inspect: true` are required** — Workato rejects with `WorkatoConnectorError: 'Action name' must be present` if either is missing.
-- `execute_suiteql` — SuiteQL query on NetSuite. Input: `{query}`.
-- `search_sobjects_soql_v2` — SOQL search on Salesforce. Input: `{query, output_schema, ...}`.
-
-## Recipe control and metadata tools
-
-These tools mutate recipe state or metadata through the user's authenticated Workato browser session. They require an open Workato tab.
-
-### `workato_rename_recipe`
-
-```
-input:  { recipe_id: number, name: string }
-output: { recipe_id, name, version_no, updated_at, folders, code_errors, job_report_config_errors, requirements_errors }
-```
-
-Renames a recipe with `PUT /recipes/<id>.json` and `{ flow: { name } }`. It does not pull or replace the recipe code tree.
-
-### `workato_set_version_comment`
-
-```
-input:  { recipe_id: number, version: number, comment: string }
-output: { recipe_id, version, comment }
-```
-
-Sets the comment on a specific recipe version (the annotation shown in the Versions tab) with `PUT /recipes/<id>/versions/<version>.json` and `{ comment }`. Pass an empty string to clear the comment.
-
-### `workato_start_recipe`
-
-```
-input:  { recipe_id: number }
-output: { recipe_id, action: "start", status }
-```
-
-Starts a recipe with `POST /web_api/recipes/<id>/start.json`.
-
-### `workato_stop_recipe`
-
-```
-input:  { recipe_id: number, force?: boolean }
-output: { recipe_id, action: "stop", status, force }
-```
-
-Stops a recipe with `POST /web_api/recipes/<id>/stop.json`. Pass `force: true` when Workato reports active dependent recipes and you still want to enqueue the stop.
-
-## Install
-
-You build the Chrome extension from this repository, then install the local bridge from npm.
+## Quick start
 
 ### Prerequisites
 
 - Node.js 20+
 - pnpm 8+
 - Google Chrome or Chromium
-- An active Workato account session in the browser
+- A Workato account you can sign into in that browser
 
 ### 1. Build the extension
 
@@ -169,63 +94,41 @@ pnpm build:shared
 pnpm build:extension
 ```
 
-This creates the unpacked Chrome extension at:
+The unpacked extension lands in `app/chrome-extension/dist/chrome-mv3`.
 
-```text
-app/chrome-extension/dist/chrome-mv3
-```
+The extension's public RSA key is pinned in `app/chrome-extension/wxt.config.ts`, so every clone builds to the same deterministic extension ID — `bpjpdgkeelhkijkllcmogemkmndgeana` — which is what the bridge's native-messaging allowlist expects.
 
-The extension's RSA public key is pinned in `app/chrome-extension/wxt.config.ts`, so every clone builds to the same deterministic extension ID:
-
-```text
-bpjpdgkeelhkijkllcmogemkmndgeana
-```
-
-The npm bridge package already allows that extension ID for native messaging.
-
-### 2. Load the extension in Chrome
+### 2. Load it in Chrome
 
 1. Open `chrome://extensions/`
-2. Enable Developer mode
-3. Click "Load unpacked"
-4. Select `app/chrome-extension/dist/chrome-mv3`
-5. Confirm Chrome shows extension ID `bpjpdgkeelhkijkllcmogemkmndgeana`
+2. Enable **Developer mode**
+3. **Load unpacked** → select `app/chrome-extension/dist/chrome-mv3`
+4. Confirm the ID reads `bpjpdgkeelhkijkllcmogemkmndgeana`
 
-If Chrome shows a different ID, delete `app/chrome-extension/dist/` and `app/chrome-extension/.wxt/`, then rebuild. Also check that `CHROME_EXTENSION_KEY` is not overriding the default key.
+If Chrome shows a different ID, delete `app/chrome-extension/dist/` and `app/chrome-extension/.wxt/`, then rebuild — and check that `CHROME_EXTENSION_KEY` isn't overriding the pinned key.
 
-### 3. Install the bridge from npm
-
-Install the native bridge globally:
+### 3. Install the bridge
 
 ```bash
 npm install -g workatomcp-bridge
 ```
 
-The npm package runs a postinstall step that attempts user-level native-messaging registration for detected browsers. If you need to rerun registration manually:
+Postinstall registers the native-messaging host for detected browsers. To verify:
 
 ```bash
-workatomcp-bridge register --detect
+workatomcp-bridge doctor        # diagnose
+workatomcp-bridge doctor --fix  # repair registration
 ```
 
-Check the installation:
+### 4. Point your MCP client at it
+
+**Claude Code**
 
 ```bash
-workatomcp-bridge doctor
+claude mcp add --transport http workato http://127.0.0.1:12306/mcp
 ```
 
-If doctor reports fixable issues:
-
-```bash
-workatomcp-bridge doctor --fix
-```
-
-The older `mcp-chrome-bridge` command remains available as a compatibility alias, but new installs should use `workatomcp-bridge`.
-
-### 4. Configure your MCP client
-
-WorkatoMCP exposes the MCP server over local HTTP once the Chrome extension launches the bridge:
-
-For Claude Desktop and similar clients that launch MCP servers with `command` / `args`, use `mcp-remote`:
+**Claude Desktop** (and other clients that spawn a command)
 
 ```json
 {
@@ -238,7 +141,7 @@ For Claude Desktop and similar clients that launch MCP servers with `command` / 
 }
 ```
 
-For clients that support streamable HTTP directly, you can use the local URL without `mcp-remote`:
+**Clients with native streamable-HTTP support**
 
 ```json
 {
@@ -251,71 +154,104 @@ For clients that support streamable HTTP directly, you can use the local URL wit
 }
 ```
 
-Restart your MCP client after changing its config.
+Restart the client after editing its config.
 
 ### 5. Use it
 
-1. Open `https://app.workato.com` or your Workato region URL in Chrome.
-2. Sign in.
-3. Keep at least one Workato tab open.
-4. Call a WorkatoMCP tool from your MCP client.
+Open Workato in Chrome, sign in, leave the tab open, and call a tool. The bridge auto-launches on the first request. If a tool returns `WorkatoTabNotFound`, that tab is what's missing.
 
-The bridge auto-launches through Chrome native messaging on the first MCP call. If a tool returns `WorkatoTabNotFound`, open a signed-in Workato tab and retry.
+## Tools
 
-### Troubleshooting
+66 Workato tools. Full signatures, parameters, and response shapes are in **[docs/TOOLS.md](docs/TOOLS.md)**.
 
-If the extension popup says "Service Not Started" or your MCP client gets `ConnectionRefused`, run:
+| Family                                                             | Count | Prefix                | What it covers                                                                  |
+| ------------------------------------------------------------------ | ----: | --------------------- | ------------------------------------------------------------------------------- |
+| [Recipes & versions](docs/TOOLS.md#recipes--versions)              |     7 | `workato_`            | Pull the code tree, rename, start/stop, status, version diff, version comments  |
+| [Jobs](docs/TOOLS.md#jobs)                                         |     3 | `workato_`            | List jobs, per-step traces, re-run by master job id                             |
+| [Search & connections](docs/TOOLS.md#search--connections)          |     3 | `workato_`            | Find recipes and connections, inspect a connection (secrets stripped)           |
+| [Connector execution](docs/TOOLS.md#connector-execution)           |     2 | `workato_`            | SOQL/SuiteQL/SQL queries and the gated universal action runner                  |
+| [Projects & folders](docs/TOOLS.md#projects--folders)              |     7 | `workato_`            | Folder tree, folder CRUD, move recipe, project create/update                    |
+| [Code-side recipe editing](docs/TOOLS.md#code-side-recipe-editing) |     7 | `workato_recipe_`     | Add a step, set nested inputs, map datapills, Python code, extended schemas     |
+| [Recipe editor UI](docs/TOOLS.md#recipe-editor-ui)                 |    11 | `workato_ui_`         | Drive the live editor: open, edit mode, fields, datapills, save, save code tree |
+| [Lookup tables](docs/TOOLS.md#lookup-tables)                       |    11 | `workato_lookup_`     | Table + row CRUD, search, CSV bulk import                                       |
+| [Data tables](docs/TOOLS.md#data-tables)                           |    12 | `workato_data_table_` | Table, column, and record CRUD                                                  |
+| [Session](docs/TOOLS.md#session)                                   |     3 | `workato_`            | `whoami`, list Chrome profiles, switch profile                                  |
+
+Plus the inherited [browser tools](docs/TOOLS.md#inherited-browser-tools) (`chrome_*`, `get_windows_and_tabs`, `performance_*`).
+
+## Safety model
+
+WorkatoMCP acts with your Workato identity, so the guardrails matter. In short:
+
+- **Write gate.** `workato_call_action` refuses anything that isn't read-shaped unless the caller explicitly passes `allow_writes: true`.
+- **Secret stripping.** Connection configs have secret-shaped keys removed on every response path, including `full: true`.
+- **No credential storage.** No tokens, no cookies, no session material is persisted or transmitted anywhere but the local bridge.
+- **Local-only surface.** The bridge binds to `127.0.0.1`.
+- **Optimistic locking.** Recipe writes can pin `expected_base_version_no` so concurrent edits fail loudly instead of being overwritten.
+- **Write verification.** Writes that time out are verified by re-reading state rather than blindly retried.
+
+Full details, threat model, and reporting instructions: [SECURITY.md](SECURITY.md).
+
+## Companion skill
+
+`skills/workato-recipes/` is a Claude Code skill documenting Workato's recipe code-tree JSON (triggers, `foreach`/`if`/`repeat`/`try-catch`, Variables by Workato, app actions) and the complete Ruby-allowlist formula language. It pairs with the `workato_*` tools — the tools mutate the tree, the skill explains what's valid inside it.
+
+Install it as a plugin from this repo's marketplace manifest:
 
 ```bash
-workatomcp-bridge doctor --fix
+/plugin marketplace add Eithery-rc/WorkatoMCP
+/plugin install workato-recipes@workato-mcp
 ```
 
-Then reload the unpacked extension in `chrome://extensions/` and restart your MCP client.
+## Repository layout
 
-## Tab selection
-
-The tools auto-discover a Workato tab (`*.workato.com` or `*.workato.is`).
-
-- Zero matching tabs → `TabNotFound` (open Workato first).
-- Tabs across multiple distinct hosts (e.g. US + EU at the same time) → `MultipleWorkatoHosts` (close one).
-- One or more tabs on the same host → uses the first.
-
-## Planned v1.3+
-
-Documented as stub files under `app/chrome-extension/entrypoints/background/tools/workato/*.stub.ts`:
-
-- `workato_push_recipe` — recipe write (with pull-before-push, last_version_no lock, /edit-tab refusal).
-- `workato_create_connection` — new connection creation (with secret strip + provider allowlist).
-- `workato_describe_action` — once the `extended_schema.json` endpoint's reliability is understood (it returned empty for `execute_suiteql` during v1.2 recon).
-
-**Note:** v1's `workato_run_soql` and `workato_schema_derive` stubs are superseded by v1.2's `workato_run_query` (generic across SOQL, SuiteQL, and SQL). The stubs remain in the source tree for historical reference.
-
-Full design rationale per release:
-
-- v1: `docs/superpowers/specs/2026-05-11-workatomcp-design.md`
-- v1.1: `docs/superpowers/specs/2026-05-12-workatomcp-v11-design.md`
-- v1.2: `docs/superpowers/specs/2026-05-12-workatomcp-v12-design.md`
-
-## Repo layout
-
-```
+```text
 WorkatoMCP/
 ├── app/
-│   ├── chrome-extension/                              # MV3 extension (WXT)
+│   ├── chrome-extension/               # MV3 extension (WXT + Vue 3)
 │   │   └── entrypoints/background/tools/
-│   │       ├── browser/      (upstream)
-│   │       ├── record-replay/(upstream)
-│   │       └── workato/      (THIS FORK — pull, trace, csrf, tab-dispatch)
-│   └── native-server/                                  # local bridge :12306
+│   │       ├── workato/                # recipes, jobs, connections, folders
+│   │       ├── workato-recipe/         # code-side mutators
+│   │       ├── workato-ui/             # live editor automation
+│   │       ├── workato-lookup/         # lookup tables
+│   │       ├── workato-data-table/     # data tables
+│   │       ├── workato-session/        # whoami
+│   │       └── browser/                # inherited browser automation
+│   └── native-server/                  # local bridge on 127.0.0.1:12306
 ├── packages/
-│   ├── shared/        (TOOL_NAMES.WORKATO + TOOL_SCHEMAS additions live here)
-│   └── wasm-simd/     (upstream)
-├── docs/superpowers/
-│   ├── specs/2026-05-11-workatomcp-design.md
-│   └── plans/2026-05-11-workatomcp-v1.md
-└── README.upstream.md  / LICENSE.upstream             (parent project)
+│   └── shared/                         # TOOL_NAMES + TOOL_SCHEMAS (source of truth)
+├── skills/workato-recipes/             # recipe authoring reference skill
+└── docs/                               # tool reference, architecture, design notes
 ```
 
-## License
+## Development
 
-MIT. See `LICENSE` (this fork) and `LICENSE.upstream` (parent project, mcp-chrome).
+```bash
+pnpm install
+pnpm build          # shared → bridge → extension
+pnpm dev            # watch mode across packages
+pnpm typecheck      # tsc --noEmit everywhere
+pnpm lint           # eslint
+pnpm format         # prettier
+```
+
+Adding a tool means touching two places: the schema in `packages/shared/src/tools.ts` and the handler under `app/chrome-extension/entrypoints/background/tools/`. Rebuild `shared` before the extension, then reload the unpacked extension and restart the MCP client so the new schema is picked up.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and [docs/ROADMAP.md](docs/ROADMAP.md) for what's planned.
+
+## Compatibility
+
+|                 |                                                                                              |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| Browsers        | Chrome / Chromium (MV3). Firefox builds exist upstream but Workato tools are untested there. |
+| Platforms       | Windows, macOS, Linux                                                                        |
+| Workato regions | US, EU, JP, SG, AU (`*.workato.com`), plus `*.workato.is` and custom tenants                 |
+| MCP transports  | Streamable HTTP (`/mcp`), legacy SSE (`/sse` + `/messages`), stdio (`workatomcp-stdio`)      |
+
+## Credits and license
+
+WorkatoMCP is a fork of [hangwin/mcp-chrome](https://github.com/hangwin/mcp-chrome), which provides the extension shell, native-messaging bridge, and browser-automation toolkit. The Workato tool families, session model, and safety gates are this fork's own work.
+
+MIT — see [LICENSE](LICENSE) for this fork and [LICENSE.upstream](LICENSE.upstream) for the parent project.
+
+Workato is a trademark of Workato, Inc. This project is not affiliated with or endorsed by Workato.

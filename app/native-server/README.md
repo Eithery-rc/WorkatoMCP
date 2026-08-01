@@ -1,183 +1,62 @@
-# Fastify Chrome Native Messaging Service
+# workatomcp-bridge
 
-A Fastify-based TypeScript project for native communication with a Chrome extension.
+The local bridge half of [WorkatoMCP](../../README.md), published to npm as [`workatomcp-bridge`](https://www.npmjs.com/package/workatomcp-bridge).
 
-## Features
+A Fastify server on `127.0.0.1:12306` that terminates MCP transports and forwards tool calls to the Chrome extension over native messaging. Chrome launches it on demand — there is nothing to start by hand.
 
-- Bidirectional communication with Chrome extensions via Chrome Native Messaging protocol
-- **Multi-browser support**: Chrome and Chromium (Linux, macOS, and Windows)
-- RESTful API service
-- Written entirely in TypeScript
-- Includes a complete test suite
-- Follows code quality best practices
-
-## Development Setup
-
-### Prerequisites
-
-- Node.js 20+
-- npm 8+ or pnpm 8+
-
-### Installation
+## Install
 
 ```bash
-git clone https://github.com/your-username/fastify-chrome-native.git
-cd fastify-chrome-native
-npm install
+npm install -g workatomcp-bridge
 ```
 
-### Development
+Postinstall attempts user-level native-messaging registration for detected browsers.
 
-1. Build locally and register the native server
+## CLI
 
 ```bash
-cd app/native-server
-npm run dev
+workatomcp-bridge doctor              # diagnose registration, ports, permissions
+workatomcp-bridge doctor --fix        # repair what it can
+workatomcp-bridge register --detect   # (re)register for detected browsers
+workatomcp-bridge register --system   # system-level install (needs admin/sudo)
+workatomcp-bridge fix-permissions     # repair wrapper-script permissions
+workatomcp-bridge update-port 12307   # move off a conflicting port
+workatomcp-bridge report --copy       # redacted diagnostic report for bug reports
 ```
 
-2. Start the Chrome extension
+## Endpoints
+
+| Route                         | Purpose                                   |
+| ----------------------------- | ----------------------------------------- |
+| `POST/GET/DELETE /mcp`        | Streamable HTTP transport                 |
+| `GET /sse` + `POST /messages` | Legacy SSE transport                      |
+| `GET /ws-client`              | Per-Chrome-profile WebSocket registration |
+| `GET /ping`                   | Liveness check                            |
+
+`workatomcp-stdio` is also installed, for MCP clients that require a spawned stdio process.
+
+## Development
 
 ```bash
-cd app/chrome-extension
-npm run dev
+pnpm --filter workatomcp-bridge build
+pnpm --filter workatomcp-bridge test
+pnpm --filter workatomcp-bridge dev     # rebuild + re-register on change
 ```
 
-### Build
+## Layout
 
-```bash
-npm run build
+```text
+src/
+├── server/
+│   ├── index.ts             # Fastify routes and MCP transports
+│   └── profile-registry.ts  # per-profile WebSocket connections
+├── native-messaging-host.ts # stdio framing to/from Chrome
+├── file-handler.ts          # local file read/write for the recipe & CSV round-trips
+├── mcp/                     # MCP server and stdio entrypoint
+├── cli.ts                   # doctor / register / report commands
+└── scripts/                 # build, postinstall, registration
 ```
 
-### Registering the Native Messaging Host
+`src/scripts/run_host.sh` must ship with LF line endings or the host fails to execute on macOS and Linux; `.gitattributes` enforces this.
 
-#### Auto-detect and register all installed browsers
-
-```bash
-mcp-chrome-bridge register --detect
-```
-
-#### Register a specific browser
-
-```bash
-# Chrome only
-mcp-chrome-bridge register --browser chrome
-
-# Chromium only
-mcp-chrome-bridge register --browser chromium
-
-# All supported browsers
-mcp-chrome-bridge register --browser all
-```
-
-#### Global install (auto-registers detected browsers)
-
-```bash
-npm i -g mcp-chrome-bridge
-```
-
-#### Browser Support
-
-| Browser       | Linux | macOS | Windows |
-| ------------- | ----- | ----- | ------- |
-| Google Chrome | ✓     | ✓     | ✓       |
-| Chromium      | ✓     | ✓     | ✓       |
-
-Registration locations:
-
-- **Linux**: `~/.config/[browser-name]/NativeMessagingHosts/`
-- **macOS**: `~/Library/Application Support/[Browser]/NativeMessagingHosts/`
-- **Windows**: `%APPDATA%\[Browser]\NativeMessagingHosts\`
-
-### Chrome Extension Integration
-
-Example of how to use this service from a Chrome extension:
-
-```javascript
-// background.js
-let nativePort = null;
-let serverRunning = false;
-
-// Start the Native Messaging service
-function startServer() {
-  if (nativePort) {
-    console.log('Already connected to Native Messaging host');
-    return;
-  }
-
-  try {
-    nativePort = chrome.runtime.connectNative('com.yourcompany.fastify_native_host');
-
-    nativePort.onMessage.addListener((message) => {
-      console.log('Received native message:', message);
-
-      if (message.type === 'started') {
-        serverRunning = true;
-        console.log(`Server started on port: ${message.payload.port}`);
-      } else if (message.type === 'stopped') {
-        serverRunning = false;
-        console.log('Server stopped');
-      } else if (message.type === 'error') {
-        console.error('Native error:', message.payload.message);
-      }
-    });
-
-    nativePort.onDisconnect.addListener(() => {
-      console.log('Native connection disconnected:', chrome.runtime.lastError);
-      nativePort = null;
-      serverRunning = false;
-    });
-
-    // Start the server
-    nativePort.postMessage({ type: 'start', payload: { port: 3000 } });
-  } catch (error) {
-    console.error('Error starting Native Messaging:', error);
-  }
-}
-
-// Stop the server
-function stopServer() {
-  if (nativePort && serverRunning) {
-    nativePort.postMessage({ type: 'stop' });
-  }
-}
-
-// Test communication with the server
-async function testPing() {
-  try {
-    const response = await fetch('http://localhost:3000/ping');
-    const data = await response.json();
-    console.log('Ping response:', data);
-    return data;
-  } catch (error) {
-    console.error('Ping failed:', error);
-    return null;
-  }
-}
-
-// Connect to the native host when the extension starts
-chrome.runtime.onStartup.addListener(startServer);
-
-// Expose API to popup or content scripts
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'startServer') {
-    startServer();
-    sendResponse({ success: true });
-  } else if (message.action === 'stopServer') {
-    stopServer();
-    sendResponse({ success: true });
-  } else if (message.action === 'testPing') {
-    testPing().then(sendResponse);
-    return true; // Indicates we will send the response asynchronously
-  }
-});
-```
-
-### Testing
-
-```bash
-npm run test
-```
-
-### License
-
-MIT
+Architecture details: [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md).
