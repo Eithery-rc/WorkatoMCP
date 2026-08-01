@@ -45,10 +45,27 @@ jobs:
 
       # The extension still carries ~100 type errors in code inherited from
       # hangwin/mcp-chrome (record-replay-v3, element-marker, gif-recorder).
-      # Reported, not gating, until that debt is paid down. See docs/ROADMAP.md.
-      - name: Typecheck extension (non-blocking, inherited debt)
-        continue-on-error: true
-        run: pnpm --filter workatomcp-extension exec tsc --noEmit
+      # Reported in the run summary, not gating, until that debt is paid down.
+      # See docs/ROADMAP.md#known-debt.
+      - name: Typecheck extension (reported, not gating)
+        run: |
+          set +e
+          out=$(pnpm --filter workatomcp-extension exec tsc --noEmit 2>&1)
+          count=$(printf '%s\n' "$out" | grep -cE 'error TS')
+          if [ "$count" -gt 0 ]; then
+            {
+              echo "### Extension typecheck: $count pre-existing errors"
+              echo ""
+              echo "Inherited from hangwin/mcp-chrome. See docs/ROADMAP.md#known-debt."
+              echo ""
+              echo '```'
+              printf '%s\n' "$out" | grep -E 'error TS' | head -20
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Extension typecheck: clean" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 0
 
       - name: Lint
         run: pnpm lint
