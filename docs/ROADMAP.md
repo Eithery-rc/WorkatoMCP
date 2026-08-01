@@ -44,6 +44,12 @@ Single-row lookup by key column and value, without paging through the whole tabl
 
 Stubbed at [`workato/create-connection.stub.ts`](../app/chrome-extension/entrypoints/background/tools/workato/create-connection.stub.ts) with the endpoint and body shape documented. Held back deliberately: creating a connection means handling auth material, which every other tool in this project is built to never touch. It needs a provider allowlist and a clear story on where credentials come from before it ships.
 
+## Known debt
+
+**The extension does not typecheck cleanly.** `pnpm typecheck` reports around 100 errors, all in code inherited from the upstream project — `record-replay-v3` and its tests, `element-marker`, `gif-recorder`, and a few browser tools. None are in the Workato tool families, and the build is unaffected (WXT/Vite transpiles without typechecking), which is why the errors went unnoticed for so long.
+
+CI typechecks `workatomcp-shared` and `workatomcp-bridge` as a gate and reports the extension separately without failing the run. Paying this down means either fixing the inherited code or dropping the parts of the record-replay feature this fork doesn't use — the second is probably the better trade, since none of it serves the Workato use case.
+
 ## Considered and rejected
 
 Some things are better left as code the agent writes, not tools:

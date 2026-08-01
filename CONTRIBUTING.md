@@ -26,7 +26,7 @@ pnpm lint
 pnpm build
 ```
 
-All three must pass; CI runs the same commands. `pnpm format` applies Prettier.
+`pnpm lint` and `pnpm build` must pass. `pnpm typecheck` currently reports around 100 pre-existing errors in code inherited from the upstream project — see [Known debt](docs/ROADMAP.md#known-debt). Don't add to them: anything you touch in `packages/shared`, `app/native-server`, or the `tools/workato*` directories must be clean, and CI gates on the first two. `pnpm format` applies Prettier.
 
 ## Adding a Workato tool
 
