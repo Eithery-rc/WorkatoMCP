@@ -17,6 +17,7 @@
 ## Task 1: Vendor upstream mcp-chrome
 
 **Files:**
+
 - Create: everything from upstream `hangwin/mcp-chrome@master` except `.git/` and its `LICENSE` (we keep both repos' LICENSE files — see step 4)
 - Preserve: this repo's existing `docs/`, `generated-images/`, and `.git/`
 
@@ -51,7 +52,7 @@ Move-Item C:\Work\Personal\WorkatoMCP\README_zh.md C:\Work\Personal\WorkatoMCP\R
 
 Our top-level `README.md` will be written in Task 11. Keeping the upstream READMEs as `*.upstream.md` preserves attribution and is honest about the fork lineage.
 
-- [ ] **Step 4: Move upstream LICENSE so it's clearly the *upstream* license**
+- [ ] **Step 4: Move upstream LICENSE so it's clearly the _upstream_ license**
 
 ```powershell
 Move-Item C:\Work\Personal\WorkatoMCP\LICENSE C:\Work\Personal\WorkatoMCP\LICENSE.upstream
@@ -100,9 +101,10 @@ Expected: single large commit with the upstream tree. Verify with `git log --one
 ## Task 2: Add WORKATO tool names and schemas to shared package
 
 **Files:**
+
 - Modify: `packages/shared/src/tools.ts`
 
-The shared package is where the bridge (`mcp-chrome-bridge`) reads tool schemas to respond to MCP `tools/list`, and where the extension reads tool *names* to dispatch incoming `tools/call` requests. Both packages import from `chrome-mcp-shared`. Both new tools live here.
+The shared package is where the bridge (`mcp-chrome-bridge`) reads tool schemas to respond to MCP `tools/list`, and where the extension reads tool _names_ to dispatch incoming `tools/call` requests. Both packages import from `chrome-mcp-shared`. Both new tools live here.
 
 - [ ] **Step 1: Add a `WORKATO` namespace to `TOOL_NAMES`**
 
@@ -110,8 +112,12 @@ In `packages/shared/src/tools.ts`, find the `TOOL_NAMES` object (it contains a `
 
 ```ts
 export const TOOL_NAMES = {
-  BROWSER: { /* ...existing, unchanged... */ },
-  RECORD_REPLAY: { /* ...existing, unchanged... */ },
+  BROWSER: {
+    /* ...existing, unchanged... */
+  },
+  RECORD_REPLAY: {
+    /* ...existing, unchanged... */
+  },
   WORKATO: {
     PULL_RECIPE: 'workato_pull_recipe',
     JOB_TRACE: 'workato_job_trace',
@@ -203,6 +209,7 @@ git commit -m "feat: declare workato_pull_recipe and workato_job_trace tool sche
 ## Task 3: Create Workato tab-dispatch helper
 
 **Files:**
+
 - Create: `app/chrome-extension/entrypoints/background/tools/workato/tab-dispatch.ts`
 
 This module owns "find a Workato tab and run a fetch inside it." Both v1 tools call it. Future write tools (push) will extend it with tab-state checks (refusing to fire while the recipe is open in `/edit`), but v1 keeps it simple.
@@ -263,8 +270,9 @@ export async function findWorkatoTab(): Promise<WorkatoTabInfo> {
     );
   }
 
-  const usable = tabs.filter((t): t is chrome.tabs.Tab & { id: number; url: string } =>
-    typeof t.id === 'number' && typeof t.url === 'string',
+  const usable = tabs.filter(
+    (t): t is chrome.tabs.Tab & { id: number; url: string } =>
+      typeof t.id === 'number' && typeof t.url === 'string',
   );
 
   if (usable.length === 0) {
@@ -353,6 +361,7 @@ git commit -m "feat: add Workato tab-dispatch helper"
 ## Task 4: Test tab-dispatch
 
 **Files:**
+
 - Create: `app/chrome-extension/tests/workato/tab-dispatch.test.ts`
 
 `runInWorkatoTab` is mostly a thin wrapper around `chrome.scripting.executeScript`; testing it adds little. `findWorkatoTab` has all the branching — that's what we test.
@@ -363,8 +372,10 @@ Create `app/chrome-extension/tests/workato/tab-dispatch.test.ts`:
 
 ```ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { findWorkatoTab, WorkatoDispatchError } from
-  '../../entrypoints/background/tools/workato/tab-dispatch';
+import {
+  findWorkatoTab,
+  WorkatoDispatchError,
+} from '../../entrypoints/background/tools/workato/tab-dispatch';
 
 type Tab = chrome.tabs.Tab;
 const mockTabs: Tab[] = [];
@@ -463,6 +474,7 @@ git commit -m "test: cover Workato tab selection branches"
 ## Task 5: Create CSRF helper
 
 **Files:**
+
 - Create: `app/chrome-extension/entrypoints/background/tools/workato/csrf.ts`
 
 CSRF isn't needed for v1's two GET-only tools, but lands now so future POST/PUT tools (push, soql, schema-derive) don't have to re-introduce it later. Per spec §7 it's literally one function.
@@ -482,12 +494,13 @@ Create `app/chrome-extension/entrypoints/background/tools/workato/csrf.ts`:
  * will.
  */
 export function readCsrfFromCookieInPage(): string {
-  const raw = document.cookie
-    .split('; ')
-    .find((c) => c.startsWith('XSRF-TOKEN-V2='))
-    ?.split('=')
-    .slice(1)
-    .join('=') ?? '';
+  const raw =
+    document.cookie
+      .split('; ')
+      .find((c) => c.startsWith('XSRF-TOKEN-V2='))
+      ?.split('=')
+      .slice(1)
+      .join('=') ?? '';
   return decodeURIComponent(raw);
 }
 ```
@@ -512,6 +525,7 @@ git commit -m "feat: add CSRF cookie decoder helper (unused in v1, used by futur
 ## Task 6: Implement `workato_pull_recipe` tool
 
 **Files:**
+
 - Create: `app/chrome-extension/entrypoints/background/tools/workato/pull-recipe.ts`
 
 Per spec §5.1: two GETs against `/recipes/<id>.json` and `/recipes/<id>/code.json`. Combine into a `{ recipe_id, code, version }` result.
@@ -557,7 +571,9 @@ interface InPageResult {
  * Function executed in the Workato tab's MAIN world. Self-contained — no captures.
  */
 async function pullInPage(recipeId: number): Promise<InPageResult> {
-  async function getJson(url: string): Promise<{ status: number; bodyText: string; json: unknown }> {
+  async function getJson(
+    url: string,
+  ): Promise<{ status: number; bodyText: string; json: unknown }> {
     const r = await fetch(url, {
       credentials: 'include',
       headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' },
@@ -666,7 +682,9 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
       if (!result.ok) {
         return createErrorResponse(
           `WorkatoApiError (${result.failure?.stage}): ${result.failure?.message}` +
-            (result.failure?.body_excerpt ? `\n--- body excerpt ---\n${result.failure.body_excerpt}` : ''),
+            (result.failure?.body_excerpt
+              ? `\n--- body excerpt ---\n${result.failure.body_excerpt}`
+              : ''),
         );
       }
 
@@ -717,6 +735,7 @@ git commit -m "feat: implement workato_pull_recipe tool"
 ## Task 7: Implement `workato_job_trace` tool + slim transform
 
 **Files:**
+
 - Create: `app/chrome-extension/entrypoints/background/tools/workato/slim-trace.ts`
 - Create: `app/chrome-extension/entrypoints/background/tools/workato/job-trace.ts`
 
@@ -884,7 +903,9 @@ interface InPageResult {
 }
 
 async function tracePageFn(recipeId: number, jobId: string | number): Promise<InPageResult> {
-  async function getJson(url: string): Promise<{ status: number; bodyText: string; json: unknown }> {
+  async function getJson(
+    url: string,
+  ): Promise<{ status: number; bodyText: string; json: unknown }> {
     const r = await fetch(url, {
       credentials: 'include',
       headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' },
@@ -953,7 +974,9 @@ class WorkatoJobTraceTool extends BaseBrowserToolExecutor {
       if (!result.ok) {
         return createErrorResponse(
           `WorkatoApiError (${result.failure?.stage}): ${result.failure?.message}` +
-            (result.failure?.body_excerpt ? `\n--- body excerpt ---\n${result.failure.body_excerpt}` : ''),
+            (result.failure?.body_excerpt
+              ? `\n--- body excerpt ---\n${result.failure.body_excerpt}`
+              : ''),
         );
       }
 
@@ -1000,6 +1023,7 @@ git commit -m "feat: implement workato_job_trace tool with slim-by-default trans
 ## Task 8: Test slim-trace transform
 
 **Files:**
+
 - Create: `app/chrome-extension/tests/workato/slim-trace.test.ts`
 
 - [ ] **Step 1: Write the tests**
@@ -1008,8 +1032,7 @@ Create `app/chrome-extension/tests/workato/slim-trace.test.ts`:
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import { buildSlimTrace } from
-  '../../entrypoints/background/tools/workato/slim-trace';
+import { buildSlimTrace } from '../../entrypoints/background/tools/workato/slim-trace';
 
 const META_OK = {
   result: {
@@ -1132,6 +1155,7 @@ git commit -m "test: cover slim-trace shaping for succeeded/failed/truncated job
 ## Task 9: Create Workato barrel + register tools in main registry
 
 **Files:**
+
 - Create: `app/chrome-extension/entrypoints/background/tools/workato/index.ts`
 - Modify: `app/chrome-extension/entrypoints/background/tools/index.ts`
 
@@ -1166,6 +1190,7 @@ const toolsMap = new Map(Object.values(tools).map((tool: any) => [tool.name, too
 Modify `app/chrome-extension/entrypoints/background/tools/index.ts`:
 
 Change:
+
 ```ts
 import * as browserTools from './browser';
 import { flowRunTool, listPublishedFlowsTool } from './record-replay';
@@ -1174,6 +1199,7 @@ const tools = { ...browserTools, flowRunTool, listPublishedFlowsTool } as any;
 ```
 
 To:
+
 ```ts
 import * as browserTools from './browser';
 import * as workatoTools from './workato';
@@ -1213,6 +1239,7 @@ git commit -m "feat: register workato tools in extension tool registry"
 ## Task 10: Stub future tools (not registered)
 
 **Files:**
+
 - Create: `app/chrome-extension/entrypoints/background/tools/workato/push-recipe.stub.ts`
 - Create: `app/chrome-extension/entrypoints/background/tools/workato/run-soql.stub.ts`
 - Create: `app/chrome-extension/entrypoints/background/tools/workato/schema-derive.stub.ts`
@@ -1369,6 +1396,7 @@ git commit -m "docs: capture planned push/soql/schema-derive endpoint notes as s
 ## Task 11: Write top-level README and LICENSE
 
 **Files:**
+
 - Create: `README.md` (top-level)
 - Create: `LICENSE`
 
@@ -1388,19 +1416,22 @@ Forked from [hangwin/mcp-chrome](https://github.com/hangwin/mcp-chrome) — see 
 Both are read-only and require an open Workato tab.
 
 ### `workato_pull_recipe`
-
 ```
-input:  { recipe_id: number }
+
+input: { recipe_id: number }
 output: { recipe_id, code: <parsed flow tree>, version: { version_no, name, folder_id, ... } }
+
 ```
 
 ### `workato_job_trace`
 
 ```
-input:  { recipe_id: number, job_id: string|number, full?: boolean }
+
+input: { recipe_id: number, job_id: string|number, full?: boolean }
 output (default): { job_id, recipe, status, started_at, completed_at, duration_ms, error?, steps[], lines_truncated, kms_error }
 output (full=true): { job_id, meta: <raw>, line_details: <raw> }
-```
+
+````
 
 Per-step `input_summary` / `output_summary` are truncated to 500 chars. Pass `full: true` for the raw responses.
 
@@ -1421,7 +1452,7 @@ Per-step `input_summary` / `output_summary` are truncated to 500 chars. Pass `fu
     }
   }
 }
-```
+````
 
 If pnpm v7+ skips postinstall scripts, add to `.npmrc`:
 
@@ -1480,6 +1511,7 @@ WorkatoMCP/
 ## License
 
 MIT. See `LICENSE` (this fork) and `LICENSE.upstream` (parent project, mcp-chrome).
+
 ```
 
 - [ ] **Step 2: Write the LICENSE**
@@ -1487,6 +1519,7 @@ MIT. See `LICENSE` (this fork) and `LICENSE.upstream` (parent project, mcp-chrom
 Create `C:\Work\Personal\WorkatoMCP\LICENSE`:
 
 ```
+
 MIT License
 
 Copyright (c) 2026 Roman Chikalenko
@@ -1512,14 +1545,15 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
+
+````
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add README.md LICENSE
 git commit -m "docs: add WorkatoMCP README and fork-attribution LICENSE"
-```
+````
 
 ---
 
@@ -1542,6 +1576,7 @@ Expected: shared → extension → native server all build cleanly.
 - [ ] **Step 2: Load the extension**
 
 In Chrome:
+
 1. Navigate to `chrome://extensions/`
 2. Toggle "Developer mode" on (top right)
 3. Click "Load unpacked"

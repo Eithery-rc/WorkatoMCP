@@ -50,3 +50,6 @@ CLAUDE.md
 
 # Scratch / local dumps
 .tmp/
+generated-images/
+*.local.json
+recipe_full.json
