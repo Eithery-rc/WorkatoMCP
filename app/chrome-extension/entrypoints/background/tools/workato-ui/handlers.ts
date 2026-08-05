@@ -36,6 +36,13 @@ import {
   resolveTabId,
   sleep,
 } from './dom-helpers';
+import {
+  describeMissing,
+  diffPersistedTree,
+  isFullyPersisted,
+  normalizeCodeTree,
+  type TreeDiff,
+} from './save-guards';
 import type {
   AddStepArgs,
   AXNode,
@@ -1653,6 +1660,36 @@ const RECIPE_STATUS_PAGE_FN = `
 })
 `;
 
+/**
+ * GET /recipes/<id>/code.json — the persisted code tree, parsed.
+ *
+ * Read back after every save so the tool can tell the caller what Workato
+ * actually stored. Workato drops dynamic input keys that no
+ * `extended_input_schema` declares, and it does so with a 200 and an empty
+ * `code_errors` — the readback is the only honest signal.
+ */
+const FETCH_CODE_PAGE_FN = `
+(async (recipeId) => {
+  try {
+    const res = await fetch('/recipes/' + recipeId + '/code.json?mode=view', {
+      credentials: 'include',
+      headers: { 'accept': 'application/json', 'x-requested-with': 'XMLHttpRequest' },
+    });
+    if (!res.ok) return { ok: false, error: 'GET /recipes/' + recipeId + '/code.json failed: HTTP ' + res.status };
+    const j = await res.json().catch(() => null);
+    const codeStr = j && j.result;
+    if (typeof codeStr !== 'string') return { ok: false, error: 'code.json response missing result string' };
+    try {
+      return { ok: true, code: JSON.parse(codeStr) };
+    } catch (e) {
+      return { ok: false, error: 'JSON.parse(code.result) failed: ' + String(e && e.message || e) };
+    }
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+})
+`;
+
 /** POST /web_api/recipes/<id>/<start|stop>.json — same call the workato_start/stop_recipe tools make. */
 const LIFECYCLE_PAGE_FN = `
 (async (recipeId, action) => {
@@ -1744,8 +1781,60 @@ interface RecipeStatusPageResult {
   version_no?: number;
 }
 
+interface FetchCodePageResult {
+  ok: boolean;
+  error?: string;
+  code?: unknown;
+}
+
+/**
+ * The code tree as an object, whichever form the caller passed. Returns null
+ * when a string argument isn't parseable JSON — verification is then skipped
+ * rather than guessed at.
+ */
+function parseTree(code: object | string): unknown {
+  if (typeof code !== 'string') return code;
+  try {
+    return JSON.parse(code);
+  } catch {
+    return null;
+  }
+}
+
 class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.WORKATO_UI.SAVE_RECIPE_CODE;
+
+  /** Read the persisted code tree back — the ground truth for what a save stored. */
+  private async fetchCode(tabId: number, recipeId: number): Promise<FetchCodePageResult> {
+    try {
+      const result = await evaluateInPage<FetchCodePageResult>(
+        tabId,
+        `(${FETCH_CODE_PAGE_FN})(${JSON.stringify(recipeId)})`,
+        { awaitPromise: true },
+      );
+      return result ?? { ok: false, error: 'code readback returned no value' };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /**
+   * Diff the tree we sent against the one Workato stored. Returns null when
+   * the readback itself failed — a failed verification is reported, never
+   * silently treated as a clean save.
+   */
+  private async verifyPersisted(
+    tabId: number,
+    recipeId: number,
+    sentTree: unknown,
+  ): Promise<{ diff: TreeDiff | null; error?: string }> {
+    if (sentTree === null) return { diff: null, error: 'code was not parseable as a tree' };
+    const readback = await this.fetchCode(tabId, recipeId);
+    if (!readback.ok || readback.code === undefined) {
+      return { diff: null, error: readback.error ?? 'code readback failed' };
+    }
+    return { diff: diffPersistedTree(sentTree, readback.code) };
+  }
 
   private async fetchStatus(tabId: number, recipeId: number): Promise<RecipeStatusPageResult> {
     try {
@@ -1818,6 +1907,14 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
         );
       }
 
+      // --- Datapill normalization ------------------------------------------
+      // Workato matches `#{_dp('<json>')}` byte-for-byte: a pill payload
+      // serialized with json.dumps spacing saves fine and then resolves to
+      // nothing at runtime. Compact every pill before it reaches the wire.
+      const normalized = normalizeCodeTree(args.code);
+      const codeToSave = normalized.code;
+      const sentTree = parseTree(codeToSave);
+
       // --- Preflight: status probe (optimistic lock + running check) -------
       const preflight = await this.fetchStatus(tabId, args.recipe_id);
       const baseVersion = preflight.ok ? (preflight.version_no ?? null) : null;
@@ -1828,14 +1925,57 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
         typeof preflight.version_no === 'number' &&
         preflight.version_no !== args.expected_base_version_no
       ) {
+        // Drift can also mean "my own previous attempt landed after its
+        // response timed out". Compare the stored tree with what we are about
+        // to write before crying conflict — a retry of an applied save must
+        // not create a duplicate version.
+        const { diff } = await this.verifyPersisted(tabId, args.recipe_id, sentTree);
+        if (diff && isFullyPersisted(diff)) {
+          const payload: Record<string, unknown> = {
+            recipe_id: args.recipe_id,
+            version_no: preflight.version_no,
+            base_version_no: args.expected_base_version_no,
+            save_status: 'already_applied',
+            was_running: preflight.running === true,
+            code_errors: [],
+          };
+          // The attempt this retries may well be the one that stopped the
+          // recipe and then died before restarting it.
+          if (args.ensure_running === true && preflight.running !== true) {
+            const startRes = await this.lifecycle(tabId, args.recipe_id, 'start');
+            const runningAgain = startRes.ok
+              ? await this.pollRunning(tabId, args.recipe_id, true, 20_000)
+              : null;
+            payload.restarted = runningAgain?.ok === true && runningAgain.running === true;
+            if (payload.restarted !== true) {
+              payload.restart_error =
+                startRes.error ??
+                `start enqueued but recipe not running after 20s (state=${runningAgain?.state ?? 'unknown'})`;
+            }
+          }
+          return {
+            content: [
+              {
+                type: 'text',
+                text:
+                  `recipe ${args.recipe_id} is already at the tree you are saving ` +
+                  `(version ${preflight.version_no}) — no new version created. This is what a ` +
+                  `retry of a save whose response timed out looks like.\n${JSON.stringify(payload)}`,
+              },
+            ],
+            isError: false,
+          };
+        }
         return createErrorResponse(
           `workato_ui_save_recipe_code: version drift — expected base version ` +
             `${args.expected_base_version_no} but recipe ${args.recipe_id} is at ` +
-            `${preflight.version_no}. Someone (or something) saved since you pulled. ` +
+            `${preflight.version_no}, and the stored tree differs from the one you are saving. ` +
+            `Someone (or something) saved since you pulled. ` +
             `Re-pull, re-apply your change, then save. (retriable: false)`,
         );
       }
 
+      const wasRunning = preflight.ok ? preflight.running === true : undefined;
       let stoppedForSave = false;
       let stoppedAt: string | undefined;
       if (preflight.ok && preflight.running === true) {
@@ -1867,7 +2007,7 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
 
       // --- Save -------------------------------------------------------------
       const expr = `(${SAVE_RECIPE_CODE_PAGE_FN})(${JSON.stringify(args.recipe_id)}, ${JSON.stringify(
-        args.code,
+        codeToSave,
       )}, ${JSON.stringify(args.config ?? null)}, ${JSON.stringify(
         args.name ?? null,
       )}, ${JSON.stringify(args.description ?? null)})`;
@@ -1879,18 +2019,25 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
           awaitPromise: true,
         });
       } catch (saveErr) {
-        // Timeout ≠ failure: the PUT may have landed. Verify via version_no.
+        // Timeout ≠ failure: the PUT may have landed. Verify via version_no,
+        // and — when the version alone is inconclusive — by comparing the
+        // stored tree with the one we sent.
         const after = await this.fetchStatus(tabId, args.recipe_id);
-        if (
+        const landed =
           after.ok &&
           typeof after.version_no === 'number' &&
           baseVersion !== null &&
-          after.version_no > baseVersion
-        ) {
+          after.version_no > baseVersion;
+        let treeMatches = false;
+        if (!landed) {
+          const { diff } = await this.verifyPersisted(tabId, args.recipe_id, sentTree);
+          treeMatches = diff !== null && isFullyPersisted(diff);
+        }
+        if (landed || treeMatches) {
           result = {
             ok: true,
             recipe_id: args.recipe_id,
-            version_no: after.version_no,
+            version_no: after.ok ? after.version_no : undefined,
             code_errors: [],
           };
           saveStatus = 'succeeded_after_timeout';
@@ -1926,6 +2073,35 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
         );
       }
 
+      // --- Post-save: readback verification ---------------------------------
+      // Workato answers 200 with an empty code_errors even when it dropped
+      // dynamic input keys the step's extended_input_schema doesn't declare.
+      // Read the tree back and say so — a "successful" save of empty data is
+      // the single most expensive failure this tool can hand an agent.
+      const verification =
+        args.verify_readback === false
+          ? { diff: null as TreeDiff | null, error: undefined as string | undefined }
+          : await this.verifyPersisted(tabId, args.recipe_id, sentTree);
+      const strippedInputs = verification.diff && verification.diff.missing.length > 0;
+      if (strippedInputs) {
+        const suffix = stoppedForSave
+          ? ` The recipe was stopped for this save and has NOT been restarted (stopped_at=${stoppedAt}).`
+          : '';
+        return createErrorResponse(
+          `workato_ui_save_recipe_code: saved recipe ${args.recipe_id} as version ` +
+            `${result.version_no}, but the readback does not match what was sent.\n` +
+            describeMissing(verification.diff!) +
+            suffix +
+            ` (retriable: false — fix the schema first)\n` +
+            JSON.stringify({
+              recipe_id: args.recipe_id,
+              version_no: result.version_no,
+              save_status: 'persisted_incomplete',
+              dropped: verification.diff!.missing,
+            }),
+        );
+      }
+
       // --- Post-save: version comment --------------------------------------
       let commentSet: boolean | undefined;
       let commentError: string | undefined;
@@ -1947,9 +2123,15 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
       }
 
       // --- Post-save: restart -----------------------------------------------
+      // `restart_if_running` only restores what this call stopped. A recipe
+      // that was already stopped before the save stays stopped — starting it
+      // would be a surprise the caller never asked for. `ensure_running`
+      // exists for the caller who does want it up either way; without it the
+      // response says out loud that the recipe is lying there stopped.
+      const startAfterSave = stoppedForSave || (args.ensure_running === true && !wasRunning);
       let restarted: boolean | undefined;
       let restartError: string | undefined;
-      if (stoppedForSave) {
+      if (startAfterSave) {
         const startRes = await this.lifecycle(tabId, args.recipe_id, 'start');
         if (startRes.ok) {
           const runningAgain = await this.pollRunning(tabId, args.recipe_id, true, 20_000);
@@ -1972,24 +2154,40 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
       };
       if (baseVersion !== null) payload.base_version_no = baseVersion;
       if (saveStatus) payload.save_status = saveStatus;
-      if (stoppedForSave) {
-        payload.stopped_at = stoppedAt;
+      if (normalized.normalized > 0) payload.datapills_normalized = normalized.normalized;
+      if (wasRunning !== undefined) payload.was_running = wasRunning;
+      if (stoppedForSave) payload.stopped_at = stoppedAt;
+      if (startAfterSave) {
         payload.restarted = restarted;
         if (restartError) payload.restart_error = restartError;
+      } else if (wasRunning === false) {
+        payload.running_after_save = false;
+      }
+      if (verification.error) payload.verification_error = verification.error;
+      if (verification.diff && verification.diff.changed.length > 0) {
+        payload.value_mismatches = verification.diff.changed;
       }
       if (commentSet !== undefined) {
         payload.comment_set = commentSet;
         if (commentError) payload.comment_error = commentError;
       }
 
+      // A recipe that was already stopped stays stopped — the one thing an
+      // agent must not mistake for "the chain is live again".
+      const idleNotice =
+        !startAfterSave && wasRunning === false
+          ? ', recipe is STOPPED (it was stopped before this save; pass ensure_running:true to start it)'
+          : '';
       const text =
         `saved recipe ${result.recipe_id} (version ${result.version_no}` +
         (errCount > 0 ? `, ${errCount} validation error${errCount === 1 ? '' : 's'}` : '') +
-        (stoppedForSave
+        (startAfterSave
           ? restarted
             ? ', restarted'
             : ', RESTART FAILED — recipe is stopped'
           : '') +
+        idleNotice +
+        (verification.error ? `, readback NOT verified: ${verification.error}` : '') +
         `)\n` +
         JSON.stringify(payload);
       return {
