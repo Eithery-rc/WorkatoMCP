@@ -38,7 +38,7 @@ Single-row lookup by key column and value, without paging through the whole tabl
 
 ### Better `code_errors` hints
 
-`code_errors: [[12, [["Records", null, "can't be blank", ["records"]]]]]` almost always means a structured input was silently stripped because the step lacked an `extended_input_schema`. The save response should say so.
+`code_errors: [[12, [["Records", null, "can't be blank", ["records"]]]]]` almost always means a structured input was silently stripped because the step lacked an `extended_input_schema`. The save now detects the strip itself by reading the tree back, so what's left is mapping Workato's own error tuples onto the offending step and field — the readback names the paths, the `code_errors` array still doesn't.
 
 ### `workato_create_connection`
 
