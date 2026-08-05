@@ -91,11 +91,23 @@ Reads retry once automatically and report `retried: true`. If a call still times
 - For `workato_list_jobs`, a larger `timeout_ms` scans deeper per call; partial results come back with `next_cursor` to resume.
 - For large recipes, switch to the file round-trip (`out_file` / `code_path`) — the payload, not the network, is usually the problem.
 
-**A timed-out write is not necessarily a failed write.** The tools verify by re-reading state and report `save_status: "succeeded_after_timeout"`. Don't re-issue a write that reported that.
+**A timed-out write is not necessarily a failed write.** The tools verify by re-reading state and report `save_status: "succeeded_after_timeout"`. Don't re-issue a write that reported that. If you do re-issue one and it had in fact landed, the save answers `save_status: "already_applied"` instead of creating a duplicate version.
+
+`chrome_javascript` deserves its own warning: a timeout there abandons the wait, not the script. Fetches the page already issued still complete, so the work may be done even though the call reported an error. Check the resulting state before retrying anything non-idempotent, and raise `timeoutMs` (default 60 s) for scripts that legitimately take longer.
+
+## Save reported success but the data is gone
+
+Workato accepts a save with HTTP 200 and `code_errors: []` while silently dropping dynamic input keys on any step that lacks a matching `extended_input_schema` — `py_eval` `code_input.data`, `call_recipe` `parameters`, `update_object` custom fields, data-table columns, `declare_variable` `variables`. The recipe then runs "successfully" against empty data.
+
+The save tool reads the tree back and fails with `save_status: "persisted_incomplete"` listing the dropped paths. The fix is to declare the fields: `workato_recipe_set_extended_schema(recipe_id, step, kind: "extended_input_schema", schema: [...])`, then save again. See the [`workato-recipes` skill](../skills/workato-recipes/code-tree.md) for the schema shapes per action.
+
+A related silent failure: a datapill written as `#{_dp('{"pill_type": "output", ...}')}` — the `json.dumps` default spacing — is not recognized by Workato and resolves to an empty value. The save tool now compacts pill payloads for you; if you write pills through some other path, keep them space-free.
 
 ## Recipe save rejected while running
 
 Workato refuses code saves on a running recipe. Pass `restart_if_running: true` to `workato_ui_save_recipe_code` (or to the `workato_recipe_*` mutators) and the tool will stop → save → verify → restart atomically.
+
+That flag restarts only what the save itself stopped. A recipe that was **already stopped** before the call stays stopped — the response says so via `was_running: false` and a `recipe is STOPPED` note. Pass `ensure_running: true` when the recipe has to be live when the call returns.
 
 ## Save overwrote someone else's change
 

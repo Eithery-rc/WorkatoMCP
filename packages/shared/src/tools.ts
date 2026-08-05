@@ -934,7 +934,10 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         timeoutMs: {
           type: 'number',
-          description: 'Execution timeout in milliseconds (default: 15000).',
+          description:
+            'Execution timeout in milliseconds (default: 60000, ceiling ~110000 before the bridge ' +
+            'call itself times out). A timeout abandons the wait but does NOT cancel the script — ' +
+            'page-side fetches still complete, so retrying non-idempotent code can execute it twice.',
         },
         maxOutputBytes: {
           type: 'number',
@@ -2849,8 +2852,17 @@ export const TOOL_SCHEMAS: Tool[] = [
       'to have the tool stop → save → verify → restart atomically (response reports stopped_at + restarted). ' +
       'SAFETY: pass expected_base_version_no (the version_no you pulled) to refuse saving over someone ' +
       "else's concurrent edit; pass comment to annotate the new version in the same call. " +
-      'If the save request times out, the tool verifies via version_no whether the save actually landed ' +
-      'and reports save_status:"succeeded_after_timeout" instead of a false failure. ' +
+      'If the save request times out, the tool verifies via version_no and a tree readback whether the ' +
+      'save actually landed and reports save_status:"succeeded_after_timeout" instead of a false failure; ' +
+      'retrying a save that already landed returns save_status:"already_applied" without creating a ' +
+      'duplicate version. ' +
+      'VERIFIED WRITES: every save is read back and compared against what was sent. Workato silently ' +
+      'drops dynamic input keys (py_eval code_input.data, call_recipe parameters, custom_fields, ' +
+      'data-table columns, declare_variable variables) on steps that lack a matching ' +
+      'extended_input_schema — it answers 200 with empty code_errors and stores nothing. When that ' +
+      'happens the tool FAILS with save_status:"persisted_incomplete" and names the dropped paths. ' +
+      'Datapill payloads are also re-serialized compactly before saving, because Workato matches ' +
+      "#{_dp('<json>')} byte-for-byte and a pill with json.dumps spacing resolves to an empty value. " +
       'Returns the new version_no plus any validation errors Workato emits about the saved tree. ' +
       'Targets the session pinned tab or any open Workato app tab (never whatever tab is focused).',
     inputSchema: {
@@ -2890,7 +2902,16 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'When the recipe is running: stop it, save, then start it again — one atomic call ' +
             'with the smallest possible trigger downtime. Response includes stopped_at and restarted. ' +
-            'Without this flag, saving a running recipe fails fast with a clear error.',
+            'Without this flag, saving a running recipe fails fast with a clear error. ' +
+            'This flag only restores what the save stopped — a recipe that was ALREADY stopped stays ' +
+            'stopped (the response says so via was_running:false). Use ensure_running to start it.',
+          default: false,
+        },
+        ensure_running: {
+          type: 'boolean',
+          description:
+            'Start the recipe after a successful save even when it was already stopped before the ' +
+            'call. Use it when the recipe must be live afterwards regardless of the state it was in.',
           default: false,
         },
         comment: {
@@ -2903,6 +2924,14 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Optimistic lock: refuse to save when the current version_no differs from this value ' +
             '(someone else saved since you pulled). Pass the version_no from your pull_recipe call.',
+        },
+        verify_readback: {
+          type: 'boolean',
+          description:
+            'Read the saved tree back and compare it against what was sent (default true). This is ' +
+            'the silent-strip guard — turn it off only to push past a verification you have ' +
+            'established is a false positive.',
+          default: true,
         },
         tabId: {
           type: 'number',
@@ -3062,7 +3091,8 @@ export const TOOL_SCHEMAS: Tool[] = [
       'formula strings, interpolated strings, and datapill specs — datapill shorthand ' +
       '`datapill(provider.line.list_items[].AssetId)` expresses current-item (foreach) pills. ' +
       'THE preferred tool for one-field fixes deep inside a step (no file round-trip needed). ' +
-      'Accepts restart_if_running/comment/expected_base_version_no, forwarded to the underlying save. ' +
+      'Accepts restart_if_running/ensure_running/comment/expected_base_version_no, forwarded to the ' +
+      'underlying save (which verifies the readback and fails when Workato silently drops input keys). ' +
       'Requires a logged-in Workato browser session.',
     inputSchema: {
       type: 'object',
@@ -3093,7 +3123,14 @@ export const TOOL_SCHEMAS: Tool[] = [
         restart_if_running: {
           type: 'boolean',
           description:
-            'Forwarded to the underlying save: stop a running recipe, save, restart — one atomic call.',
+            'Forwarded to the underlying save: stop a running recipe, save, restart — one atomic call. ' +
+            'A recipe that was already stopped stays stopped; use ensure_running to start it.',
+          default: false,
+        },
+        ensure_running: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: start the recipe afterwards even if it was already stopped.',
           default: false,
         },
         comment: {

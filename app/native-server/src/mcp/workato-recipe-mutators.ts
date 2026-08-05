@@ -492,6 +492,7 @@ export async function handleWorkatoRecipeMutatorCall(
     // Pass through save modifiers so one mutator call can also handle a
     // running recipe (stop→save→restart) and annotate the new version.
     if (args.restart_if_running === true) saveArgs.restart_if_running = true;
+    if (args.ensure_running === true) saveArgs.ensure_running = true;
     if (typeof args.comment === 'string') saveArgs.comment = args.comment;
     // Optimistic lock: the mutator just pulled the recipe, so pin the save to
     // the version it mutated unless the caller supplied their own expectation.

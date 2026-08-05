@@ -27,7 +27,14 @@ import {
 // Constants
 // ============================================================================
 
-const DEFAULT_TIMEOUT_MS = 15_000;
+/**
+ * Default execution budget. A timeout here does NOT cancel the page-side work:
+ * fetches already in flight finish and their side effects land, so a too-eager
+ * limit turns completed work into a reported failure — and a blind retry into a
+ * double execution. 60s sits under the bridge's 120s per-call ceiling and
+ * covers the multi-fetch scripts this tool is actually used for.
+ */
+const DEFAULT_TIMEOUT_MS = 60_000;
 const CDP_SESSION_KEY = 'javascript';
 
 // ============================================================================
@@ -506,12 +513,24 @@ class JavaScriptTool extends BaseBrowserToolExecutor {
     startTime: number,
     warnings?: string[],
   ): ToolResult {
+    // A timeout abandons the wait, not the script: the page keeps running and
+    // any request it already issued still lands. Say so, or the next step is a
+    // retry that executes everything twice.
+    const allWarnings = [...(warnings ?? [])];
+    if (result.error.kind === 'timeout') {
+      allWarnings.push(
+        'The script was NOT cancelled — it keeps running in the page and its side effects (fetches, ' +
+          'writes) may still land. Do not blindly retry non-idempotent code: check the resulting state ' +
+          'first, or re-run with a larger timeoutMs.',
+      );
+    }
+
     const payload: JavaScriptToolResult = {
       success: false,
       tabId,
       engine: result.engine,
       error: result.error,
-      warnings: warnings?.length ? warnings : undefined,
+      warnings: allWarnings.length ? allWarnings : undefined,
       metrics: { elapsedMs: Math.round(performance.now() - startTime) },
     };
 

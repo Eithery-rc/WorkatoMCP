@@ -35,9 +35,10 @@ These apply when writing or mutating recipe JSON (see `code-tree.md` for full de
 2. **`as`**: must match `/^[0-9a-f]{8}$/` — lowercase hex only. Non-hex `as` is silently rejected by Workato.
 3. **`source` on foreach**: at the node root, NOT inside `input`. Always a `#{_dp(...)}` formula referencing a list pill.
 4. **`number`**: globally sequential across the entire tree, including nested blocks. Trigger is `0`. Renumber everything after the insertion point.
-5. **Extended schemas**: `extended_input_schema` is REQUIRED for structured `input` fields (arrays, nested objects) or Workato silently drops them on save. `extended_output_schema` is REQUIRED whenever a downstream datapill references the step's output.
+5. **Extended schemas**: `extended_input_schema` is REQUIRED for structured `input` fields (arrays, nested objects) or Workato silently drops them on save. `extended_output_schema` is REQUIRED whenever a downstream datapill references the step's output. `workato_ui_save_recipe_code` reads the tree back and fails with `save_status:"persisted_incomplete"` when a strip happens — that error names the fields whose schema is missing.
 6. **`keyword:"repeat"`**, not `"repeat_while"` — the `while_condition` is the first child of the repeat's `block`.
 7. **`return_result`**: `keyword:"action"` (not its own keyword), `name:"return_result"`, `provider:"workato_recipe_function"`.
+8. **Datapill JSON must be compact**: Workato matches `#{_dp('<json>')}` byte-for-byte, so `json.dumps` spacing (`", "` / `": "`) makes the pill unrecognizable — it saves fine and resolves to an empty value. Serialize with no separator spaces (`json.dumps(pill, separators=(",", ":"))`).
 
 ## Critical rules — formulas
 

@@ -71,6 +71,12 @@ export interface SaveRecipeCodeArgs extends TabTargetArgs {
   description?: string;
   /** Stop a running recipe, save, then start it again — one atomic call. */
   restart_if_running?: boolean;
+  /**
+   * Start the recipe after the save even when it was already stopped before
+   * the call. `restart_if_running` only restores what the save itself stopped;
+   * this is the flag for "I want it running when you're done".
+   */
+  ensure_running?: boolean;
   /** Version comment to set on the newly created version after a successful save. */
   comment?: string;
   /**
@@ -78,6 +84,12 @@ export interface SaveRecipeCodeArgs extends TabTargetArgs {
    * not exactly this value (someone else edited since you pulled).
    */
   expected_base_version_no?: number;
+  /**
+   * Read the saved tree back and compare it with what was sent (default true).
+   * Set false only to push a tree past a verification the caller knows to be
+   * a false positive — it disables the silent-strip guard.
+   */
+  verify_readback?: boolean;
 }
 
 export interface StepInfo {
