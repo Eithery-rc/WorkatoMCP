@@ -426,6 +426,20 @@ export function parseToolJson(result: CallToolResult): JsonObject {
   throw new Error('tool response did not contain a JSON object');
 }
 
+/** Save-response fields a mutator caller must not lose to the summary. */
+const SAVE_SIGNAL_KEYS = [
+  'save_status',
+  'was_running',
+  'running_after_save',
+  'restarted',
+  'restart_error',
+  'stopped_at',
+  'datapills_normalized',
+  'verification_error',
+  'value_mismatches',
+  'version_no_unknown',
+] as const;
+
 export function buildMutatorSummary(
   toolName: string,
   input: {
@@ -433,21 +447,51 @@ export function buildMutatorSummary(
     version_no: unknown;
     code_errors: unknown;
     mutation: MutationSummary;
+    /**
+     * The underlying save's own report. A mutator that silently swallowed it
+     * would hand back a clean "updated recipe N" for a save that left the
+     * recipe stopped, or whose readback could not be verified at all.
+     */
+    save?: JsonObject;
   },
 ): CallToolResult {
   const codeErrors = Array.isArray(input.code_errors) ? input.code_errors : [];
-  const payload = {
+  const save = input.save ?? {};
+  const payload: JsonObject = {
     ok: true,
     recipe_id: input.recipe_id,
     version_no: input.version_no,
     mutation: input.mutation,
     code_errors: codeErrors,
   };
+  for (const key of SAVE_SIGNAL_KEYS) {
+    if (save[key] !== undefined) payload[key] = save[key];
+  }
+
+  // A recipe left stopped, or a readback that never happened, has to reach the
+  // first line — the payload alone is too easy to skim past.
+  const notices: string[] = [];
+  if (save.running_after_save === false) {
+    notices.push('recipe is STOPPED (pass ensure_running:true to start it)');
+  }
+  if (save.restarted === false) notices.push('RESTART FAILED — recipe is stopped');
+  if (typeof save.verification_error === 'string') {
+    notices.push(`readback NOT verified: ${save.verification_error}`);
+  }
+  if (save.save_status === 'already_applied') {
+    notices.push('already at this tree — no new version created');
+  }
+
+  const versionLabel =
+    input.version_no === undefined || input.version_no === null
+      ? 'version unknown'
+      : `version ${String(input.version_no)}`;
   const text =
-    `${toolName} updated recipe ${String(input.recipe_id)} (version ${String(input.version_no)}` +
+    `${toolName} updated recipe ${String(input.recipe_id)} (${versionLabel}` +
     (codeErrors.length > 0
       ? `, ${codeErrors.length} validation error${codeErrors.length === 1 ? '' : 's'}`
       : '') +
+    notices.map((n) => `, ${n}`).join('') +
     `)\n${JSON.stringify(payload)}`;
   return { isError: false, content: [{ type: 'text', text }] };
 }
@@ -494,6 +538,9 @@ export async function handleWorkatoRecipeMutatorCall(
     if (args.restart_if_running === true) saveArgs.restart_if_running = true;
     if (args.ensure_running === true) saveArgs.ensure_running = true;
     if (typeof args.comment === 'string') saveArgs.comment = args.comment;
+    // The readback guard is on by default; a mutator caller needs the same
+    // opt-out the save tool gives, or a false positive leaves them no way past.
+    if (args.verify_readback === false) saveArgs.verify_readback = false;
     // Optimistic lock: the mutator just pulled the recipe, so pin the save to
     // the version it mutated unless the caller supplied their own expectation.
     if (typeof args.expected_base_version_no === 'number') {
@@ -508,6 +555,7 @@ export async function handleWorkatoRecipeMutatorCall(
       version_no: saved.version_no,
       code_errors: saved.code_errors,
       mutation,
+      save: saved,
     });
   } catch (error) {
     return errorResult(`${name} failed: ${error instanceof Error ? error.message : String(error)}`);

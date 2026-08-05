@@ -289,6 +289,66 @@ describe('native mutator orchestration helpers', () => {
     });
   });
 
+  test('surfaces the save signals a caller must not miss', () => {
+    const summary = buildMutatorSummary('workato_recipe_set_input_path', {
+      recipe_id: 10,
+      version_no: 77,
+      code_errors: [],
+      mutation: { kind: 'set_input_path', step_number: 2, path: 'records.amount' },
+      save: {
+        was_running: false,
+        running_after_save: false,
+        verification_error: 'code readback failed',
+        datapills_normalized: 2,
+        save_status: 'succeeded_after_timeout',
+      },
+    });
+
+    const text = (summary.content[0] as { text: string }).text;
+    expect(text).toContain('recipe is STOPPED');
+    expect(text).toContain('readback NOT verified: code readback failed');
+    expect(JSON.parse(text.split('\n').pop() ?? '{}')).toMatchObject({
+      version_no: 77,
+      was_running: false,
+      running_after_save: false,
+      datapills_normalized: 2,
+      save_status: 'succeeded_after_timeout',
+    });
+  });
+
+  test('reports an unknown version instead of the word undefined', () => {
+    const summary = buildMutatorSummary('workato_recipe_set_input_path', {
+      recipe_id: 10,
+      version_no: undefined,
+      code_errors: [],
+      mutation: { kind: 'set_input_path', step_number: 2, path: 'records.amount' },
+      save: { save_status: 'succeeded_after_timeout', version_no_unknown: true },
+    });
+
+    const text = (summary.content[0] as { text: string }).text;
+    expect(text).toContain('version unknown');
+    expect(text).not.toContain('undefined');
+  });
+
+  test('forwards verify_readback:false to the underlying save', async () => {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const caller = async (name: string, args: Record<string, unknown>): Promise<CallToolResult> => {
+      calls.push({ name, args });
+      if (name === 'workato_pull_recipe') {
+        return okText({ recipe_id: 10, code: sampleCode(), version: { version_no: 11 } });
+      }
+      return okText({ recipe_id: 10, version_no: 12, code_errors: [] });
+    };
+
+    await handleWorkatoRecipeMutatorCall(
+      'workato_recipe_set_input_path',
+      { recipe_id: 10, step: 2, path: 'message', value: 'changed', verify_readback: false },
+      caller,
+    );
+
+    expect(calls[1].args).toMatchObject({ verify_readback: false });
+  });
+
   test('pulls, mutates, and saves through the provided extension caller', async () => {
     const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
     const caller = async (name: string, args: Record<string, unknown>): Promise<CallToolResult> => {

@@ -2014,6 +2014,9 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
 
       let result: SaveRecipeCodePageResult | undefined;
       let saveStatus: string | undefined;
+      // A readback the timeout path already paid for. Reused by the post-save
+      // verification below instead of fetching the same tree twice.
+      let timeoutVerification: { diff: TreeDiff | null; error?: string } | undefined;
       try {
         result = await evaluateInPage<SaveRecipeCodePageResult>(tabId, expr, {
           awaitPromise: true,
@@ -2022,7 +2025,7 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
         // Timeout ≠ failure: the PUT may have landed. Verify via version_no,
         // and — when the version alone is inconclusive — by comparing the
         // stored tree with the one we sent.
-        const after = await this.fetchStatus(tabId, args.recipe_id);
+        let after = await this.fetchStatus(tabId, args.recipe_id);
         const landed =
           after.ok &&
           typeof after.version_no === 'number' &&
@@ -2030,14 +2033,19 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
           after.version_no > baseVersion;
         let treeMatches = false;
         if (!landed) {
-          const { diff } = await this.verifyPersisted(tabId, args.recipe_id, sentTree);
-          treeMatches = diff !== null && isFullyPersisted(diff);
+          timeoutVerification = await this.verifyPersisted(tabId, args.recipe_id, sentTree);
+          treeMatches =
+            timeoutVerification.diff !== null && isFullyPersisted(timeoutVerification.diff);
         }
         if (landed || treeMatches) {
+          // The first status probe can lose the same race the save did. When
+          // the tree proves the save landed, ask once more rather than
+          // reporting a version we never read.
+          if (!after.ok) after = await this.fetchStatus(tabId, args.recipe_id);
           result = {
             ok: true,
             recipe_id: args.recipe_id,
-            version_no: after.ok ? after.version_no : undefined,
+            version_no: typeof after.version_no === 'number' ? after.version_no : undefined,
             code_errors: [],
           };
           saveStatus = 'succeeded_after_timeout';
@@ -2081,15 +2089,21 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
       const verification =
         args.verify_readback === false
           ? { diff: null as TreeDiff | null, error: undefined as string | undefined }
-          : await this.verifyPersisted(tabId, args.recipe_id, sentTree);
+          : (timeoutVerification ?? (await this.verifyPersisted(tabId, args.recipe_id, sentTree)));
+
+      // The save may have landed without us ever reading back a version_no.
+      // Say "unknown" rather than printing the word `undefined` at the caller.
+      const versionLabel =
+        typeof result.version_no === 'number' ? `version ${result.version_no}` : 'version unknown';
+
       const strippedInputs = verification.diff && verification.diff.missing.length > 0;
       if (strippedInputs) {
         const suffix = stoppedForSave
           ? ` The recipe was stopped for this save and has NOT been restarted (stopped_at=${stoppedAt}).`
           : '';
         return createErrorResponse(
-          `workato_ui_save_recipe_code: saved recipe ${args.recipe_id} as version ` +
-            `${result.version_no}, but the readback does not match what was sent.\n` +
+          `workato_ui_save_recipe_code: saved recipe ${args.recipe_id} as ` +
+            `${versionLabel}, but the readback does not match what was sent.\n` +
             describeMissing(verification.diff!) +
             suffix +
             ` (retriable: false — fix the schema first)\n` +
@@ -2154,6 +2168,9 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
       };
       if (baseVersion !== null) payload.base_version_no = baseVersion;
       if (saveStatus) payload.save_status = saveStatus;
+      // JSON.stringify drops an undefined value outright — flag the gap so a
+      // caller reading the payload can't mistake it for "no version field".
+      if (result.version_no === undefined) payload.version_no_unknown = true;
       if (normalized.normalized > 0) payload.datapills_normalized = normalized.normalized;
       if (wasRunning !== undefined) payload.was_running = wasRunning;
       if (stoppedForSave) payload.stopped_at = stoppedAt;
@@ -2179,7 +2196,7 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
           ? ', recipe is STOPPED (it was stopped before this save; pass ensure_running:true to start it)'
           : '';
       const text =
-        `saved recipe ${result.recipe_id} (version ${result.version_no}` +
+        `saved recipe ${result.recipe_id} (${versionLabel}` +
         (errCount > 0 ? `, ${errCount} validation error${errCount === 1 ? '' : 's'}` : '') +
         (startAfterSave
           ? restarted
