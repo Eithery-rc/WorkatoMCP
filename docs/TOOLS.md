@@ -163,21 +163,21 @@ Deleting a folder removes everything inside it. There is no undo.
 
 These mutate the recipe's JSON code tree directly — GET the tree, change it, PUT it back — with no editor UI involved. They are the preferred way to edit recipes.
 
-| Tool                                 | Required                                                          | Optional                                                                  | Description                                            |
-| ------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `workato_recipe_add_step`            | `recipe_id`, `after_step`, `provider`, `action_name`              | `input`, `keyword`                                                        | Insert a step                                          |
-| `workato_recipe_set_step_input`      | `recipe_id`, `step_number`, `field`, `value`                      | —                                                                         | Set a top-level input field                            |
-| `workato_recipe_set_input_path`      | `recipe_id`, `step`, `path`, `value`                              | `value_kind`, `restart_if_running`, `comment`, `expected_base_version_no` | Set a **nested** input value                           |
-| `workato_recipe_delete_input_path`   | `recipe_id`, `step`, `path`                                       | —                                                                         | Delete a nested leaf                                   |
-| `workato_recipe_map_datapill`        | `recipe_id`, `target_step`, `target_field`, `source_step`, `path` | —                                                                         | Build a `_dp(...)` datapill mapping                    |
-| `workato_recipe_set_py_eval_code`    | `recipe_id`, `step`                                               | `code`, `code_path`, `validate_step`                                      | Replace a Python-by-Workato step's code body           |
-| `workato_recipe_set_extended_schema` | `recipe_id`, `step`, `kind`, `schema`                             | —                                                                         | Set `extended_input_schema` / `extended_output_schema` |
+| Tool                                 | Required                                                          | Optional                                                                                                       | Description                                            |
+| ------------------------------------ | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `workato_recipe_add_step`            | `recipe_id`, `after_step`, `provider`, `action_name`              | `input`, `keyword`                                                                                             | Insert a step                                          |
+| `workato_recipe_set_step_input`      | `recipe_id`, `step_number`, `field`, `value`                      | —                                                                                                              | Set a top-level input field                            |
+| `workato_recipe_set_input_path`      | `recipe_id`, `step`, `path`, `value`                              | `value_kind`, `restart_if_running`, `ensure_running`, `comment`, `expected_base_version_no`, `verify_readback` | Set a **nested** input value                           |
+| `workato_recipe_delete_input_path`   | `recipe_id`, `step`, `path`                                       | —                                                                                                              | Delete a nested leaf                                   |
+| `workato_recipe_map_datapill`        | `recipe_id`, `target_step`, `target_field`, `source_step`, `path` | —                                                                                                              | Build a `_dp(...)` datapill mapping                    |
+| `workato_recipe_set_py_eval_code`    | `recipe_id`, `step`                                               | `code`, `code_path`, `validate_step`                                                                           | Replace a Python-by-Workato step's code body           |
+| `workato_recipe_set_extended_schema` | `recipe_id`, `step`, `kind`, `schema`                             | —                                                                                                              | Set `extended_input_schema` / `extended_output_schema` |
 
 `workato_recipe_set_input_path` is the workhorse for one-field fixes. The step is addressed by number or `as` anchor (nested blocks are searched recursively), and `path` may be a dotted string like `records.item.items[0].amount` or an array of segments. It creates missing intermediate containers, refuses unsafe segments and non-container parents, and leaves every unrelated field of the tree untouched. Values can be literals, formula strings, interpolated strings, or datapill shorthand — `datapill(provider.line.list_items[].AssetId)` expresses a current-item pill inside a `foreach`.
 
 `workato_recipe_set_py_eval_code` takes `code_path` so a Python file goes straight from disk into the step without passing through the model's context.
 
-All of these accept `restart_if_running`, `comment`, and `expected_base_version_no`, forwarded to the underlying save.
+All of these accept `restart_if_running`, `ensure_running`, `comment`, `expected_base_version_no`, and `verify_readback`, forwarded to the underlying save. The save's own report comes back with the mutation summary, so `save_status`, `was_running`, `restarted` / `restart_error`, `verification_error`, `value_mismatches`, and `datapills_normalized` reach the caller instead of being flattened into a bare "updated recipe N". A recipe left stopped, a failed restart, and an unverified readback are each called out on the summary's first line.
 
 ## Recipe editor UI
 

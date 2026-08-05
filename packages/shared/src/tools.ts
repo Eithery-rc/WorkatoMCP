@@ -3142,6 +3142,14 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Optimistic lock forwarded to the save. Defaults to the version_no this call just pulled, so concurrent edits are refused automatically.',
         },
+        verify_readback: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: read the stored tree back and fail when Workato ' +
+            'silently dropped input keys (default true). Set false only to push past a ' +
+            'verification you have established is a false positive.',
+          default: true,
+        },
         tabId: { type: 'number', description: 'Target tab ID for the final save (optional).' },
         windowId: { type: 'number', description: 'Window ID for the final save (optional).' },
       },
