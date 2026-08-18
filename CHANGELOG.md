@@ -6,6 +6,13 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+## bridge 1.3.11 · shared 1.0.10 (2026-08-18)
+
+### Added
+
+- `workato_copy_recipe`: clone a recipe into any folder (`POST /recipes/<id>/copy.json`); returns the new recipe id. A timed-out copy is verified against the destination folder's recipe list instead of being retried blind.
+- `workato_delete_recipe`: permanently delete a recipe (`DELETE /recipes/<id>.json`). Pre-reads the recipe, fails fast when it does not exist, and refuses a running recipe until it is stopped; a timed-out delete is verified via the recipe 404ing.
+
 ## bridge 1.3.10 · shared 1.0.9 — 2026-08-05
 
 ### Fixed

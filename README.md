@@ -162,11 +162,11 @@ Open Workato in Chrome, sign in, leave the tab open, and call a tool. The bridge
 
 ## Tools
 
-66 Workato tools. Full signatures, parameters, and response shapes are in **[docs/TOOLS.md](docs/TOOLS.md)**.
+68 Workato tools. Full signatures, parameters, and response shapes are in **[docs/TOOLS.md](docs/TOOLS.md)**.
 
 | Family                                                             | Count | Prefix                | What it covers                                                                  |
 | ------------------------------------------------------------------ | ----: | --------------------- | ------------------------------------------------------------------------------- |
-| [Recipes & versions](docs/TOOLS.md#recipes--versions)              |     7 | `workato_`            | Pull the code tree, rename, start/stop, status, version diff, version comments  |
+| [Recipes & versions](docs/TOOLS.md#recipes--versions)              |     9 | `workato_`            | Pull the code tree, rename, copy, delete, start/stop, status, version diff      |
 | [Jobs](docs/TOOLS.md#jobs)                                         |     3 | `workato_`            | List jobs, per-step traces, re-run by master job id                             |
 | [Search & connections](docs/TOOLS.md#search--connections)          |     3 | `workato_`            | Find recipes and connections, inspect a connection (secrets stripped)           |
 | [Connector execution](docs/TOOLS.md#connector-execution)           |     2 | `workato_`            | SOQL/SuiteQL/SQL queries and the gated universal action runner                  |
