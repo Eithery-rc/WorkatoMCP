@@ -77,6 +77,8 @@ export const TOOL_NAMES = {
     UPDATE_FOLDER: 'workato_update_folder',
     DELETE_FOLDER: 'workato_delete_folder',
     MOVE_RECIPE: 'workato_move_recipe',
+    COPY_RECIPE: 'workato_copy_recipe',
+    DELETE_RECIPE: 'workato_delete_recipe',
     CREATE_PROJECT: 'workato_create_project',
     UPDATE_PROJECT: 'workato_update_project',
   },
@@ -1931,6 +1933,62 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['recipe_id', 'folder_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.COPY_RECIPE,
+    description:
+      'Copy (clone) a recipe by POSTing /recipes/<id>/copy.json with {folder_id}. Returns the ' +
+      'new recipe id. The copy is created stopped, with the same code tree as the source; get the ' +
+      'destination folder id from workato_list_folders (project root folder ids work, and copying ' +
+      'into another project is allowed). If the request times out, the tool re-reads the ' +
+      "destination folder's recipe list to check whether the copy landed before reporting failure " +
+      '(succeeded_after_timeout:true). Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description:
+            'Numeric Workato recipe id of the source recipe. Found in the recipe URL: ' +
+            'app.workato.com/recipes/<recipe_id>-<slug>.',
+        },
+        folder_id: {
+          type: 'number',
+          description: 'Destination folder id for the copy (from workato_list_folders).',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id', 'folder_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.DELETE_RECIPE,
+    description:
+      'Permanently delete a recipe by DELETEing /recipes/<id>.json. There is no undo, so only ' +
+      'call this when the user explicitly asked for the deletion. The tool pre-reads the recipe ' +
+      'and refuses when it is running (stop it first with workato_stop_recipe). If the request ' +
+      'times out, the tool re-reads the recipe to verify it is gone before reporting failure ' +
+      '(succeeded_after_timeout:true). Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description:
+            'Numeric Workato recipe id. Found in the recipe URL: app.workato.com/recipes/<recipe_id>-<slug>.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id'],
     },
   },
   {

@@ -19,4 +19,6 @@ export {
   workatoDeleteFolderTool,
 } from './folders';
 export { workatoMoveRecipeTool } from './move-recipe';
+export { workatoCopyRecipeTool } from './copy-recipe';
+export { workatoDeleteRecipeTool } from './delete-recipe';
 export { workatoCreateProjectTool, workatoUpdateProjectTool } from './create-project';

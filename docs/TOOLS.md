@@ -51,6 +51,8 @@ Every tool also accepts `tabId` (and the UI/table families accept `windowId`); t
 | ----------------------------- | --------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `workato_pull_recipe`         | `recipe_id`                       | `view`, `step`, `field_query`, `out_file`, `timeout_ms` | Fetch a recipe's code tree plus version metadata                         |
 | `workato_rename_recipe`       | `recipe_id`, `name`               | —                                                       | Rename a recipe (`PUT /recipes/<id>.json`)                               |
+| `workato_copy_recipe`         | `recipe_id`, `folder_id`          | —                                                       | Copy a recipe into a folder; returns the new recipe id                   |
+| `workato_delete_recipe`       | `recipe_id`                       | —                                                       | Permanently delete a recipe (refused while it is running)                |
 | `workato_start_recipe`        | `recipe_id`                       | `wait`, `wait_timeout_ms`                               | Start a recipe; `wait: true` polls until the state flips                 |
 | `workato_stop_recipe`         | `recipe_id`                       | `force`, `wait`, `wait_timeout_ms`                      | Stop a recipe; `force: true` enqueues the stop despite active dependents |
 | `workato_recipe_status`       | `recipe_id`                       | —                                                       | Cheap live-state read — the standard post-write verification             |
