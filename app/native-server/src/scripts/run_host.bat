@@ -185,10 +185,19 @@ if defined ANTHROPIC_AUTH_TOKEN (
     echo ANTHROPIC_AUTH_TOKEN is set (value hidden) >> "%WRAPPER_LOG%"
 )
 
-echo Executing: "%NODE_EXEC%" "%NODE_SCRIPT%" >> "%WRAPPER_LOG%"
-call "%NODE_EXEC%" "%NODE_SCRIPT%" 2>> "%STDERR_LOG%"
-set "EXIT_CODE=%ERRORLEVEL%"
-
-echo Exit code: %EXIT_CODE% >> "%WRAPPER_LOG%"
-endlocal
-exit /B %EXIT_CODE%
+REM Apply any pending bridge self-update before the host starts: nothing locks
+REM the package directory yet, so npm can replace the install (see
+REM apply-update.cjs; it never blocks the launch on failure). The whole tail
+REM runs as ONE parenthesized block so cmd has it parsed in memory before npm
+REM replaces this script on disk mid-execution.
+(
+    if exist "%SCRIPT_DIR%\apply-update.cjs" (
+        echo Running apply-update.cjs >> "%WRAPPER_LOG%"
+        call "%NODE_EXEC%" "%SCRIPT_DIR%\apply-update.cjs" >> "%WRAPPER_LOG%" 2>>&1
+    )
+    echo Executing: "%NODE_EXEC%" "%NODE_SCRIPT%" >> "%WRAPPER_LOG%"
+    call "%NODE_EXEC%" "%NODE_SCRIPT%" 2>> "%STDERR_LOG%"
+    set "EXIT_CODE=!ERRORLEVEL!"
+    echo Exit code: !EXIT_CODE! >> "%WRAPPER_LOG%"
+    endlocal & exit /B !EXIT_CODE!
+)

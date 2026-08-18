@@ -261,4 +261,11 @@ if [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
     echo "ANTHROPIC_AUTH_TOKEN is set (value hidden)" >> "${WRAPPER_LOG}"
 fi
 
+# Apply any pending bridge self-update before the host starts: nothing locks
+# the package directory yet, so npm can replace the install (see
+# apply-update.cjs; it never blocks the launch on failure).
+if [ -f "${SCRIPT_DIR}/apply-update.cjs" ]; then
+    "${NODE_EXEC}" "${SCRIPT_DIR}/apply-update.cjs" >> "${WRAPPER_LOG}" 2>&1 || true
+fi
+
 exec "${NODE_EXEC}" "${NODE_SCRIPT}" 2>> "${STDERR_LOG}"
