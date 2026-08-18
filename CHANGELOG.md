@@ -6,6 +6,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+## bridge 1.3.12 (2026-08-18)
+
+### Added
+
+- **Bridge self-update.** The running bridge polls the npm registry every 4 hours (same-major versions only) and flags newer releases; the `run_host` wrappers apply the pending install via `apply-update.cjs` before the next host launch, when nothing locks the package directory. Once an update is pending and the MCP surface has been idle for 10 minutes, the host restarts itself so the extension's reconnect respawns it on the new version, with no user action. Failed installs back off and give up after 3 attempts (see `update.log` in the bridge state directory); a running host never blocks on the updater.
+
 ## bridge 1.3.11 · shared 1.0.10 (2026-08-18)
 
 ### Added

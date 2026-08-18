@@ -28,6 +28,7 @@ import { randomUUID } from 'node:crypto';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { createMcpServer } from '../mcp/mcp-server';
 import { profileRegistry } from './profile-registry';
+import { markMcpActivity } from '../update-checker';
 
 // ============================================================
 // Types
@@ -104,6 +105,11 @@ export class Server {
   }
 
   private setupPlugins(): void {
+    // Any request except health checks counts as activity; the update
+    // checker's idle restart waits for this to go quiet.
+    this.fastify.addHook('onRequest', async (request) => {
+      if (request.url !== '/ping') markMcpActivity();
+    });
     this.fastify.register(fastifyWebsocket);
     this.fastify.register(cors, {
       origin: (origin, cb) => {

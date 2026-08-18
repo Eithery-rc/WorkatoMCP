@@ -93,6 +93,20 @@ try {
   console.error('Error copying wrapper scripts:', error);
 }
 
+console.log('Copying apply-update.cjs...');
+const applyUpdateSourcePath = path.join(scriptsSourceDir, 'apply-update.cjs');
+const applyUpdateDestPath = path.join(distDir, 'apply-update.cjs');
+try {
+  if (fs.existsSync(applyUpdateSourcePath)) {
+    fs.copyFileSync(applyUpdateSourcePath, applyUpdateDestPath);
+    console.log(`Copied ${applyUpdateSourcePath} to ${applyUpdateDestPath}`);
+  } else {
+    console.error(`Error: apply-update script not found: ${applyUpdateSourcePath}`);
+  }
+} catch (error) {
+  console.error('Error copying apply-update script:', error);
+}
+
 console.log('Adding execute permissions...');
 const filesToMakeExecutable = ['index.js', 'cli.js', 'run_host.sh'];
 
