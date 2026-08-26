@@ -1,4 +1,10 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import {
+  compilePythonSource,
+  describePyEvalFailure,
+  lintPyEvalSource,
+  type PyLintIssue,
+} from './workato-pyeval-lint';
 
 export const WORKATO_RECIPE_MUTATOR_TOOLS = {
   SET_INPUT_PATH: 'workato_recipe_set_input_path',
@@ -29,6 +35,10 @@ interface MutationSummary {
   step_as?: string;
   path?: string;
   schema_kind?: string;
+  /** Non-blocking findings, e.g. a py_eval output shadowing a code_input key. */
+  warnings?: PyLintIssue[];
+  /** How the Python source was checked, so a skipped compile is never read as a pass. */
+  python_check?: string;
 }
 
 const UNSAFE_PATH_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
@@ -261,7 +271,32 @@ function deleteAtPath(root: JsonObject, segments: PathSegment[]): void {
   }
 }
 
-function parseDatapillShorthand(value: string): JsonObject {
+/**
+ * Parse the path portion of a datapill shorthand.
+ *
+ * Two array accessors ride on a path segment, matching what the editor emits:
+ *   `rows[]`     -> the element under iteration  {path_element_type:"current_item"}
+ *   `rows#size`  -> the collection's length      {path_element_type:"size"}
+ */
+export function parseDatapillPath(rawPath: string[]): unknown[] {
+  const path: unknown[] = [];
+  for (const part of rawPath) {
+    if (part.endsWith('[]')) {
+      const name = part.slice(0, -2);
+      if (name.length > 0) path.push(name);
+      path.push({ path_element_type: 'current_item' });
+    } else if (part.endsWith('#size')) {
+      const name = part.slice(0, -'#size'.length);
+      if (name.length > 0) path.push(name);
+      path.push({ path_element_type: 'size' });
+    } else if (part.length > 0) {
+      path.push(part);
+    }
+  }
+  return path;
+}
+
+export function parseDatapillShorthand(value: string): JsonObject {
   const trimmed = value.trim();
   const inner =
     trimmed.startsWith('datapill(') && trimmed.endsWith(')')
@@ -274,18 +309,7 @@ function parseDatapillShorthand(value: string): JsonObject {
     );
   }
 
-  const path: unknown[] = [];
-  for (const part of rawPath) {
-    if (part.endsWith('[]')) {
-      const name = part.slice(0, -2);
-      if (name.length > 0) path.push(name);
-      path.push({ path_element_type: 'current_item' });
-    } else {
-      path.push(part);
-    }
-  }
-
-  return { pill_type: 'output', provider, line, path };
+  return { pill_type: 'output', provider, line, path: parseDatapillPath(rawPath) };
 }
 
 function datapillToInterpolated(value: unknown): string {
@@ -370,13 +394,27 @@ export function mutateRecipeCode(name: string, args: JsonObject, code: unknown):
     ) {
       throw new Error('target step is not a py_eval invoke_custom_py_code step');
     }
-    ensureInput(step).code = args.code;
-    return {
+
+    // A py_eval step's declared inputs arrive as variables of the same name,
+    // so an output reusing one silently destroys the input — the `rows`
+    // shadowing incident. Structural errors (a bad indent from a string
+    // replace that matched the wrong occurrence) refuse the save outright.
+    const input = ensureInput(step);
+    const codeInput = isRecord(input.code_input) ? Object.keys(input.code_input) : [];
+    const lint = lintPyEvalSource(args.code, codeInput);
+    if (lint.errors.length > 0) {
+      throw new Error(describePyEvalFailure(lint, null, 'the code being written'));
+    }
+
+    input.code = args.code;
+    const summary: MutationSummary = {
       kind: 'set_py_eval_code',
       step_number: step.number,
       step_as: step.as,
       path: 'code',
     };
+    if (lint.warnings.length > 0) summary.warnings = lint.warnings;
+    return summary;
   }
 
   if (name === WORKATO_RECIPE_MUTATOR_TOOLS.SET_EXTENDED_SCHEMA) {
@@ -464,6 +502,7 @@ export function buildMutatorSummary(
     mutation: input.mutation,
     code_errors: codeErrors,
   };
+  const lintWarnings = Array.isArray(input.mutation.warnings) ? input.mutation.warnings : [];
   for (const key of SAVE_SIGNAL_KEYS) {
     if (save[key] !== undefined) payload[key] = save[key];
   }
@@ -480,6 +519,11 @@ export function buildMutatorSummary(
   }
   if (save.save_status === 'already_applied') {
     notices.push('already at this tree — no new version created');
+  }
+  // A shadowed input produces wrong data with no error anywhere, so it has to
+  // reach the first line rather than sit inside the payload.
+  for (const warning of lintWarnings) {
+    notices.push(`WARNING line ${warning.line}: ${warning.message}`);
   }
 
   const versionLabel =
@@ -516,6 +560,22 @@ export async function handleWorkatoRecipeMutatorCall(
     }
     requireRecipeId(args);
 
+    // Compile with a real Python when one is on PATH. Done before the pull so
+    // a syntax error costs nothing, and reported honestly when unavailable —
+    // "not checked" must never read as "checked and fine".
+    let pythonCheck: string | undefined;
+    if (name === WORKATO_RECIPE_MUTATOR_TOOLS.SET_PY_EVAL_CODE && typeof args.code === 'string') {
+      const compiled = compilePythonSource(args.code);
+      if (compiled.available && !compiled.ok) {
+        return errorResult(
+          `${name} failed: ${describePyEvalFailure({ errors: [], warnings: [] }, compiled, 'the code being written')}`,
+        );
+      }
+      pythonCheck = compiled.available
+        ? `compiled with ${compiled.interpreter}`
+        : 'no python on PATH — structural lint only, syntax NOT verified';
+    }
+
     const pullArgs: JsonObject = { recipe_id: args.recipe_id, view: 'full' };
     if (typeof args.tabId === 'number') pullArgs.tabId = args.tabId;
     if (typeof args.windowId === 'number') pullArgs.windowId = args.windowId;
@@ -525,6 +585,7 @@ export async function handleWorkatoRecipeMutatorCall(
     if (!isRecord(code)) throw new Error('workato_pull_recipe did not return a recipe code object');
 
     const mutation = mutateRecipeCode(name, args, code);
+    if (pythonCheck) mutation.python_check = pythonCheck;
     const version = isRecord(pulled.version) ? pulled.version : {};
     const saveArgs: JsonObject = {
       recipe_id: args.recipe_id,

@@ -15,6 +15,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import {
+  compilePythonSource,
+  describePyEvalFailure,
+  lintPyEvalSource,
+} from './workato-pyeval-lint';
 
 export const PULL_RECIPE_TOOL = 'workato_pull_recipe';
 export const SAVE_RECIPE_CODE_TOOL = 'workato_ui_save_recipe_code';
@@ -129,9 +134,59 @@ function loadPyEvalCodeFile(rawArgs: Record<string, unknown>): Record<string, un
  * Pre-process a tool call. For the two file-aware Workato tools this resolves
  * `code_path` / `out_file`; every other tool is returned unchanged.
  */
+/**
+ * Validate every py_eval step in a code tree about to be saved.
+ *
+ * A full-tree save carries Python that nothing else checks: the extension has
+ * no interpreter and no parser, so this is the only place a broken py_eval can
+ * be caught before it is stored. Throws on a syntax error; shadowing warnings
+ * are attached to the args so the save response can carry them.
+ */
+function validatePyEvalSteps(code: unknown): string[] {
+  const notes: string[] = [];
+  const seen = new Set<unknown>();
+
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const child of node) walk(child);
+      return;
+    }
+    if (!node || typeof node !== 'object' || seen.has(node)) return;
+    seen.add(node);
+    const step = node as Record<string, unknown>;
+
+    if (step.provider === 'py_eval' && step.name === 'invoke_custom_py_code') {
+      const input = (step.input ?? {}) as Record<string, unknown>;
+      if (typeof input.code === 'string' && input.code.trim().length > 0) {
+        const label = `py_eval step ${String(step.number ?? '?')} (${String(step.as ?? '?')})`;
+        const codeInput =
+          input.code_input && typeof input.code_input === 'object'
+            ? Object.keys(input.code_input as Record<string, unknown>)
+            : [];
+        const lint = lintPyEvalSource(input.code, codeInput);
+        const compiled = compilePythonSource(input.code);
+        if (lint.errors.length > 0 || (compiled.available && !compiled.ok)) {
+          throw new Error(`${label}: ${describePyEvalFailure(lint, compiled, label)}`);
+        }
+        for (const warning of lint.warnings) {
+          notes.push(`${label} line ${warning.line}: ${warning.message}`);
+        }
+      }
+    }
+    if (Array.isArray(step.block)) walk(step.block);
+  };
+
+  walk(code);
+  return notes;
+}
+
 export function prepareWorkatoCall(name: string, rawArgs: Record<string, unknown>): PreparedCall {
-  if (name === SAVE_RECIPE_CODE_TOOL && typeof rawArgs.code_path === 'string') {
-    return { args: loadRecipeFile(rawArgs) };
+  if (name === SAVE_RECIPE_CODE_TOOL) {
+    const args = typeof rawArgs.code_path === 'string' ? loadRecipeFile(rawArgs) : { ...rawArgs };
+    // Runs for both forms — a tree passed inline is no safer than one on disk.
+    const warnings = validatePyEvalSteps(args.code);
+    if (warnings.length > 0) args.py_eval_warnings = warnings;
+    return { args };
   }
   if (name === SET_PY_EVAL_CODE_TOOL && typeof rawArgs.code_path === 'string') {
     return { args: loadPyEvalCodeFile(rawArgs) };

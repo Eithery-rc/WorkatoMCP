@@ -1,7 +1,12 @@
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
-import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
+import {
+  findWorkatoTab,
+  runInWorkatoTab,
+  workatoNotFoundHint,
+  WorkatoDispatchError,
+} from './tab-dispatch';
 
 /**
  * workato_recipe_status — the cheap post-write verification read.
@@ -117,7 +122,8 @@ export async function fetchRecipeStatus(
   if (!result.ok || !result.status) {
     throw new WorkatoDispatchError(
       'UnexpectedShape',
-      `recipe status fetch failed (${result.failure?.stage}): ${result.failure?.message ?? 'unknown'}`,
+      `recipe status fetch failed (${result.failure?.stage}): ${result.failure?.message ?? 'unknown'}` +
+        workatoNotFoundHint(result.failure?.status),
     );
   }
   return result.status;

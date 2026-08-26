@@ -37,8 +37,10 @@ import {
   sleep,
 } from './dom-helpers';
 import {
+  describeBrokenDatapills,
   describeMissing,
   diffPersistedTree,
+  findBrokenDatapills,
   isFullyPersisted,
   normalizeCodeTree,
   type TreeDiff,
@@ -1904,6 +1906,18 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
       if (!/workato\.(com|is)/.test(url)) {
         return createErrorResponse(
           `workato_ui_save_recipe_code: resolved tab is not a Workato page (url=${url}).`,
+        );
+      }
+
+      // --- Datapill integrity ----------------------------------------------
+      // A pill whose payload is not JSON cannot be normalized and cannot
+      // resolve; Workato stores it and returns an empty value at runtime. That
+      // is unrecoverable-looking data loss from a save that reported success,
+      // so it is refused here rather than normalized around.
+      const broken = findBrokenDatapills(args.code);
+      if (broken.length > 0) {
+        return createErrorResponse(
+          `workato_ui_save_recipe_code: ${describeBrokenDatapills(broken)}`,
         );
       }
 

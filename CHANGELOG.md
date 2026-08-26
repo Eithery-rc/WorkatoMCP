@@ -6,6 +6,31 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+## bridge 1.4.0 · shared 1.1.0 (2026-08-26)
+
+### Added
+
+- **Workflow App (LCAP) page tools.** `workato_lcap_apps_list`, `workato_lcap_page_get` (widget index by default, `view:"full"` or `out_file` for the whole tree), `workato_lcap_page_save`, `workato_lcap_page_validate`, `workato_lcap_widget_patch`, `workato_lcap_page_create`, `workato_lcap_page_delete`. A page is a JSON tree with no partial update, and every failure mode in it is silent, so the save path carries the guards: it refuses while the page's builder is open (the builder's own Save overwrites an API write), refuses a widget id disappearing, refuses a layout whose row extent collapses (the failure that leaves later containers with no computed `top`, stacked at 0, with valid JSON and no error anywhere), refuses an unparseable `_dp` payload, validates `visible` expressions against the opcode table and per-opcode arity, and probes the rendered page afterwards. `workato_lcap_widget_patch` is the safe subset: presentation props only, with `id`, `handlers`, `appFunctionOptions`, `visible` and `layout` refused.
+- `workato_api_request`: raw authenticated call against the Workato app host under the user's session, for endpoints no dedicated tool covers yet. Same-origin paths only, CSRF attached automatically and never echoed back, `allow_writes` required for anything other than GET or HEAD, large responses to `out_file`.
+- `workato_adapter_meta`: read an adapter's real trigger and action definitions from `/integrations/meta`. Returns an operation index by default; field lists arrive with `operation` or `field_grep`. This is the authority on field names, and it replaces guess-save-pull-check cycles.
+- `workato_recipe_save_with_dependents`: stop the dependent recipes, save the callee, restore each dependent to the state it was in. Refuses to run blind: Workato exposes only a dependent _count_, and only as a stop-time error, so the call needs `dependent_recipe_ids` or `scan_folder_id` rather than reporting "could not look" as "there are none".
+- `workato_callable_schema_set` and `workato_caller_bind`: write the four coupled artefacts of a callable recipe in one call, and bind a caller to it. The schema setter migrates values found flat on `return_result.input` under the `result` wrapper, which is the shape that produces a silent `result: null` in every caller.
+- `workato_datapill`: build a datapill reference in any of the three dialects (recipe step, page widget, page variable), interpolated or formula mode, compact by construction.
+- `workato_lookup_table_row_upsert`: update by key column or create, refusing on multiple matches instead of picking one.
+- `skills/workato-recipes/workflow-apps.md`: the Workflow App page format, confirmed against a live page rather than inferred, including the full conditional-`visible` opcode table, the handler shapes, and the app-function trigger markers.
+
+### Changed
+
+- `run_suiteql` and `run_query` are read-only in `workato_call_action`, so a schema probe no longer needs `allow_writes: true`.
+- A save now refuses a `_dp('...')` payload that is not parseable JSON. Compaction already fixed the spacing case; a corrupt payload used to pass through and resolve to nothing.
+- py_eval code is compiled and linted before it is pushed, on both `workato_recipe_set_py_eval_code` and full-tree saves. Without python on PATH the response says the syntax was not verified rather than implying a pass. Names that shadow a declared `code_input` key are warned about.
+- `Tab not found` now names the Chrome profile as a likely cause, and a Workato 404 says it can mean the wrong workspace or environment for that tab rather than a missing object.
+- `workato_job_trace`'s description states that the untruncated read is `detail:"full"` together with `lines:[N]`, and that there is no `step` parameter.
+
+### Fixed
+
+- `workato_adapter_meta`'s `out_file` was declared in the schema but not implemented on the bridge side, so it silently did nothing.
+
 ## bridge 1.3.12 (2026-08-18)
 
 ### Added

@@ -90,6 +90,87 @@ export function normalizeCodeTree(code: object | string): {
   return { code: value, normalized };
 }
 
+/** One `_dp('...')` literal whose payload is not parseable JSON. */
+export interface BrokenDatapill {
+  /** The payload as it appears inside the literal, truncated for reporting. */
+  payload: string;
+  /** The JSON parser's complaint. */
+  error: string;
+}
+
+/**
+ * Find `_dp('...')` literals whose payload is not JSON.
+ *
+ * `normalizeDatapills` deliberately leaves these alone — it cannot compact
+ * what it cannot parse — which used to mean a corrupt reference sailed through
+ * the save. Workato stores it happily and resolves it to nothing at runtime,
+ * so the recipe runs with a silently empty field. The usual cause is a formula
+ * edited with a regex that cut across a pill boundary, or an editor that
+ * soft-wrapped the literal: the payload's own commas and quotes make it very
+ * easy to slice in half.
+ */
+export function findBrokenDatapills(value: unknown): BrokenDatapill[] {
+  const broken: BrokenDatapill[] = [];
+  const seen = new Set<string>();
+
+  const scan = (text: string): void => {
+    for (const match of text.matchAll(DATAPILL_RE)) {
+      const payload = match[1];
+      try {
+        JSON.parse(payload.replace(/\\'/g, "'"));
+      } catch (e) {
+        if (seen.has(payload)) continue;
+        seen.add(payload);
+        broken.push({
+          payload: payload.length > 200 ? `${payload.slice(0, 200)}…` : payload,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+  };
+
+  const walk = (node: unknown): void => {
+    if (typeof node === 'string') {
+      scan(node);
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const child of node) walk(child);
+      return;
+    }
+    if (node && typeof node === 'object') {
+      for (const child of Object.values(node as Record<string, unknown>)) walk(child);
+    }
+  };
+
+  // A stringified tree hides its pills behind JSON escaping; parse first so the
+  // literals are reachable, exactly as normalizeCodeTree does.
+  if (typeof value === 'string') {
+    try {
+      walk(JSON.parse(value));
+      return broken;
+    } catch {
+      scan(value);
+      return broken;
+    }
+  }
+  walk(value);
+  return broken;
+}
+
+/** The refusal text for a corrupt datapill. */
+export function describeBrokenDatapills(broken: BrokenDatapill[]): string {
+  const lines = broken.map((b) => `  _dp('${b.payload}')\n    -> ${b.error}`);
+  return (
+    `Refusing the save: ${broken.length} datapill literal(s) carry a payload that is not ` +
+    `valid JSON.\n${lines.join('\n')}\n` +
+    'Workato would store these and resolve them to an empty value at runtime — no error, ' +
+    'just missing data. Rebuild the affected value from its parts rather than patching the ' +
+    'string: a regex that crosses a _dp boundary splits the payload on its own commas. ' +
+    'workato_datapill emits a correct literal. (retriable: false — fix the pill first)'
+  );
+}
+
 /**
  * Compact one pill payload as it appears between `_dp('` and `')`, keeping the
  * single-quote escaping the surrounding literal needs. Returns null when the
