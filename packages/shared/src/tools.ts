@@ -4449,9 +4449,9 @@ export const TOOL_SCHEMAS: Tool[] = [
       'allow_widget_removal; (3) refuses a row collapse - removing a widget without renumbering ' +
       "the rows of what remains drops the following containers' computed `top` so they all " +
       'stack at 0, while the JSON reads back perfectly - unless allow_row_collapse; (4) allows ' +
-      'moving widgets onto one row (fields side by side is ordinary layout work) but refuses a ' +
-      'merged row whose widths sum past the 12 column grid, because those widgets overlap and ' +
-      'the height collapses; (5) refuses ' +
+      'moving widgets onto one row (fields side by side is ordinary layout work), warning only ' +
+      'when the merged widths sum past the 12 column grid - the renderer stacks those rather ' +
+      'than overlapping them, so it is a "did you mean that", not a refusal; (5) refuses ' +
       'an unknown `visible` opcode or wrong arity (opcodes are 1-14, 1-10 binary, 11-14 unary); ' +
       '(6) refuses a _dp() payload that is not valid JSON, and compacts the ones that are; ' +
       '(7) after the PUT it opens the page in a background tab and checks the RENDERED geometry, ' +

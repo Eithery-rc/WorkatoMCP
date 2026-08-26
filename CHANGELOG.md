@@ -6,6 +6,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+## bridge 1.4.2 · shared 1.1.2 (2026-08-26)
+
+### Changed
+
+- **The merged-row check is a warning, not a refusal.** Smoke-testing 1.4.1 against a live page disproved the assumption behind it: two full-width text widgets moved onto one row do not overlap. The renderer stacks them (`top: 0px` then `top: 32px`), the container keeps its height, and the container after it keeps its own `top`. Refusing that save blocked a layout that works, so the check now warns that an overflowing row will stack rather than sit side by side, and lets the save through. The refusal that stays is the row COLLAPSE, which is the shape that actually broke a live form.
+
 ## bridge 1.4.1 · shared 1.1.1 (2026-08-26)
 
 ### Fixed

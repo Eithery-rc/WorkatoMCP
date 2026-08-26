@@ -83,6 +83,8 @@ Nothing flows: widgets are absolutely positioned inside a `position: relative` l
 
 **Never delete a widget from a layout without renumbering the rows of what remains.**
 
+What is safe, tested live: putting several widgets on the same row. Widths that tile inside the 12 columns sit side by side, and widths that overflow it do not overlap either. The renderer stacks them instead, giving each its own `top` inside a taller row, and the containers after it keep their own `top`. So a shared row is a layout choice, not a hazard; only the collapsed row extent above is.
+
 Validate against the rendered DOM, not the JSON:
 
 ```js

@@ -407,9 +407,10 @@ export interface DiffCheckOptions {
  *    occupied a layout's last row collapses that layout's extent, and the
  *    containers after it lose their `top`. Refused by default because the
  *    symptom appears only in rendered geometry.
- *  - **A merged row must still fit the 12 column grid.** Moving widgets onto
- *    one row is ordinary layout work and is allowed; widths that sum past 12
- *    are not, because the widgets overlap and the height collapses.
+ *  - **A merged row that overflows the grid is worth a word, not a refusal.**
+ *    Moving widgets onto one row is ordinary layout work. Even past 12 columns
+ *    the renderer stacks them instead of overlapping, verified against a live
+ *    page, so this one is a warning.
  */
 export function checkAgainstPrevious(
   prev: unknown,
@@ -446,10 +447,18 @@ export function checkAgainstPrevious(
 
     // Widgets that had distinct rows may end up sharing one: putting fields side
     // by side is ordinary layout work, and the live forms are built that way
-    // (three 4-wide fields on one row). It only breaks when the row overflows the
-    // 12 column grid, because the widgets then overlap, the layout's height
-    // collapses, and everything after it can lose its computed `top`. So judge
-    // the merged row by its width, not by the fact that a merge happened.
+    // (three 4-wide fields on one row).
+    //
+    // A merged row is NOT an error, not even when the widths sum past the 12
+    // column grid. Tested against a live page: two full-width text widgets moved
+    // onto one row render stacked (`top: 0px` and `top: 32px`), the container
+    // keeps its height, and the container after it keeps its own `top`. So the
+    // renderer resolves the collision instead of overlapping, and refusing the
+    // save would block a layout that works. What survives is a warning, because
+    // an overflowing row is still very unlikely to be what the author meant.
+    //
+    // The failure that actually broke a live form is the row COLLAPSE below: the
+    // widget on a layout's last row removed without renumbering.
     const mergedRows = new Set<number>();
     for (const id of retained) {
       const rowBefore = before.get(id)?.row;
@@ -469,13 +478,14 @@ export function checkAgainstPrevious(
       if (total <= GRID_COLUMNS) continue;
       issues.push({
         code: 'row-merge',
-        severity: 'error',
+        severity: 'warning',
         container: containerId,
         message:
           `In ${containerId}, row ${row} now carries ${total} columns of widgets after a merge, ` +
-          `over the ${GRID_COLUMNS} column grid. They will overlap, which collapses the layout's ` +
-          "height and can drop the computed `top` of everything after it. Give the row's widgets " +
-          `widths summing to ${GRID_COLUMNS} or fewer, or keep them on separate rows.`,
+          `over the ${GRID_COLUMNS} column grid. The renderer stacks them rather than overlapping ` +
+          'them, so the page still works, but the result is a taller row and not the side-by-side ' +
+          `layout the widths suggest. Give the row's widgets widths summing to ${GRID_COLUMNS} or ` +
+          'fewer if you meant them to sit next to each other.',
       });
     }
 

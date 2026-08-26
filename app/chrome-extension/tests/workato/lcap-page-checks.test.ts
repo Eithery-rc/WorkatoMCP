@@ -253,19 +253,23 @@ describe('checkAgainstPrevious', () => {
     expect(hasErrors(issues)).toBe(false);
   });
 
-  it('refuses a merge that overflows the 12 column grid', () => {
+  it('warns about a merge that overflows the grid, but does not block it', () => {
+    // Verified against a live page: the renderer stacks widgets that share a row
+    // instead of overlapping them, and the containers after it keep their `top`.
+    // So this is a "did you mean that?", not a refusal.
     const merged = widget('53a27648', 'container', {
       layout: [
         1,
         [widget('c646c1d5', 'text'), 0],
         [widget('a1c4e2b7', 'text'), 0],
-        // Three full-width widgets on one row is 36 columns: they overlap.
         [widget('49edbbc7', 'divider'), 0],
       ],
     });
     const issues = checkAgainstPrevious(pageWith(headerBefore), pageWith(merged));
-    expect(issues.map((i) => i.code)).toContain('row-merge');
-    expect(issues.find((i) => i.code === 'row-merge')?.message).toContain('36 columns');
+    const merge = issues.find((i) => i.code === 'row-merge');
+    expect(merge?.severity).toBe('warning');
+    expect(merge?.message).toContain('36 columns');
+    expect(issues.filter((i) => i.code === 'row-merge' && i.severity === 'error')).toEqual([]);
   });
 
   it('accepts a merge whose widgets tile inside the grid', () => {
