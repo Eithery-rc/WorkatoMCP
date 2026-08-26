@@ -41,6 +41,24 @@ The pulled object is `{ recipe_id, code, version }`. `code` is the trigger node,
 
 ---
 
+### `dynamicPickListSelection`
+
+A step field whose value came from a **dynamic** pick list is written twice: in `input`, and again in a sibling `dynamicPickListSelection` object under the same field name.
+
+```json
+{
+  "number": 1,
+  "provider": "salesforce",
+  "name": "search_sobjects",
+  "as": "16d0ae96",
+  "keyword": "action",
+  "dynamicPickListSelection": { "sobject_name": "Account" },
+  "input": { "sobject_name": "Account", "Id": "0015f00001ZKCHRAA5", "limit": "150" }
+}
+```
+
+Setting only `input` saves cleanly and leaves the editor showing an empty picker. Static selects (the ones `workato_adapter_meta` returns as `options`) do not need it. Resolve the allowed values with `workato_pick_list`; see `discovering-connectors.md`.
+
 ## Triggers
 
 ### Schedule — `provider:"clock", name:"scheduled_event"`

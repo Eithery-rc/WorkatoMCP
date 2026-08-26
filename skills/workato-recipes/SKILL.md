@@ -50,9 +50,11 @@ These apply before writing a step for a connector you have no example of (see `d
 2. **Workato's own connectors are named nothing like they are called.** HTTP is `rest`, Workato Event Streams is `workato_pub_sub`, Scheduler is `clock`, Python snippets is `py_eval`, Workflow apps is `workato_workflow_task`. Guessing from the display name returns an empty meta document, which looks exactly like "this app does not exist". `workato_apps_list` resolves them by title and alias.
 3. **A static select's value is not its label.** Workato stores pick lists label-first, so `email_type` accepts `"html"` and not `"HTML"` — and takes the wrong string silently. Read `options[].value` from `workato_adapter_meta`; a `pick_list` string instead means a DYNAMIC list whose values meta cannot know.
 4. **`connection_required: false` means no `account_id`** in that provider's `config` entry, and no connection to look for. Read it off the adapter rather than trusting any list of system providers to be complete.
-5. **An array or object field has `properties`.** Filling one with a scalar is the same silent no-op as a wrong key name. Watch for `toggle_field` too: two names for one input, of which exactly one may be set.
-6. **Absence from `workato_apps_list` proves nothing.** Workato publishes no catalogue of its standard connectors. Test a guessed name by passing an array to `workato_adapter_meta` and reading `not_found`.
-7. **A step found by `workato_recipe_step_search` is a template, not a value.** Its datapills point at that recipe's steps and resolve to empty until repointed.
+5. **A `pick_list` STRING means the values live on the connection, not in meta.** Resolve them with `workato_pick_list`; a parameterised list needs `pick_list_params` sent EVALUATED, because the field shows them as formulas (the value appears wrapped in quotes) and the quoted form fails with a bad-URI error.
+6. **A field fed by a dynamic pick list is written TWICE**, in `input` and in `dynamicPickListSelection` under the same field name. Setting only `input` saves cleanly and leaves the editor showing an empty picker.
+7. **An array or object field has `properties`.** Filling one with a scalar is the same silent no-op as a wrong key name. Watch for `toggle_field` too: two names for one input, of which exactly one may be set.
+8. **Absence from `workato_apps_list` proves nothing.** Workato publishes no catalogue of its standard connectors. Test a guessed name by passing an array to `workato_adapter_meta` and reading `not_found`.
+9. **A step found by `workato_recipe_step_search` is a template, not a value.** Its datapills point at that recipe's steps and resolve to empty until repointed.
 
 ## Critical rules — formulas
 
