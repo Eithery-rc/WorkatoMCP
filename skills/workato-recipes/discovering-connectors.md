@@ -35,6 +35,26 @@ enerflo_connector_5105163_1744901872          title: "Enerflo"
 - `builtin` — one of Workato's own connectors, always available. See the table below: this is where the display name and the adapter name diverge hardest.
 - `certified` — in Workato's certified community catalogue, not installed here.
 
+### No connection: stop and ask the user
+
+**These tools cannot create a connection**, deliberately: it means handing over the customer's credentials, and only a person can do that. So when the app needs one and the workspace does not have one, the answer is to stop and ask, not to build the step anyway.
+
+Check in this order:
+
+1. **`connection_required: false`** on the adapter (`workato_adapter_meta`, or the `builtin` entries in `workato_apps_list`). Then no connection exists or is needed, and there is nothing to ask for. This covers `email`, `logger`, `py_eval`, `clock`, `workato_variable`, `lookup_table` and the rest of Workato's own tools.
+2. **A `connection` entry in `workato_apps_list`** with `authorization_status: "success"`. Use its `id` as the `account_id` in the recipe `config`.
+3. **Anything else** is a blocker. Either there is no connection at all, or there is one whose status is not `success` (`connection_lost` is the common case, and it reads as working right up until the recipe runs).
+
+Ask before writing the step, not after. A step needs its provider's `account_id` in `config`, and that id does not exist until the connection does, so the recipe cannot be completed either way. Write the request so it can be acted on without coming back for details:
+
+> The recipe needs a Slack connection and this workspace has none. Could you create one at app.workato.com/connections/new (adapter `slack`), then tell me the connection name? I will wire the step to it.
+
+If a connection exists but is not authorized, say which one by name and id rather than asking for a new one:
+
+> The connection "Salesforce sandbox" (id 1236) shows `connection_lost`, so the step will fail at run time. Could you re-authorize it?
+
+Only continue without one when the user explicitly asks for the recipe to be drafted anyway. Then say plainly that the step is left unconfigured and the recipe cannot start until the connection exists.
+
 ### Workato's own connectors: the name is never the name
 
 The worst offenders are Workato's own built-in connectors, where the display name and the adapter name share almost nothing. Asking `/integrations/meta` for `workato_event_streams` or `event_streams` returns an empty document; the adapter is `workato_pub_sub`. Verified live:
