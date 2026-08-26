@@ -1,4 +1,6 @@
 export { workatoAdapterMetaTool } from './adapter-meta';
+export { workatoAppsListTool } from './apps-list';
+export { workatoRecipeStepSearchTool } from './step-search';
 export { workatoApiRequestTool } from './api-request';
 export { workatoPullRecipeTool } from './pull-recipe';
 export { workatoRenameRecipeTool } from './rename-recipe';

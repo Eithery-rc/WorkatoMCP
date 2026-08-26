@@ -10,6 +10,7 @@ import {
   buildFieldMatcher,
   pickAdapterNode,
   slimOperation,
+  slimPickList,
 } from '@/entrypoints/background/tools/workato/adapter-meta';
 
 /** Trimmed from the real /integrations/meta?name=workato_recipe_function body. */
@@ -227,5 +228,149 @@ describe('buildAdapterView', () => {
       includeHelp: false,
     });
     expect(view.actions?.[0].deprecated).toBe(true);
+  });
+});
+
+/**
+ * Captured verbatim from /integrations/meta?name=email on 2026-08-26. This is
+ * the case that exposed the slimmer: every field below survives, but the parts
+ * that decide whether a written step actually works (the select's values, the
+ * default, the array's item fields, the toggle alternative) used to be dropped.
+ */
+const EMAIL_META = {
+  email: {
+    name: 'email',
+    title: 'Email by Workato',
+    aliases: ['Email by Workato', 'utility', 'workato', 'utilities'],
+    categories: ['Recipe Tools', 'Workato'],
+    config: { required: false, oauth: false, input: [] },
+    triggers: {},
+    actions: {
+      send_mail: {
+        name: 'send_mail',
+        title: 'Send email',
+        input: [
+          { control_type: 'email', label: 'To', type: 'string', name: 'to' },
+          {
+            control_type: 'select',
+            label: 'Email type',
+            pick_list: [
+              ['Text', 'plain_text'],
+              ['HTML', 'html'],
+            ],
+            default: 'html',
+            optional: true,
+            type: 'string',
+            name: 'email_type',
+          },
+          {
+            label: 'Attachments',
+            optional: true,
+            of: 'object',
+            properties: [
+              {
+                control_type: 'text-area',
+                label: 'Binary file content',
+                optional: true,
+                toggle_field: {
+                  control_type: 'text',
+                  label: 'File URL',
+                  optional: true,
+                  type: 'string',
+                  name: 'file_url',
+                },
+                type: 'string',
+                name: 'file_binary_content',
+              },
+              { control_type: 'text', label: 'File name', type: 'string', name: 'file_name' },
+            ],
+            type: 'array',
+            name: 'attachments',
+          },
+        ],
+        output: [{ name: 'remaining_calls', type: 'integer', label: 'Remaining calls' }],
+      },
+    },
+  },
+};
+
+describe('slimPickList', () => {
+  it('reads Workato label-first pairs, keeping the value that step.input needs', () => {
+    // [label, value] — getting this backwards writes "HTML" where "html" belongs,
+    // and Workato accepts the wrong string silently.
+    expect(
+      slimPickList([
+        ['Text', 'plain_text'],
+        ['HTML', 'html'],
+      ]).options,
+    ).toEqual([
+      { value: 'plain_text', label: 'Text' },
+      { value: 'html', label: 'HTML' },
+    ]);
+  });
+
+  it('accepts bare scalar entries and non-string values', () => {
+    expect(slimPickList(['a', 'b']).options).toEqual([{ value: 'a' }, { value: 'b' }]);
+    expect(slimPickList([['One', 1]]).options).toEqual([{ value: 1, label: 'One' }]);
+  });
+
+  it('caps a long pick list and says how many were left out', () => {
+    const long = Array.from({ length: 60 }, (_, i) => [`L${i}`, `v${i}`]);
+    const out = slimPickList(long);
+    expect(out.options).toHaveLength(40);
+    expect(out.options_truncated).toBe(20);
+  });
+
+  it('returns nothing for a dynamic pick list or an empty one', () => {
+    expect(slimPickList([]).options).toBeUndefined();
+    expect(slimPickList(undefined).options).toBeUndefined();
+    expect(slimPickList([{ not: 'a pair' }]).options).toBeUndefined();
+  });
+});
+
+describe('buildAdapterView — the details a first-time step needs', () => {
+  const detail = () =>
+    buildAdapterView('email', EMAIL_META, { operation: 'send_mail', includeHelp: false });
+
+  it('keeps a static select\u2019s allowed values and its default', () => {
+    const field = detail().actions?.[0].input?.find((f) => f.name === 'email_type');
+    expect(field?.options).toEqual([
+      { value: 'plain_text', label: 'Text' },
+      { value: 'html', label: 'HTML' },
+    ]);
+    expect(field?.default).toBe('html');
+    // A dynamic pick list is a name, not values — it must not be faked into options.
+    expect(field?.pick_list).toBeUndefined();
+  });
+
+  it('descends into an object array\u2019s item fields and its toggle alternative', () => {
+    const field = detail().actions?.[0].input?.find((f) => f.name === 'attachments');
+    expect(field?.of).toBe('object');
+    expect(field?.properties?.map((f) => f.name)).toEqual(['file_binary_content', 'file_name']);
+    expect(field?.properties?.[0].toggle_field).toMatchObject({
+      name: 'file_url',
+      control_type: 'text',
+    });
+  });
+
+  it('reports the connector identity, so a guessed adapter name can be confirmed', () => {
+    const view = buildAdapterView('email', EMAIL_META, { includeHelp: false });
+    expect(view.mode).toBe('index');
+    expect(view).toMatchObject({
+      title: 'Email by Workato',
+      categories: ['Recipe Tools', 'Workato'],
+      // false, not absent: this connector needs no connection at all.
+      connection_required: false,
+    });
+    expect(view.aliases).toContain('utilities');
+  });
+
+  it('greps fields that only exist inside a nested object', () => {
+    const view = buildAdapterView('email', EMAIL_META, {
+      fieldGrep: 'file_url',
+      includeHelp: false,
+    });
+    expect(view.actions?.map((a) => a.name)).toEqual(['send_mail']);
+    expect(view.actions?.[0].input?.map((f) => f.name)).toEqual(['attachments']);
   });
 });

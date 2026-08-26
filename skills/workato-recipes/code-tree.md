@@ -662,7 +662,7 @@ Each parameter in the target's `parameters_schema_json` becomes one entry in `pr
 
 ### `version.config` deduplication
 
-Each distinct `provider` used in the recipe gets one entry. System providers (`logger`, `workato_recipe_function`, `workato_variable`, `workato_pub_sub`, `clock`, `csv_parser`, `py_eval`) omit `account_id`; connection-based providers include it.
+Each distinct `provider` used in the recipe gets one entry. Providers that need no connection omit `account_id`; connection-based providers include it. The general test is `connection_required` from `workato_adapter_meta` (`config.required` in the raw meta) — do not rely on a fixed list, which is how `email` gets missed: it is not a system provider by name but its config entry carries no `account_id` either. Verified live: `{"keyword":"application","name":"email","provider":"email","skip_validation":false}` alongside a salesforce entry that does have one. Connection-free by inspection: `logger`, `workato_recipe_function`, `workato_variable`, `workato_pub_sub`, `clock`, `csv_parser`, `py_eval`, `email`. See `discovering-connectors.md`.
 
 ### Extended schemas — NOT safe to omit (silent-strip rule)
 

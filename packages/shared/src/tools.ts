@@ -82,6 +82,8 @@ export const TOOL_NAMES = {
     CREATE_PROJECT: 'workato_create_project',
     UPDATE_PROJECT: 'workato_update_project',
     ADAPTER_META: 'workato_adapter_meta',
+    APPS_LIST: 'workato_apps_list',
+    RECIPE_STEP_SEARCH: 'workato_recipe_step_search',
     SAVE_WITH_DEPENDENTS: 'workato_recipe_save_with_dependents',
     CALLABLE_SCHEMA_SET: 'workato_callable_schema_set',
     CALLER_BIND: 'workato_caller_bind',
@@ -1757,6 +1759,17 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Returns, per trigger and action: input[] and output[] field lists (name, type, ' +
       'control_type, label, optional, extends_schema), help text, and the behaviour flags ' +
       'extends_input_schema / extends_output_schema / depends_on / deprecated / batch / realtime. ' +
+      'Each field also carries what decides whether a written step WORKS: `options` for a static ' +
+      'select (the VALUE to write, not the label the UI shows — Workato takes a wrong value ' +
+      'silently), `default`, `properties` for the item fields of an object/array, and ' +
+      '`toggle_field` for the alternative form of a field that accepts either shape. ' +
+      'Per adapter it returns title / aliases / categories, which confirm a GUESSED name is the ' +
+      'right app, and connection_required — false means the connector needs no connection at all ' +
+      '(Email by Workato, logger, py_eval) and its step carries no account_id. ' +
+      'Resolves any standard adapter whether or not this workspace has a connection to it, and ' +
+      'the array form reports unknown names under not_found, which makes it the way to test a ' +
+      'guess. For the apps this workspace HAS, use workato_apps_list; for how a connector is ' +
+      'actually used here, workato_recipe_step_search. ' +
       '`depends_on` is how you learn a step takes its schema from another step (e.g. ' +
       "return_result's fields come from the recipe-function trigger's result_schema_json). " +
       'PAYLOAD: a bare call returns only the operation INDEX (names + titles) because some ' +
@@ -1813,6 +1826,119 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['adapter'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.APPS_LIST,
+    description:
+      'List the apps this workspace can build recipe steps with, and their TECHNICAL adapter ' +
+      'names. This is the step BEFORE workato_adapter_meta: that tool describes one connector ' +
+      'in full but only once its name is known, and the name is exactly what cannot be guessed ' +
+      'for a custom connector ("netsuite_rest_connector_5105163_1745592003"). Merges four ' +
+      'read-only sources by adapter name and marks each app with where it came from: ' +
+      '"connection" (a real connection exists here, so a step can authenticate today, with the ' +
+      'connection ids and authorization status), "recipes" (already used by a recipe here, so ' +
+      'workato_recipe_step_search will find live examples), "custom" (this workspace\'s own SDK ' +
+      'connector), "certified" (Workato certified catalogue, not installed here). Sorted so the ' +
+      'immediately usable apps come first. ' +
+      'KNOWN LIMIT, also stated in the response: Workato serves NO catalogue of its ~1000 ' +
+      'standard connectors — the recipe editor compiles that list into its own bundle and makes ' +
+      'no request for it. An app missing from this list is therefore not proof it does not ' +
+      'exist; resolve a standard app by passing the guessed name(s) to workato_adapter_meta, ' +
+      'which takes an array and reports the misses under not_found. ' +
+      'Read-only. Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description:
+            'Case-insensitive substring matched against adapter name, title and aliases, ' +
+            'e.g. "sales", "netsuite", "email".',
+        },
+        include_certified: {
+          type: 'boolean',
+          description:
+            "Search Workato's certified community catalogue too (~70 KB raw). Defaults to " +
+            'true when query is set (the filter keeps it small), false otherwise.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max apps returned. Default 200, clamped 1-1000.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 30000, clamped 10000-110000.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.RECIPE_STEP_SEARCH,
+    description:
+      'Find how a connector is ACTUALLY used in this workspace: returns real steps from real ' +
+      'recipes as templates. workato_adapter_meta says what a field is called and what it ' +
+      'accepts; it cannot say what a working value looks like — which datapill shape the team ' +
+      'uses, which optional fields they always set, how they format an internal id. That only ' +
+      'exists in the recipes already running here, and this replaces the manual ' +
+      'search_recipes -> pull_recipe -> scroll loop. ' +
+      'Scans the recipe list (every item already carries trigger_application and ' +
+      'action_applications, so candidates are found without opening them), reads the code of the ' +
+      'matches, and walks the tree at any depth so steps nested inside if / repeat_each / try ' +
+      'blocks are found too. Returns per hit: recipe_id, recipe_name, step_number, keyword, ' +
+      'name, `as` anchor, description and the full `input` block. Connection secrets are ' +
+      'stripped. ' +
+      'The returned input is a TEMPLATE, not a value to copy blindly: its datapills are bound to ' +
+      "that recipe's own steps and must be repointed. Zero results is a normal answer meaning " +
+      'this connector was never used here, not an error. Read-only. Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        provider: {
+          type: 'string',
+          description:
+            'Adapter name to look for, matched against step.provider, e.g. "salesforce", ' +
+            '"email", "netsuite_rest_connector_5105163_1745592003". Find it with ' +
+            'workato_apps_list.',
+        },
+        action: {
+          type: 'string',
+          description:
+            'Optional action or trigger name matched exactly (case-insensitive) against ' +
+            'step.name, e.g. "send_mail". Omit to see every step for this provider, which is ' +
+            'also how you learn which of its operations are used here at all.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max matching steps returned. Default 5, clamped 1-25.',
+        },
+        max_recipes: {
+          type: 'number',
+          description: 'Max recipes whose code is read. Default 8, clamped 1-25.',
+        },
+        max_pages: {
+          type: 'number',
+          description:
+            'Pages of the recipe list to scan, 20 recipes per page. Default 5, clamped 1-25. ' +
+            'Raise it for a workspace with more recipes than that.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 45000, clamped 10000-110000.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['provider'],
     },
   },
   {
