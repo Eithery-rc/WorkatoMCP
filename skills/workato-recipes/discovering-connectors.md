@@ -13,6 +13,7 @@ Four questions, in order. Each one narrows the next.
 | Which apps can I use here, and what is each one called technically? | `workato_apps_list`                              |
 | What can this connector do?                                         | `workato_adapter_meta` (index mode: bare call)   |
 | What does this operation take?                                      | `workato_adapter_meta` with `operation:"<name>"` |
+| What values does this field accept, in THIS workspace?              | `workato_pick_list`                              |
 | What does a working call look like here?                            | `workato_recipe_step_search`                     |
 
 Then write the step with `workato_recipe_add_step`, which mints the `as` anchor and `uuid`, renumbers the block and deduplicates `config` for you.
@@ -111,7 +112,45 @@ Four properties decide whether the step works, beyond the obvious `name` / `type
 }
 ```
 
-`step.input.email_type` must be `"html"`. Writing `"HTML"` saves without complaint and misbehaves at run time. When `options` is absent but `control_type` is `select`, look for `pick_list` — a string there is the name of a _dynamic_ pick list resolved server-side against the connection, whose values are not knowable from meta.
+`step.input.email_type` must be `"html"`. Writing `"HTML"` saves without complaint and misbehaves at run time. When `options` is absent but `control_type` is `select`, look for `pick_list` — a string there names a _dynamic_ list, resolved per connection. See below.
+
+### When `pick_list` is a string: the values live on the connection
+
+`options` covers a static select. When `pick_list` is a **string** instead, it names a dynamic list and the values are not in the meta document at all, because they are the customer's own data: Salesforce objects, NetSuite record types, Slack channels. `workato_pick_list` resolves them:
+
+```
+workato_pick_list(connection_id: 19092754, adapter: "salesforce",
+                  operation: "search_sobjects", field: "sobject_name")
+  -> 2567 options, e.g. {value: "APXTConga4__Conga_Merge_Query__c", label: "Conga Query"}
+```
+
+Same inversion as everywhere else: Workato returns `[label, value]`, and `value` is what the step needs.
+
+A **parameterised** list depends on other values, which the field names in its own `pick_list_params`. Read them there, but send them **evaluated**. The schema shows them as formulas, so each value appears wrapped in quotes, and passing that form through reaches Salesforce quoted and fails. Verified live:
+
+```
+pick_list_params: {sobject_name: "Account", field_name: "Rating"}  -> Hot, Warm, Cold
+pick_list_params: {sobject_name: "\"Account\""}                    -> bad URI (is not URI?)
+```
+
+`workato_pick_list` strips quotes copied by mistake and says which ones.
+
+#### The step then carries the choice twice
+
+This is the silent one. A field fed by a dynamic pick list appears in **both** `input` and `dynamicPickListSelection`, under the same field name. From a live recipe:
+
+```json
+{
+  "number": 1,
+  "provider": "salesforce",
+  "name": "search_sobjects",
+  "keyword": "action",
+  "dynamicPickListSelection": { "sobject_name": "Account" },
+  "input": { "sobject_name": "Account", "Id": "0015f00001ZKCHRAA5", "limit": "150" }
+}
+```
+
+Writing only `input` saves cleanly and leaves the editor showing an empty picker.
 
 **`default`** — what Workato applies when the field is omitted. Setting a field to its default is noise; omitting a field whose default is wrong for you is a bug.
 
@@ -195,6 +234,8 @@ workato_recipe_add_step(
   input: {to: "...", subject: "...", body: "...", email_type: "html"})
 ```
 
+No dynamic pick list on this action, so no `dynamicPickListSelection`. An action like `salesforce.search_sobjects` would need one.
+
 No `account_id` in `config` for this provider, because `connection_required` was false.
 
 ## Endpoint reference
@@ -207,4 +248,5 @@ For `workato_api_request` when a tool does not cover something.
 | `/web_api/mixed_assets/adapters.json`          | Bare array of adapter names used by recipes in this workspace. Under 200 bytes.                                                                                                                                                                                                               |
 | `/web_api/published_custom_adapters.json`      | This workspace's SDK connectors: generated name, title, trigger/action counts, connection fields.                                                                                                                                                                                             |
 | `/web_api/certified_custom_adapters.json`      | Workato's certified community catalogue with `installed`. ~70 KB.                                                                                                                                                                                                                             |
+| `POST /connections/<id>/pick_list.json`        | Dynamic pick list values. Body is the FIELD DEFINITION from `/integrations/meta`, plus optional `flow_id` and `pick_list_params`. Returns `{result: [[label, value], ...]}`. Answers HTTP 200 with `{"error": ...}` for a bad body, never a 4xx, so the status alone is not a success check.  |
 | `/web_api/mixed_assets.json?asset_type=recipe` | Recipe list. Each item already carries `trigger_application` and `action_applications`, which is what makes finding examples cheap. No server-side adapter filter was found — five plausible parameter names all silently returned the full list — so filter on those two fields client-side. |

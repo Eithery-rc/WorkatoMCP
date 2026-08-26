@@ -83,6 +83,7 @@ export const TOOL_NAMES = {
     UPDATE_PROJECT: 'workato_update_project',
     ADAPTER_META: 'workato_adapter_meta',
     APPS_LIST: 'workato_apps_list',
+    PICK_LIST: 'workato_pick_list',
     RECIPE_STEP_SEARCH: 'workato_recipe_step_search',
     SAVE_WITH_DEPENDENTS: 'workato_recipe_save_with_dependents',
     CALLABLE_SCHEMA_SET: 'workato_callable_schema_set',
@@ -1883,6 +1884,84 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.PICK_LIST,
+    description:
+      'Resolve a DYNAMIC pick list against a real connection: the customer own Salesforce ' +
+      'objects, NetSuite record types, Slack channels. workato_adapter_meta returns a static ' +
+      'select values inline; when a field pick_list is a STRING instead, the values are not in ' +
+      'the meta document at all, because they are per-connection data. This is the call that ' +
+      'turns "the agent knows the field" into "the agent can fill the field". ' +
+      'Pass adapter + operation + field name and the field definition is looked up for you ' +
+      '(nested properties and toggle_field included), or pass a raw field definition object. ' +
+      'A field whose pick_list is already a static array is answered without a network call. ' +
+      'Returns {value, label} pairs: Workato stores them label-FIRST, and `value` is the ' +
+      'string that goes into step.input. A list can run to thousands of entries, so narrow ' +
+      'with query and limit. ' +
+      'WRITING THE RESULT: a step field fed by a dynamic pick list carries its choice TWICE, ' +
+      'in `input` and in `dynamicPickListSelection` under the same field name. Setting only ' +
+      '`input` saves cleanly and leaves the editor showing an empty picker. ' +
+      'Read-only. Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: {
+          type: 'number',
+          description:
+            'Numeric Workato connection id the list is resolved against. A dynamic pick list is ' +
+            "the customer's own data, so it exists only per connection. Find one with " +
+            'workato_apps_list or workato_search_connections.',
+        },
+        adapter: {
+          type: 'string',
+          description: 'Adapter name, e.g. "salesforce". Required when field is a name.',
+        },
+        operation: {
+          type: 'string',
+          description:
+            'Trigger or action name that owns the field, e.g. "search_sobjects". Required when ' +
+            'field is a name.',
+        },
+        field: {
+          oneOf: [{ type: 'string' }, { type: 'object' }],
+          description:
+            'Field name (e.g. "sobject_name"), or the raw field definition object from ' +
+            'workato_adapter_meta for a field it did not surface by name.',
+        },
+        pick_list_params: {
+          type: 'object',
+          description:
+            'Values a parameterised list depends on, EVALUATED: {"sobject_name": "Account", ' +
+            '"field_name": "Rating"}. The field names the params it needs in its own ' +
+            'pick_list_params, but shows them as FORMULAS (the value appears wrapped in quotes), ' +
+            'and sending that form verbatim fails with a bad-URI error. Quotes copied by mistake ' +
+            'are stripped and reported. Omit for an unparameterised list.',
+        },
+        flow_id: {
+          type: 'number',
+          description: 'Recipe id, sent as flow_id. Optional; most lists resolve without it.',
+        },
+        query: {
+          type: 'string',
+          description: 'Case-insensitive substring filter over label and value.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max options returned. Default 100, clamped 1-2000.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 45000, clamped 10000-110000.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['connection_id', 'field'],
     },
   },
   {
