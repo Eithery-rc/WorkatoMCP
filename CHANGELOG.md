@@ -6,6 +6,24 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+## bridge 1.5.0 · shared 1.2.0 (2026-08-26)
+
+### Added
+
+- **`workato_apps_list`**: which apps this workspace can build a step with, and their TECHNICAL adapter names. `workato_adapter_meta` describes one connector in full but only once its name is known, and the name is exactly what cannot be guessed for a custom connector (`netsuite_rest_connector_5105163_1745592003`). Merges connections, the adapters already used by recipes here, this workspace's SDK connectors and Workato's certified catalogue into one list, tagging each app with where it came from and sorting the immediately usable ones first. The response states the limit rather than hiding it: Workato publishes no catalogue of its standard connectors — the recipe editor compiles that list into its own bundle and makes no request for it — so absence from this list is not proof an app does not exist, and the way to test a guessed name is the array form of `workato_adapter_meta`.
+- **`workato_recipe_step_search`**: real steps from real recipes, as templates. Meta says what a field is called; it cannot say what a working value looks like, and that only exists in the recipes already running in the workspace. Scans the recipe list (each item already carries `trigger_application` and `action_applications`, so candidates are found without opening them), reads the matches and walks the tree at any depth, so a step nested inside an if / repeat_each / try block is found too. Zero results is reported as a normal answer with the scan size, not as an error.
+- `skills/workato-recipes/discovering-connectors.md`: the ladder from "the recipe should send an email" to a step that works, with no example to copy — finding the adapter name, listing operations, reading an operation's real field surface, and what `connection_required` means for the recipe `config`.
+
+### Fixed
+
+- **`workato_adapter_meta` no longer drops the parts of a field that decide whether the step works.** The slim view kept `control_type: "select"` but threw away the values behind it. Workato stores pick lists label-first, so `email_type` accepts `"html"` and not the `"HTML"` the UI shows — and takes the wrong string silently. Fields now carry `options` (value and label), `default`, `properties` for the item fields of an object or array, and `toggle_field` for the alternative form of a field that accepts either shape. `field_grep` searches nested names too. Found by taking a connector this workspace had never used and checking what an agent would actually have written.
+- `workato_adapter_meta` returns the adapter's own `title`, `aliases` and `categories`, which is what confirms a guessed name landed on the right app, and `connection_required` — false means the connector needs no connection at all and its `config` entry carries no `account_id`. Verified against a live recipe whose config holds `email` without one beside `salesforce` with one.
+
+### Changed
+
+- `stripConnectionSecrets` takes an opt-in key allowlist. A connection's `url` can embed credentials, which is why it is denied by default; a recipe step's `url` is the endpoint being called and the most useful line of an HTTP example. Step search opts `url` / `uri` / `path` / `endpoint` back in and redacts any credentials left in the userinfo part.
+- `skills/workato-recipes/code-tree.md` states the general rule for `account_id` in `config` (`connection_required` on the adapter) instead of a fixed list of system providers, which had omitted `email`.
+
 ## bridge 1.4.2 · shared 1.1.2 (2026-08-26)
 
 ### Changed

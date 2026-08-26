@@ -68,8 +68,12 @@ const JWT_RE = /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const HEX_RE = /^[A-Fa-f0-9]{40,}$/;
 const BASE64ISH_RE = /^[A-Za-z0-9_+/=]{60,}$/;
 
-function isSecretKey(key: string): boolean {
+/** Credentials embedded in a URL's userinfo, e.g. `https://user:pass@host/path`. */
+const URL_USERINFO_RE = /^([a-zA-Z][\w+.-]*:\/\/)[^/@\s]*@/;
+
+function isSecretKey(key: string, allowKeys?: ReadonlySet<string>): boolean {
   const lower = key.toLowerCase();
+  if (allowKeys?.has(lower)) return false;
   if (SECRET_EXACT_KEYS.has(lower)) return true;
   if (SECRET_SUFFIXES.some((s) => lower.endsWith(s))) return true;
   if (SECRET_PREFIXES.some((p) => lower.startsWith(p))) return true;
@@ -81,8 +85,22 @@ function isSecretShapedString(value: unknown): boolean {
   return JWT_RE.test(value) || HEX_RE.test(value) || BASE64ISH_RE.test(value);
 }
 
-export function stripConnectionSecrets(value: unknown): unknown {
-  return stripWithSeen(value, new WeakSet<object>());
+export interface StripOptions {
+  /**
+   * Lowercased keys to keep despite the denylist.
+   *
+   * `url` and `uri` are denied by default because a CONNECTION's URI often
+   * embeds credentials. A recipe STEP's url is a different thing entirely: it
+   * is the endpoint being called, and hiding it guts the value of reading the
+   * step as an example. Callers that read steps opt those keys back in; any
+   * credentials still sitting in the userinfo part are redacted rather than
+   * passed through.
+   */
+  allowKeys?: ReadonlySet<string>;
+}
+
+export function stripConnectionSecrets(value: unknown, options?: StripOptions): unknown {
+  return stripWithSeen(value, new WeakSet<object>(), options?.allowKeys);
 }
 
 /**
@@ -90,7 +108,11 @@ export function stripConnectionSecrets(value: unknown): unknown {
  * references; cycles are reported as the sentinel string '[Circular]'
  * rather than crashing with a stack-overflow RangeError.
  */
-function stripWithSeen(value: unknown, seen: WeakSet<object>): unknown {
+function stripWithSeen(
+  value: unknown,
+  seen: WeakSet<object>,
+  allowKeys?: ReadonlySet<string>,
+): unknown {
   if (value === null || typeof value !== 'object') {
     return value;
   }
@@ -99,13 +121,19 @@ function stripWithSeen(value: unknown, seen: WeakSet<object>): unknown {
   }
   seen.add(value as object);
   if (Array.isArray(value)) {
-    return value.map((item) => stripWithSeen(item, seen));
+    return value.map((item) => stripWithSeen(item, seen, allowKeys));
   }
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    if (isSecretKey(k)) continue;
+    const allowed = allowKeys?.has(k.toLowerCase()) ?? false;
+    if (isSecretKey(k, allowKeys)) continue;
     if (typeof v === 'string' && isSecretShapedString(v)) continue;
-    out[k] = stripWithSeen(v, seen);
+    // A key kept only by opt-in still gets its embedded credentials cut out.
+    if (allowed && typeof v === 'string' && URL_USERINFO_RE.test(v)) {
+      out[k] = v.replace(URL_USERINFO_RE, '$1[redacted]@');
+      continue;
+    }
+    out[k] = stripWithSeen(v, seen, allowKeys);
   }
   return out;
 }

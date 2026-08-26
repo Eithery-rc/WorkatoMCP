@@ -49,8 +49,36 @@ interface SlimField {
   /** True when picking this field re-derives the step's schema (schema-designer fields). */
   extends_schema?: boolean;
   hint?: string;
+  /** Name of a DYNAMIC pick list, resolved server-side. Values are not known here. */
   pick_list?: string;
+  /**
+   * Allowed values of a STATIC select, as `value` — the string that goes into
+   * step.input, not the label the UI shows. Workato accepts a wrong value
+   * silently, so writing the label ("HTML" instead of "html") produces a step
+   * that saves and then misbehaves. This is the single most load-bearing field
+   * on a select and it must survive slimming.
+   */
+  options?: { value: unknown; label?: string }[];
+  /** Set when `options` was capped; the remaining values are not shown. */
+  options_truncated?: number;
+  /** Value Workato applies when the field is omitted. */
+  default?: unknown;
+  /** Item type of an array field (`of: "object"` → items are objects). */
+  of?: string;
+  /** Fields of a nested object, or of each item of an object array. */
+  properties?: SlimField[];
+  /**
+   * The alternative form of this field. Workato renders one input that toggles
+   * between two shapes (binary content vs. a URL); either name is accepted in
+   * step.input, and picking the wrong one silently writes nothing.
+   */
+  toggle_field?: SlimField;
 }
+
+/** Nesting depth for `properties`/`toggle_field`. Past this, children are dropped. */
+const MAX_FIELD_DEPTH = 3;
+/** Per-select cap on returned values — some pick lists run to hundreds of entries. */
+const MAX_OPTIONS = 40;
 
 /** One trigger or action, slimmed to what an agent needs to write a step. */
 interface SlimOperation {
@@ -186,7 +214,33 @@ function slimHelp(help: unknown): string | undefined {
   return text.length > 600 ? `${text.slice(0, 600)}…` : text;
 }
 
-function slimField(raw: unknown): SlimField | null {
+/**
+ * Read a static pick list into `{value, label}` pairs.
+ *
+ * Workato writes these as `[[label, value], ...]` — label first, which is the
+ * opposite of what most schemas do and the reason a careless read produces a
+ * step that writes the label. Entries can also be bare scalars, in which case
+ * the value is its own label.
+ */
+export function slimPickList(raw: unknown): Pick<SlimField, 'options' | 'options_truncated'> {
+  if (!Array.isArray(raw) || raw.length === 0) return {};
+  const options: { value: unknown; label?: string }[] = [];
+  for (const entry of raw.slice(0, MAX_OPTIONS)) {
+    if (Array.isArray(entry)) {
+      // [label, value] — value is index 1, and is what step.input must carry.
+      if (entry.length >= 2) options.push({ value: entry[1], label: String(entry[0]) });
+      else if (entry.length === 1) options.push({ value: entry[0] });
+    } else if (entry !== null && typeof entry !== 'object') {
+      options.push({ value: entry });
+    }
+  }
+  if (options.length === 0) return {};
+  const out: Pick<SlimField, 'options' | 'options_truncated'> = { options };
+  if (raw.length > MAX_OPTIONS) out.options_truncated = raw.length - options.length;
+  return out;
+}
+
+function slimField(raw: unknown, depth = 0): SlimField | null {
   if (!isRecord(raw)) return null;
   const name = typeof raw.name === 'string' ? raw.name : null;
   if (!name) return null;
@@ -198,14 +252,24 @@ function slimField(raw: unknown): SlimField | null {
   if (raw.extends_schema === true) out.extends_schema = true;
   if (typeof raw.hint === 'string') out.hint = slimHelp(raw.hint);
   if (typeof raw.pick_list === 'string') out.pick_list = raw.pick_list;
+  else Object.assign(out, slimPickList(raw.pick_list));
+  if (raw.default !== undefined) out.default = raw.default;
+  if (typeof raw.of === 'string') out.of = raw.of;
+
+  if (depth < MAX_FIELD_DEPTH) {
+    const nested = slimFieldList(raw.properties, depth + 1);
+    if (nested.length > 0) out.properties = nested;
+    const toggle = slimField(raw.toggle_field, depth + 1);
+    if (toggle) out.toggle_field = toggle;
+  }
   return out;
 }
 
-function slimFieldList(raw: unknown): SlimField[] {
+function slimFieldList(raw: unknown, depth = 0): SlimField[] {
   if (!Array.isArray(raw)) return [];
   const out: SlimField[] = [];
   for (const entry of raw) {
-    const field = slimField(entry);
+    const field = slimField(entry, depth);
     if (field) out.push(field);
   }
   return out;
@@ -222,7 +286,15 @@ export function buildFieldMatcher(pattern: string): (field: SlimField) => boolea
     const needle = pattern.toLowerCase();
     test = (s) => s.toLowerCase().includes(needle);
   }
-  return (field) => test(field.name) || (field.label !== undefined && test(field.label));
+  const hit = (field: SlimField): boolean =>
+    test(field.name) || (field.label !== undefined && test(field.label));
+  // Nested fields are the ones hardest to find by reading, so a grep that
+  // stopped at the top level would miss exactly the cases it exists for.
+  const deep = (field: SlimField): boolean =>
+    hit(field) ||
+    (field.properties?.some(deep) ?? false) ||
+    (field.toggle_field !== undefined && deep(field.toggle_field));
+  return deep;
 }
 
 /** Shape one trigger/action entry. `detail=false` omits the field lists. */
@@ -265,6 +337,18 @@ export interface AdapterMetaView {
   adapter: string;
   found: boolean;
   mode: 'index' | 'detail' | 'grep';
+  /** Human name, e.g. "Email by Workato". Confirms a guessed adapter name is the right app. */
+  title?: string;
+  /** Other names this connector answers to — the searchable surface of `title`. */
+  aliases?: string[];
+  categories?: string[];
+  /**
+   * False when the connector needs no connection at all (Email by Workato,
+   * logger, py_eval). A step on such an adapter carries no `account_id`, and
+   * looking for a connection that will never exist is a common dead end.
+   */
+  connection_required?: boolean;
+  deprecated?: boolean;
   triggers?: SlimOperation[];
   actions?: SlimOperation[];
   /** Present in index mode: how to get the field lists. */
@@ -322,6 +406,23 @@ export function buildAdapterView(
     triggers: collect('trigger', node.triggers),
     actions: collect('action', node.actions),
   };
+
+  // Adapter-level identity. Tiny, and it is what turns a guessed name into a
+  // confirmed one — so it is returned in every mode, index included.
+  if (typeof node.title === 'string') view.title = node.title;
+  if (Array.isArray(node.aliases)) {
+    const aliases = node.aliases.filter((a): a is string => typeof a === 'string');
+    if (aliases.length > 0) view.aliases = aliases;
+  }
+  if (Array.isArray(node.categories)) {
+    const categories = node.categories.filter((c): c is string => typeof c === 'string');
+    if (categories.length > 0) view.categories = categories;
+  }
+  if (isRecord(node.config) && typeof node.config.required === 'boolean') {
+    view.connection_required = node.config.required;
+  }
+  if (node.deprecated === true) view.deprecated = true;
+
   if (mode === 'index') {
     view.hint =
       'Index only. Pass operation:"<name>" for that operation\'s full input/output field ' +
