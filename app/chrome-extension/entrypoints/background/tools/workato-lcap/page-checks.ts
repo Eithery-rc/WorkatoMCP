@@ -356,17 +356,37 @@ export function checkVisibleExpression(
   return issues;
 }
 
-/** Row map for one layout: widget id -> row. */
-function rowsByContainer(content: unknown): Map<string, Map<string, number>> {
-  const out = new Map<string, Map<string, number>>();
+/** The layout grid is 12 columns wide; widths that sum past it overlap. */
+const GRID_COLUMNS = 12;
+
+/** Where a widget sits in its layout: which row, and how many columns it takes. */
+interface Placement {
+  row: number;
+  width: number;
+}
+
+/** Placement map for one layout: widget id -> {row, width}. */
+function placementsByContainer(content: unknown): Map<string, Map<string, Placement>> {
+  const out = new Map<string, Map<string, Placement>>();
   walkLayouts(content, (containerId, entries) => {
-    const rows = out.get(containerId) ?? new Map<string, number>();
+    const rows = out.get(containerId) ?? new Map<string, Placement>();
     for (const { widget, row } of entries) {
-      if (typeof widget.id === 'string') rows.set(widget.id, row);
+      if (typeof widget.id !== 'string') continue;
+      const width = typeof widget.width === 'number' ? widget.width : GRID_COLUMNS;
+      rows.set(widget.id, { row, width });
     }
     out.set(containerId, rows);
   });
   return out;
+}
+
+/** Total columns occupied by everything sitting on one row of a layout. */
+function rowWidth(placements: Map<string, Placement>, row: number): number {
+  let total = 0;
+  for (const placement of placements.values()) {
+    if (placement.row === row) total += placement.width;
+  }
+  return total;
 }
 
 export interface DiffCheckOptions {
@@ -379,7 +399,7 @@ export interface DiffCheckOptions {
 /**
  * Compare the tree about to be saved against the one currently stored.
  *
- * Two guards, both learned from the same incident:
+ * Three guards, all learned from the same incident:
  *
  *  - **Widget ids must survive.** An id is the address datapills use, so a
  *    dropped widget silently empties every pill pointing at it.
@@ -387,6 +407,9 @@ export interface DiffCheckOptions {
  *    occupied a layout's last row collapses that layout's extent, and the
  *    containers after it lose their `top`. Refused by default because the
  *    symptom appears only in rendered geometry.
+ *  - **A merged row must still fit the 12 column grid.** Moving widgets onto
+ *    one row is ordinary layout work and is allowed; widths that sum past 12
+ *    are not, because the widgets overlap and the height collapses.
  */
 export function checkAgainstPrevious(
   prev: unknown,
@@ -394,8 +417,8 @@ export function checkAgainstPrevious(
   options: DiffCheckOptions = {},
 ): LcapIssue[] {
   const issues: LcapIssue[] = [];
-  const prevRows = rowsByContainer(prev);
-  const nextRows = rowsByContainer(next);
+  const prevRows = placementsByContainer(prev);
+  const nextRows = placementsByContainer(next);
   const nextIds = new Set(collectWidgetIds(next));
 
   for (const [containerId, before] of prevRows) {
@@ -421,25 +444,44 @@ export function checkAgainstPrevious(
       });
     }
 
-    // Widgets that had distinct rows must not end up sharing one. Two widgets
-    // side by side on the same row is normal and untouched by this check.
-    const distinctBefore = new Set(retained.map((id) => before.get(id))).size;
-    const distinctAfter = new Set(retained.map((id) => after.get(id))).size;
-    if (distinctAfter < distinctBefore) {
+    // Widgets that had distinct rows may end up sharing one: putting fields side
+    // by side is ordinary layout work, and the live forms are built that way
+    // (three 4-wide fields on one row). It only breaks when the row overflows the
+    // 12 column grid, because the widgets then overlap, the layout's height
+    // collapses, and everything after it can lose its computed `top`. So judge
+    // the merged row by its width, not by the fact that a merge happened.
+    const mergedRows = new Set<number>();
+    for (const id of retained) {
+      const rowBefore = before.get(id)?.row;
+      const rowAfter = after.get(id)?.row;
+      if (rowBefore === undefined || rowAfter === undefined) continue;
+      const joined = retained.some(
+        (other) =>
+          other !== id &&
+          before.get(other)?.row !== rowBefore &&
+          after.get(other)?.row === rowAfter,
+      );
+      if (joined) mergedRows.add(rowAfter);
+    }
+
+    for (const row of [...mergedRows].sort((a, b) => a - b)) {
+      const total = rowWidth(after, row);
+      if (total <= GRID_COLUMNS) continue;
       issues.push({
         code: 'row-merge',
         severity: 'error',
         container: containerId,
         message:
-          `In ${containerId}, widgets that occupied ${distinctBefore} distinct rows now occupy ` +
-          `${distinctAfter}. Merged rows collapse the layout's height and can drop the computed ` +
-          '`top` of everything after it.',
+          `In ${containerId}, row ${row} now carries ${total} columns of widgets after a merge, ` +
+          `over the ${GRID_COLUMNS} column grid. They will overlap, which collapses the layout's ` +
+          "height and can drop the computed `top` of everything after it. Give the row's widgets " +
+          `widths summing to ${GRID_COLUMNS} or fewer, or keep them on separate rows.`,
       });
     }
 
     if (removed.length > 0) {
-      const maxBefore = Math.max(-1, ...[...before.values()]);
-      const maxAfter = Math.max(-1, ...[...after.values()]);
+      const maxBefore = Math.max(-1, ...[...before.values()].map((p) => p.row));
+      const maxAfter = Math.max(-1, ...[...after.values()].map((p) => p.row));
       if (maxAfter < maxBefore && !options.allowRowCollapse) {
         issues.push({
           code: 'row-collapse',

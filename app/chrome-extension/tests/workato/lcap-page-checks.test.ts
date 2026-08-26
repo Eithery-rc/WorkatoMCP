@@ -253,17 +253,43 @@ describe('checkAgainstPrevious', () => {
     expect(hasErrors(issues)).toBe(false);
   });
 
-  it('refuses when widgets that had distinct rows are merged onto one', () => {
+  it('refuses a merge that overflows the 12 column grid', () => {
     const merged = widget('53a27648', 'container', {
       layout: [
         1,
         [widget('c646c1d5', 'text'), 0],
         [widget('a1c4e2b7', 'text'), 0],
+        // Three full-width widgets on one row is 36 columns: they overlap.
         [widget('49edbbc7', 'divider'), 0],
       ],
     });
     const issues = checkAgainstPrevious(pageWith(headerBefore), pageWith(merged));
     expect(issues.map((i) => i.code)).toContain('row-merge');
+    expect(issues.find((i) => i.code === 'row-merge')?.message).toContain('36 columns');
+  });
+
+  it('accepts a merge whose widgets tile inside the grid', () => {
+    // Putting fields side by side is ordinary layout work: the live forms carry
+    // three 4-wide fields on one row. Only overflow breaks the geometry.
+    const stacked = widget('53a27648', 'container', {
+      layout: [
+        1,
+        [widget('c646c1d5', 'text', { width: 6 }), 0],
+        [widget('a1c4e2b7', 'text', { x: 0, width: 6 }), 1],
+        [widget('49edbbc7', 'divider'), 2],
+      ],
+    });
+    const sideBySide = widget('53a27648', 'container', {
+      layout: [
+        1,
+        [widget('c646c1d5', 'text', { width: 6 }), 0],
+        [widget('a1c4e2b7', 'text', { x: 6, width: 6 }), 0],
+        [widget('49edbbc7', 'divider'), 1],
+      ],
+    });
+    const issues = checkAgainstPrevious(pageWith(stacked), pageWith(sideBySide));
+    expect(issues.filter((i) => i.code === 'row-merge')).toEqual([]);
+    expect(hasErrors(issues)).toBe(false);
   });
 
   it('leaves side-by-side widgets that always shared a row alone', () => {

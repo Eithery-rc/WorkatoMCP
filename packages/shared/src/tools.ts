@@ -4448,10 +4448,13 @@ export const TOOL_SCHEMAS: Tool[] = [
       'page is missing from yours (ids are the address datapills use) unless ' +
       'allow_widget_removal; (3) refuses a row collapse - removing a widget without renumbering ' +
       "the rows of what remains drops the following containers' computed `top` so they all " +
-      'stack at 0, while the JSON reads back perfectly - unless allow_row_collapse; (4) refuses ' +
+      'stack at 0, while the JSON reads back perfectly - unless allow_row_collapse; (4) allows ' +
+      'moving widgets onto one row (fields side by side is ordinary layout work) but refuses a ' +
+      'merged row whose widths sum past the 12 column grid, because those widgets overlap and ' +
+      'the height collapses; (5) refuses ' +
       'an unknown `visible` opcode or wrong arity (opcodes are 1-14, 1-10 binary, 11-14 unary); ' +
-      '(5) refuses a _dp() payload that is not valid JSON, and compacts the ones that are; ' +
-      '(6) after the PUT it opens the page in a background tab and checks the RENDERED geometry, ' +
+      '(6) refuses a _dp() payload that is not valid JSON, and compacts the ones that are; ' +
+      '(7) after the PUT it opens the page in a background tab and checks the RENDERED geometry, ' +
       'reporting render_check passed/failed - the JSON is valid in the stacking failure, so ' +
       'this is the only real proof. Pass expected_updated_at (from page_get) for optimistic ' +
       'locking.',
