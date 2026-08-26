@@ -6,12 +6,12 @@
   },
   "metadata": {
     "description": "WorkatoMCP companion skills",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "plugins": [
     {
       "name": "workato-recipes",
-      "description": "Workato recipe authoring/review reference — code-tree JSON schemas (triggers, foreach/if/repeat/try-catch, Variables-by-Workato, app actions) + Ruby-allowlist formula API (string/number/date/array/hash). Pairs with the workato_* MCP tools.",
+      "description": "Workato recipe and Workflow App authoring/review reference — code-tree JSON schemas (triggers, foreach/if/repeat/try-catch, Variables-by-Workato, app actions), Ruby-allowlist formula API (string/number/date/array/hash), and the Workflow App (LCAP) page format (widgets, layout rows, handlers, page variables, conditional-visibility opcodes, app-function bindings). Pairs with the workato_* MCP tools.",
       "source": "./",
       "strict": false,
       "skills": ["./skills/workato-recipes"]
