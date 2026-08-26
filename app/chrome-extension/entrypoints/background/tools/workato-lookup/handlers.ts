@@ -28,6 +28,7 @@ import type {
   LookupTableRowDeleteArgs,
   LookupTableRowSearchArgs,
   LookupTableRowUpdateArgs,
+  LookupTableRowUpsertArgs,
   LookupTableSetColumnsArgs,
   LookupTablesListArgs,
 } from './types';
@@ -1054,6 +1055,237 @@ class WorkatoLookupTableRowUpdateImpl extends BaseBrowserToolExecutor {
 }
 
 // ---------------------------------------------------------------------------
+// workato_lookup_table_row_upsert
+//
+// Config that differs per environment lives in a lookup table, so the same
+// keyed rows get re-applied on every deploy. Without an upsert that is
+// row_search + a human deciding create-or-update, and the failure mode is a
+// duplicate key: `lookup()` returns the first match, so a stale duplicate
+// silently wins and the recipe reads the wrong value.
+//
+// Multiple matches are refused rather than resolved. Picking one would be a
+// guess about which row the environment is actually reading.
+// ---------------------------------------------------------------------------
+
+const ROW_UPSERT_PAGE_FN = `
+(async (tableId, keyColumn, keyValue, valuesLabeled) => {
+  try {
+    ${PAGE_HELPERS}
+    const csrf = getCsrf();
+    if (!csrf) {
+      return { ok: false, stage: 'csrf', error: 'could not find CSRF token; ensure the active tab is a logged-in Workato page' };
+    }
+
+    // Page through the whole table: a keyed config row can sit anywhere, and a
+    // missed row would be created a second time.
+    const first = await fetchTable(tableId, { page: 1, per_page: 500 });
+    if (!first.ok) return first;
+    const t = first.result;
+    const schema = Array.isArray(t.entry_schema) ? t.entry_schema : [];
+    const map = labelMapFromSchema(schema);
+
+    const keyCol = map.byLabel[keyColumn];
+    if (!keyCol) {
+      return {
+        ok: false,
+        stage: 'key_column',
+        error: 'key_column "' + keyColumn + '" is not a column of this table. Columns: ' +
+          JSON.stringify(Object.keys(map.byLabel)),
+      };
+    }
+
+    const collect = (res) => {
+      const entries = (res && res.lookup_table_entries) || {};
+      return Array.isArray(entries.result) ? entries.result : [];
+    };
+    let rows = collect(t);
+    const entries = t.lookup_table_entries || {};
+    const total = typeof entries.count === 'number' ? entries.count : rows.length;
+    let page = 1;
+    while (rows.length < total && page < 40) {
+      page += 1;
+      const next = await fetchTable(tableId, { page: page, per_page: 500 });
+      if (!next.ok) return next;
+      const batch = collect(next.result);
+      if (batch.length === 0) break;
+      rows = rows.concat(batch);
+    }
+
+    const wanted = String(keyValue);
+    const matches = [];
+    for (const r of rows) {
+      if (!r || typeof r !== 'object') continue;
+      const data = r.data || {};
+      if (String(data[keyCol] == null ? '' : data[keyCol]) === wanted) matches.push(r);
+    }
+
+    if (matches.length > 1) {
+      return {
+        ok: false,
+        stage: 'ambiguous',
+        error: matches.length + ' rows already have ' + keyColumn + ' = "' + wanted + '" (row ids: ' +
+          matches.map(function (m) { return m.id; }).join(', ') + '). Refusing to guess which one ' +
+          'this environment reads — lookup() returns the first match, so delete the duplicates ' +
+          'first, then re-run.',
+        row_ids: matches.map(function (m) { return m.id; }),
+      };
+    }
+
+    // The key column is part of the row, whether creating or updating.
+    const desired = Object.assign({}, valuesLabeled || {});
+    desired[keyColumn] = keyValue;
+    delete desired.id;
+
+    if (matches.length === 0) {
+      const data = rowFromLabeled(desired, map.byLabel);
+      const res = await fetch('/lookup_tables/' + tableId + '/add_row.json', {
+        method: 'POST',
+        credentials: 'include',
+        headers: jsonHeaders(csrf),
+        body: JSON.stringify({ data: data }),
+      });
+      if (!res.ok) {
+        const errTxt = await res.text().catch(() => '');
+        return { ok: false, stage: 'http', error: 'POST /lookup_tables/' + tableId + '/add_row.json failed: HTTP ' + res.status + ' ' + errTxt.slice(0, 400) };
+      }
+      const json = await res.json().catch(() => null);
+      const row = json && json.result;
+      if (!row || typeof row !== 'object' || typeof row.id !== 'number') {
+        return { ok: false, stage: 'parse', error: 'create-row response missing result.id: ' + JSON.stringify(json).slice(0, 400) };
+      }
+      return { ok: true, table_id: tableId, row_id: row.id, action: 'created', row: rowToLabeled(row.data || {}, map.byCol) };
+    }
+
+    // Update: merge onto the existing row so untouched columns survive.
+    const existing = matches[0];
+    const merged = Object.assign({}, rowToLabeled(existing.data || {}, map.byCol), desired);
+    delete merged.id;
+    const before = rowToLabeled(existing.data || {}, map.byCol);
+    const data = rowFromLabeled(merged, map.byLabel);
+
+    const res = await fetch('/lookup_tables/' + tableId + '/update_row.json', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: jsonHeaders(csrf),
+      body: JSON.stringify({ row_id: existing.id, data: data }),
+    });
+    if (!res.ok) {
+      const errTxt = await res.text().catch(() => '');
+      return { ok: false, stage: 'http', error: 'PUT /lookup_tables/' + tableId + '/update_row.json failed: HTTP ' + res.status + ' ' + errTxt.slice(0, 400) };
+    }
+    const json = await res.json().catch(() => null);
+    const row = json && json.result;
+    if (!row || typeof row !== 'object') {
+      return { ok: false, stage: 'parse', error: 'update-row response missing result: ' + JSON.stringify(json).slice(0, 400) };
+    }
+
+    const after = rowToLabeled(row.data || {}, map.byCol);
+    const changed = [];
+    for (const k of Object.keys(desired)) {
+      if (String(before[k] == null ? '' : before[k]) !== String(after[k] == null ? '' : after[k])) changed.push(k);
+    }
+    return {
+      ok: true,
+      table_id: tableId,
+      row_id: existing.id,
+      action: 'updated',
+      changed_columns: changed,
+      row: after,
+    };
+  } catch (e) {
+    return { ok: false, stage: 'exception', error: String(e && e.message || e) };
+  }
+})
+`;
+
+class WorkatoLookupTableRowUpsertImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_LOOKUP.ROW_UPSERT;
+
+  async execute(args: LookupTableRowUpsertArgs): Promise<ToolResult> {
+    console.log('[workato-lookup] row_upsert requested:', args);
+    try {
+      if (typeof args?.table_id !== 'number' || !Number.isFinite(args.table_id)) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': table_id (number) is required',
+        );
+      }
+      if (typeof args?.key_column !== 'string' || args.key_column.length === 0) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': key_column (column label) is required',
+        );
+      }
+      if (args?.key_value === undefined || args.key_value === null) {
+        return createErrorResponse(ERROR_MESSAGES.INVALID_PARAMETERS + ': key_value is required');
+      }
+      if (args?.values !== undefined && (typeof args.values !== 'object' || args.values === null)) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': values must be an object keyed by column label',
+        );
+      }
+      const tabId = await resolveTabId(args);
+      await ensureAttached(tabId);
+
+      const url = await getTabUrl(tabId);
+      if (!/workato\.(com|is)/.test(url)) {
+        return createErrorResponse(
+          `workato_lookup_table_row_upsert: active tab is not a Workato page (url=${url}).`,
+        );
+      }
+
+      const expr = `(${ROW_UPSERT_PAGE_FN})(${JSON.stringify(args.table_id)}, ${JSON.stringify(
+        args.key_column,
+      )}, ${JSON.stringify(args.key_value)}, ${JSON.stringify(args.values ?? {})})`;
+      const result = await evaluateInPage<{
+        ok: boolean;
+        stage?: string;
+        error?: string;
+        table_id?: number;
+        row_id?: number;
+        action?: 'created' | 'updated';
+        changed_columns?: string[];
+        row?: Record<string, unknown>;
+        row_ids?: number[];
+      }>(tabId, expr, { awaitPromise: true });
+
+      if (!result?.ok) {
+        return createErrorResponse(
+          `workato_lookup_table_row_upsert: ${result?.error ?? 'unknown error'}` +
+            (result?.stage ? ` (stage=${result.stage})` : ''),
+        );
+      }
+      const payload = {
+        table_id: result.table_id,
+        row_id: result.row_id,
+        action: result.action,
+        changed_columns: result.changed_columns,
+        row: result.row,
+      };
+      const noop =
+        result.action === 'updated' &&
+        Array.isArray(result.changed_columns) &&
+        result.changed_columns.length === 0;
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              `${result.action} row ${result.row_id} in lookup table ${result.table_id}` +
+              (noop ? ' (no column values changed — it already held these values)' : '') +
+              `\n${JSON.stringify(payload)}`,
+          },
+        ],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-lookup] row_upsert failed:', error);
+      return createErrorResponse(
+        `workato_lookup_table_row_upsert failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // workato_lookup_table_row_delete
 // ---------------------------------------------------------------------------
 
@@ -1438,6 +1670,7 @@ export const WorkatoLookupTableSetColumnsTool = new WorkatoLookupTableSetColumns
 export const WorkatoLookupTableDeleteTool = new WorkatoLookupTableDeleteImpl();
 export const WorkatoLookupTableRowCreateTool = new WorkatoLookupTableRowCreateImpl();
 export const WorkatoLookupTableRowUpdateTool = new WorkatoLookupTableRowUpdateImpl();
+export const WorkatoLookupTableRowUpsertTool = new WorkatoLookupTableRowUpsertImpl();
 export const WorkatoLookupTableRowDeleteTool = new WorkatoLookupTableRowDeleteImpl();
 export const WorkatoLookupTableRowSearchTool = new WorkatoLookupTableRowSearchImpl();
 export const WorkatoLookupTableImportCsvTool = new WorkatoLookupTableImportCsvImpl();

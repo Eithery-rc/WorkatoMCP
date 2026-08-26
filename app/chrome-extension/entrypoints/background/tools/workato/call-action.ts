@@ -42,6 +42,16 @@ const READ_PREFIXES = [
 const READ_ONLY_HTTP_VERBS = new Set(['get', 'head', 'options']);
 
 /**
+ * Read actions whose name does not start with a read prefix.
+ *
+ * `run_suiteql` is the one that bites: it is a SELECT-only query action on the
+ * NetSuite connectors, but "run_" reads as a write, so every schema probe had
+ * to pass allow_writes:true — which trains the reflex of setting that flag on
+ * calls nobody has checked.
+ */
+const READ_ONLY_EXACT_NAMES = new Set(['execute_suiteql', 'run_suiteql', 'run_query']);
+
+/**
  * Safety gate. Runs in the background, NOT in-page, so module-scope constants
  * are fine here. Returns true when the action looks read-only and is allowed
  * by default; false when it looks like a write and needs allow_writes=true.
@@ -49,7 +59,7 @@ const READ_ONLY_HTTP_VERBS = new Set(['get', 'head', 'options']);
 export function isReadAction(actionName: string, input: Record<string, unknown>): boolean {
   const lower = actionName.toLowerCase();
   if (READ_PREFIXES.some((p) => lower.startsWith(p))) return true;
-  if (lower === 'execute_suiteql') return true;
+  if (READ_ONLY_EXACT_NAMES.has(lower)) return true;
   if (lower === '__adhoc_http_action') {
     const verb = String(input?.verb ?? input?.method ?? '').toLowerCase();
     return READ_ONLY_HTTP_VERBS.has(verb);
@@ -152,8 +162,9 @@ class WorkatoCallActionTool extends BaseBrowserToolExecutor {
         return createErrorResponse(
           `WorkatoUnsafeAction: action_name='${args.action_name}' looks like a write ` +
             '(not in the read-only allowlist: search_*, get_*, list_*, query_*, find_*, ' +
-            'describe_*, read_*, fetch_*, execute_suiteql, or __adhoc_http_action with ' +
-            'verb in {get,head,options}). Pass allow_writes:true to proceed.',
+            'describe_*, read_*, fetch_*, execute_suiteql, run_suiteql, run_query, or ' +
+            '__adhoc_http_action with verb in {get,head,options}). Pass allow_writes:true ' +
+            'to proceed.',
         );
       }
 

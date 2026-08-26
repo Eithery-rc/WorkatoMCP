@@ -1,6 +1,6 @@
 ---
 name: workato-recipes
-description: Use when authoring, editing, reviewing, or programmatically mutating Workato recipes — recipe code-tree JSON (triggers, foreach/if/repeat/try-catch, Variables-by-Workato, app actions), formula-mode expressions (Ruby allowlist, `_dp(...)` datapills), datapill references, or when calling the `workato_ui_save_recipe_code` / `workato_pull_recipe` / `workato_recipe_*` MCP tools.
+description: Use when authoring, editing, reviewing, or programmatically mutating Workato recipes or Workflow App (LCAP) pages — recipe code-tree JSON (triggers, foreach/if/repeat/try-catch, Variables-by-Workato, app actions), formula-mode expressions (Ruby allowlist, `_dp(...)` datapills), datapill references, Workflow App page JSON (widgets, layout rows, handlers, page variables, conditional visibility, app-function bindings), or when calling the `workato_ui_save_recipe_code` / `workato_pull_recipe` / `workato_recipe_*` MCP tools.
 ---
 
 # Workato recipes
@@ -17,6 +17,7 @@ Load the file matching what you're working on. **Always read `code-tree.md` firs
 | File                    | When to read                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `code-tree.md`          | Authoring/mutating recipes via `workato_ui_save_recipe_code` or `workato_recipe_*`. Verbatim schemas for triggers (clock, recipe_function, salesforce), control flow (foreach, if/elsif/else, repeat+while_condition, try/catch, stop), Variables-by-Workato (declare_list, insert_to_list, declare_variable, update_variables), and common app actions (logger, csv_parser, py_eval, salesforce, netsuite, google_sheets, email, workato_files, workato_pub_sub, openai). |
+| `workflow-apps.md`      | Building or editing a Workato Workflow App (LCAP) page: page API and CSRF, `layout` row semantics and the geometry trap, widget catalogue, `handlers` (click / change / pageLoad), page variables, the three `_dp` dialects, the full conditional-`visible` opcode table, app-function bindings, and how to stop a table re-firing on every keystroke.                                                                                                                     |
 | `formula-mode.md`       | **Always read** before constructing or reviewing any formula — text-vs-formula mode, datapill syntax, allowlist behavior, common patterns, gotchas.                                                                                                                                                                                                                                                                                                                        |
 | `formula-reference.md`  | Exhaustive catalog of all 169 formula-mode functions and operators — name, operand types, params, examples, docs links, search tags. Grep here to find a formula by name/synonym, or to verify a formula exists and is being called correctly. The category files give guidance; this is the complete lookup.                                                                                                                                                              |
 | `string-formulas.md`    | Formula transforms on a string datapill: trimming, casing, regex, parsing, currencies, country/state codes.                                                                                                                                                                                                                                                                                                                                                                |
@@ -52,11 +53,27 @@ These apply when constructing or reviewing any formula-mode expression (see `for
 6. **Integer division truncates**: `4 / 7 == 0`. Cast with `.to_f` first if you want decimals.
 7. **`.to_i`/`.to_f` on non-numeric strings return `0`**, not an error. Validate with `.match?(/^\d+$/)` if you need failure detection.
 
+## Critical rules — Workflow App pages
+
+These apply when writing page JSON (see `workflow-apps.md` for full detail):
+
+1. **Whole tree only.** `PUT /web_api/lcap/pages/<id>.json` replaces `content` entirely; there is no partial update. GET, mutate, PUT.
+2. **Never change a widget `id`.** It is the address every datapill uses. Ids are 8 lowercase hex and may be minted by hand for new widgets.
+3. **Never delete a widget without renumbering the rows** of what remains. A collapsed row extent drops the next containers' computed `top` and they stack at 0, with no error anywhere.
+4. **Verify geometry after every layout change**, against the rendered DOM, not the JSON: every top level `.lcap-layout__widget` container must have `top:` in its inline style, and no two may share a bounding-box `y`.
+5. **Do not PUT while the page builder is open** on that page. The builder's Save overwrites with its cached tree, exactly like the recipe editor.
+6. **A 404 on a page read means wrong workspace or environment** for that tab, not a missing page. Pass both `tabId` and `profile`.
+7. **Three `_dp` dialects**: `pill_type`/`provider`/`line` for recipe steps, `{"source":"widget","id":...}` for page components, `{"source":"page-variable","id":...}` for page variables. Compact JSON, one line, no added spaces.
+8. **`outputMapping` on a button is inert** in the current builder. A button cannot feed its recipe result back into the page; route data through page variables and `set-value` instead.
+
 ## Quick task → file mapping
 
 | Task                                            | Start here                                             |
 | ----------------------------------------------- | ------------------------------------------------------ |
 | Add a step to a recipe                          | `code-tree.md` (find matching action shape)            |
+| Build or edit a Workflow App form               | `workflow-apps.md`                                     |
+| Hide a page widget conditionally                | `workflow-apps.md` → conditional `visible` opcodes     |
+| Stop a page table re-running its recipe         | `workflow-apps.md` → task consumption                  |
 | Wire a foreach over a typed list                | `code-tree.md` → Variables-by-Workato → `declare_list` |
 | Catch and log a step's error                    | `code-tree.md` → Try / Catch                           |
 | Format a datapill before injection              | `formula-mode.md` then the type-specific file          |

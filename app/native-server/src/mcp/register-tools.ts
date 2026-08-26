@@ -15,9 +15,21 @@ import nativeMessagingHostInstance from '../native-messaging-host';
 import { NativeMessageType, TOOL_SCHEMAS, TOOL_NAMES } from 'workatomcp-shared';
 import { isWorkatoFileTool, prepareWorkatoCall, writePulledRecipe } from './workato-file-io';
 import {
+  isWorkatoLcapFileTool,
+  prepareLcapCall,
+  writeLcapOutFile,
+  type LcapOutFile,
+} from './workato-lcap-io';
+import {
   handleWorkatoRecipeMutatorCall,
   isWorkatoRecipeMutatorTool,
 } from './workato-recipe-mutators';
+import { handleWorkatoCallableCall, isWorkatoCallableTool } from './workato-callable-schema';
+import {
+  handleWorkatoSaveWithDependentsCall,
+  isWorkatoSaveWithDependentsTool,
+} from './workato-save-dependents';
+import { handleWorkatoDatapillCall, isWorkatoDatapillTool } from './workato-datapill';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { profileRegistry } from '../server/profile-registry';
 
@@ -350,27 +362,67 @@ export function createToolRouter(): ToolRouter {
         pullOutFile = prepared.pullOutFile;
       }
 
-      if (isWorkatoRecipeMutatorTool(name)) {
-        return handleWorkatoRecipeMutatorCall(
-          name,
-          effectiveArgs || {},
-          async (toolName, toolArgs) => {
-            const response = await sendRequestToExtension(
-              {
-                name: toolName,
-                args: toolArgs,
-              },
-              NativeMessageType.CALL_TOOL,
-              120000,
-              routingProfile,
-            );
-            if (response.status === 'success') return response.data;
-            return {
-              content: [{ type: 'text', text: `Error calling tool: ${response.error}` }],
-              isError: true,
-            };
-          },
-        );
+      // workato_lcap_page_get(out_file) / *_save(content_path) / api_request(out_file):
+      // the LCAP page tree and raw response bodies get the same treatment.
+      let lcapOutFile: LcapOutFile | undefined;
+      if (isWorkatoLcapFileTool(name)) {
+        const prepared = prepareLcapCall(name, effectiveArgs || {});
+        effectiveArgs = prepared.args;
+        lcapOutFile = prepared.outFile;
+      }
+
+      // `workato_datapill` is pure string assembly — no browser round trip.
+      if (isWorkatoDatapillTool(name)) {
+        return handleWorkatoDatapillCall(name, effectiveArgs || {});
+      }
+
+      // Native orchestrators: they drive several extension tools in sequence
+      // (pull -> mutate -> save, or stop -> save -> restore) and need Node's
+      // filesystem for code_path, so they run here rather than in the page.
+      if (
+        isWorkatoRecipeMutatorTool(name) ||
+        isWorkatoCallableTool(name) ||
+        isWorkatoSaveWithDependentsTool(name)
+      ) {
+        const callExtension = async (
+          toolName: string,
+          toolArgs: Record<string, unknown>,
+        ): Promise<CallToolResult> => {
+          // Each nested call goes through the same file-param resolution the
+          // top-level dispatch does, so an orchestrator can pass code_path
+          // straight through to the save tool.
+          let nestedArgs: JsonObject = toolArgs || {};
+          let nestedOutFile: string | undefined;
+          if (isWorkatoFileTool(toolName)) {
+            const prepared = prepareWorkatoCall(toolName, nestedArgs);
+            nestedArgs = prepared.args;
+            nestedOutFile = prepared.pullOutFile;
+          }
+          const response = await sendRequestToExtension(
+            {
+              name: toolName,
+              args: nestedArgs,
+            },
+            NativeMessageType.CALL_TOOL,
+            120000,
+            routingProfile,
+          );
+          if (response.status === 'success') {
+            return nestedOutFile ? writePulledRecipe(nestedOutFile, response.data) : response.data;
+          }
+          return {
+            content: [{ type: 'text', text: `Error calling tool: ${response.error}` }],
+            isError: true,
+          };
+        };
+
+        if (isWorkatoRecipeMutatorTool(name)) {
+          return handleWorkatoRecipeMutatorCall(name, effectiveArgs || {}, callExtension);
+        }
+        if (isWorkatoCallableTool(name)) {
+          return handleWorkatoCallableCall(name, effectiveArgs || {}, callExtension);
+        }
+        return handleWorkatoSaveWithDependentsCall(name, effectiveArgs || {}, callExtension);
       }
 
       const response = await sendRequestToExtension(
@@ -383,7 +435,9 @@ export function createToolRouter(): ToolRouter {
         routingProfile,
       );
       if (response.status === 'success') {
-        return pullOutFile ? writePulledRecipe(pullOutFile, response.data) : response.data;
+        if (pullOutFile) return writePulledRecipe(pullOutFile, response.data);
+        if (lcapOutFile) return writeLcapOutFile(lcapOutFile, response.data);
+        return response.data;
       } else {
         return {
           content: [

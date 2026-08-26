@@ -55,6 +55,16 @@ export interface LookupTableRowUpdateArgs extends TabTargetArgs {
   row: Record<string, unknown>;
 }
 
+export interface LookupTableRowUpsertArgs extends TabTargetArgs {
+  table_id: number;
+  /** Column label whose value identifies the row (e.g. "Key"). */
+  key_column: string;
+  /** The value to match in `key_column`. Compared as a string, exactly. */
+  key_value: string | number | boolean;
+  /** Column-label-keyed values to write. Columns not named here are left alone. */
+  values?: Record<string, unknown>;
+}
+
 export interface LookupTableRowDeleteArgs extends TabTargetArgs {
   table_id: number;
   row_id: number;

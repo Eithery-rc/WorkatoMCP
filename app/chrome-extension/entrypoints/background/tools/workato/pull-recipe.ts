@@ -1,7 +1,12 @@
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
-import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
+import {
+  findWorkatoTab,
+  runInWorkatoTab,
+  workatoNotFoundHint,
+  WorkatoDispatchError,
+} from './tab-dispatch';
 import {
   findStep,
   inspectStep,
@@ -192,6 +197,7 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
       if (!result.ok) {
         return createErrorResponse(
           `WorkatoApiError (${result.failure?.stage}): ${result.failure?.message}` +
+            workatoNotFoundHint(result.failure?.status) +
             (result.failure?.body_excerpt
               ? `\n--- body excerpt ---\n${result.failure.body_excerpt}`
               : ''),

@@ -7,6 +7,7 @@ export {
   WorkatoLookupTableDeleteTool,
   WorkatoLookupTableRowCreateTool,
   WorkatoLookupTableRowUpdateTool,
+  WorkatoLookupTableRowUpsertTool,
   WorkatoLookupTableRowDeleteTool,
   WorkatoLookupTableRowSearchTool,
   WorkatoLookupTableImportCsvTool,

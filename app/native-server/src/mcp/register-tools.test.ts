@@ -147,3 +147,126 @@ describe('register-tools profile routing', () => {
     expect((schemas[1].inputSchema as any).required).toEqual(['profile']);
   });
 });
+
+describe('register-tools native orchestrator routing', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  /** Answer every extension call with a plausible success payload. */
+  function stubExtension() {
+    jest.spyOn(profileRegistry, 'getConnectedProfiles').mockReturnValue(['centium']);
+    return jest
+      .spyOn(profileRegistry, 'sendRequest')
+      .mockImplementation(async (_profile: any, payload: any) => {
+        const name = payload?.name;
+        const args = payload?.args ?? {};
+        const text = (body: unknown) => ({
+          status: 'success',
+          data: { content: [{ type: 'text', text: JSON.stringify(body) }], isError: false },
+        });
+        if (name === 'workato_pull_recipe') {
+          return text({
+            recipe_id: args.recipe_id,
+            code: {
+              number: 0,
+              keyword: 'trigger',
+              provider: 'workato_recipe_function',
+              name: 'execute',
+              as: 'a1b2c3d4',
+              input: {},
+              block: [
+                {
+                  number: 1,
+                  keyword: 'action',
+                  provider: 'workato_recipe_function',
+                  name: 'return_result',
+                  as: 'tjreturn',
+                  input: {},
+                },
+              ],
+            },
+            version: { version_no: 4, config: '[]' },
+          }) as any;
+        }
+        if (name === 'workato_ui_save_recipe_code') {
+          return text({ recipe_id: args.recipe_id, version_no: 5, code_errors: [] }) as any;
+        }
+        if (name === 'workato_recipe_status') {
+          return text({ recipe_id: args.recipe_id, running: false, name: 'r' }) as any;
+        }
+        return text({ ok: true }) as any;
+      });
+  }
+
+  test('workato_datapill is answered locally, with no extension round trip', async () => {
+    const sendRequest = stubExtension();
+    const router = createToolRouter();
+
+    await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+    sendRequest.mockClear();
+
+    const result = await router.handleToolCall('workato_datapill', {
+      widget_id: 'df1984ea',
+    });
+
+    expect(result.isError).toBe(false);
+    expect((result.content?.[0] as any).text).toContain('"source":"widget"');
+    expect(sendRequest).not.toHaveBeenCalled();
+  });
+
+  test('workato_callable_schema_set drives pull then save through the extension', async () => {
+    const sendRequest = stubExtension();
+    const router = createToolRouter();
+    await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+    sendRequest.mockClear();
+
+    const result = await router.handleToolCall('workato_callable_schema_set', {
+      recipe_id: 76902508,
+      results: [{ name: 'je_count', type: 'integer' }],
+    });
+
+    expect(result.isError).toBe(false);
+    const called = sendRequest.mock.calls.map((call: any) => call[1].name);
+    expect(called).toEqual(['workato_pull_recipe', 'workato_ui_save_recipe_code']);
+    const saveArgs = sendRequest.mock.calls[1][1] as any;
+    expect(saveArgs.args.code.input.result_schema_json).toContain('je_count');
+    expect(saveArgs.args.comment).toBe('schema refresh');
+  });
+
+  test('workato_recipe_save_with_dependents refuses rather than guessing dependents', async () => {
+    const sendRequest = stubExtension();
+    const router = createToolRouter();
+
+    await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+    sendRequest.mockClear();
+
+    const result = await router.handleToolCall('workato_recipe_save_with_dependents', {
+      recipe_id: 76902508,
+      code: { keyword: 'trigger' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result.content?.[0] as any).text).toMatch(/no way to determine which recipes call/);
+    // Critically: it did NOT save.
+    expect(sendRequest).not.toHaveBeenCalled();
+  });
+
+  test('workato_recipe_save_with_dependents restores a stopped dependent after saving', async () => {
+    const sendRequest = stubExtension();
+    const router = createToolRouter();
+    await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+    sendRequest.mockClear();
+
+    const result = await router.handleToolCall('workato_recipe_save_with_dependents', {
+      recipe_id: 76902508,
+      code: { keyword: 'trigger' },
+      dependent_recipe_ids: [76887741],
+    });
+
+    expect(result.isError).toBe(false);
+    const called = sendRequest.mock.calls.map((call: any) => call[1].name);
+    expect(called).toContain('workato_recipe_status');
+    expect(called).toContain('workato_ui_save_recipe_code');
+  });
+});

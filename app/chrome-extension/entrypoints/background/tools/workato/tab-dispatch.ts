@@ -57,6 +57,25 @@ export class WorkatoDispatchError extends Error {
   }
 }
 
+/**
+ * Extra text for a Workato 404.
+ *
+ * Workato resolves the active workspace and environment from the tab's own
+ * session, so a perfectly real recipe or page returns 404 when the request is
+ * issued from a tab pointed at a different workspace — the same response a
+ * deleted object gives. Reading that as "it does not exist" sends the caller
+ * hunting for a missing object instead of switching tabs.
+ */
+export function workatoNotFoundHint(status: number | undefined): string {
+  if (status !== 404) return '';
+  return (
+    ' A 404 from Workato does NOT prove the object is gone: the workspace and environment ' +
+    "come from this tab's session, so an id belonging to another workspace/environment is " +
+    'simply invisible here. Confirm with workato_whoami, and pin the call to a tab in the ' +
+    'right workspace (tabId + profile) before concluding it was deleted.'
+  );
+}
+
 export interface WorkatoTabInfo {
   tabId: number;
   host: string;
@@ -84,7 +103,9 @@ export async function findWorkatoTab(tabId?: number): Promise<WorkatoTabInfo> {
         'TabNotFound',
         `Workato tab ${tabId} was not found or is no longer accessible: ${
           err instanceof Error ? err.message : String(err)
-        }`,
+        }. Tab ids are per Chrome PROFILE: a tab that exists in another profile ` +
+          `reports exactly this. If the tab is open in front of you, pass the profile it ` +
+          `belongs to (profile:"<name>") — workato_list_profiles shows what is connected.`,
         { tabId },
       );
     }
@@ -114,8 +135,10 @@ export async function findWorkatoTab(tabId?: number): Promise<WorkatoTabInfo> {
   if (tabs.length === 0) {
     throw new WorkatoDispatchError(
       'TabNotFound',
-      'No Workato tab open. Open https://app.workato.com (or your region) in Chrome ' +
-        'and sign in before calling this tool.',
+      'No Workato tab open in this Chrome profile. Open https://app.workato.com (or your ' +
+        'region) and sign in before calling this tool. If Workato IS open, it is probably ' +
+        'in a different profile than the one this call routed to — check ' +
+        'workato_list_profiles and pass profile:"<name>".',
     );
   }
 

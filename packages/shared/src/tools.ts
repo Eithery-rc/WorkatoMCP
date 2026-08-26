@@ -81,6 +81,12 @@ export const TOOL_NAMES = {
     DELETE_RECIPE: 'workato_delete_recipe',
     CREATE_PROJECT: 'workato_create_project',
     UPDATE_PROJECT: 'workato_update_project',
+    ADAPTER_META: 'workato_adapter_meta',
+    SAVE_WITH_DEPENDENTS: 'workato_recipe_save_with_dependents',
+    CALLABLE_SCHEMA_SET: 'workato_callable_schema_set',
+    CALLER_BIND: 'workato_caller_bind',
+    DATAPILL: 'workato_datapill',
+    API_REQUEST: 'workato_api_request',
   },
   WORKATO_UI: {
     OPEN_RECIPE: 'workato_ui_open_recipe',
@@ -104,6 +110,15 @@ export const TOOL_NAMES = {
     SET_PY_EVAL_CODE: 'workato_recipe_set_py_eval_code',
     SET_EXTENDED_SCHEMA: 'workato_recipe_set_extended_schema',
   },
+  WORKATO_LCAP: {
+    APPS_LIST: 'workato_lcap_apps_list',
+    PAGE_GET: 'workato_lcap_page_get',
+    PAGE_SAVE: 'workato_lcap_page_save',
+    PAGE_VALIDATE: 'workato_lcap_page_validate',
+    WIDGET_PATCH: 'workato_lcap_widget_patch',
+    PAGE_CREATE: 'workato_lcap_page_create',
+    PAGE_DELETE: 'workato_lcap_page_delete',
+  },
   WORKATO_LOOKUP: {
     TABLES_LIST: 'workato_lookup_tables_list',
     TABLE_GET: 'workato_lookup_table_get',
@@ -114,6 +129,7 @@ export const TOOL_NAMES = {
     ROW_CREATE: 'workato_lookup_table_row_create',
     ROW_UPDATE: 'workato_lookup_table_row_update',
     ROW_DELETE: 'workato_lookup_table_row_delete',
+    ROW_UPSERT: 'workato_lookup_table_row_upsert',
     ROW_SEARCH: 'workato_lookup_table_row_search',
     IMPORT_CSV: 'workato_lookup_table_import_csv',
   },
@@ -1732,6 +1748,325 @@ export const TOOL_SCHEMAS: Tool[] = [
     },
   },
   {
+    name: TOOL_NAMES.WORKATO.ADAPTER_META,
+    description:
+      "Look up a connector's REAL config surface from /integrations/meta — the endpoint the " +
+      'recipe editor itself calls. THE answer to "what is this field actually called?". ' +
+      'Workato silently DROPS input keys it does not recognise, so a guessed key name saves ' +
+      'cleanly and then does nothing; one call here replaces the guess/save/pull/check loop. ' +
+      'Returns, per trigger and action: input[] and output[] field lists (name, type, ' +
+      'control_type, label, optional, extends_schema), help text, and the behaviour flags ' +
+      'extends_input_schema / extends_output_schema / depends_on / deprecated / batch / realtime. ' +
+      '`depends_on` is how you learn a step takes its schema from another step (e.g. ' +
+      "return_result's fields come from the recipe-function trigger's result_schema_json). " +
+      'PAYLOAD: a bare call returns only the operation INDEX (names + titles) because some ' +
+      'adapters are hundreds of KB; pass operation to get one operation in full, or field_grep ' +
+      'to find fields by name/label across all of them. Read-only. Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        adapter: {
+          oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+          description:
+            'Adapter name or names, e.g. "workato_recipe_function", "salesforce", ' +
+            '["workato_recipe_function","workato_workflow_task"]. A custom connector uses its ' +
+            'generated name (e.g. "netsuite_rest_connector_5105163_1745592003") — read it off ' +
+            "a recipe step's `provider` field.",
+        },
+        operation: {
+          type: 'string',
+          description:
+            'Trigger or action name (e.g. "execute", "call_recipe", "return_result"). Returns ' +
+            'that operation with full input/output field lists.',
+        },
+        field_grep: {
+          type: 'string',
+          description:
+            'Substring, or /regex/, matched case-insensitively against field name and label. ' +
+            'Returns every operation with a matching field, carrying only the matches. ' +
+            'e.g. "schema" finds parameters_schema_json and result_schema_json.',
+        },
+        include_help: {
+          type: 'boolean',
+          description: "Include each operation's help text. Default true.",
+        },
+        raw: {
+          type: 'boolean',
+          description:
+            'Return the raw meta document instead of the slim view. Capped at 20k chars — ' +
+            'use out_file for the whole thing.',
+        },
+        out_file: {
+          type: 'string',
+          description:
+            'Absolute path to write the raw meta JSON to. The document never enters the ' +
+            'response, so this is the safe way to read a large adapter in full.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 30000, clamped 10000-110000.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['adapter'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.SAVE_WITH_DEPENDENTS,
+    description:
+      'Save a CALLABLE recipe (recipe function) and handle its callers around the save. ' +
+      'Workato refuses to stop a callable while a recipe that calls it is running ' +
+      '(active_dependent_recipes_count), and refuses a code save on a running recipe, so every ' +
+      'edit to a shared callable is stop-caller-A, stop-caller-B, save, start-A, start-B. This ' +
+      'does that in one call and RESTORES each dependent to the state it was in — a caller that ' +
+      'was already stopped stays stopped. ' +
+      'DEPENDENT DISCOVERY: Workato exposes only a COUNT of active dependents, never their ids, ' +
+      'so this tool will not guess. Pass dependent_recipe_ids (the callers you know), or ' +
+      'scan_folder_id to read every recipe in a folder and match call_recipe.flow_id. With ' +
+      'neither, the call is REFUSED rather than saving as if there were no dependents. If the ' +
+      'save fails because more dependents are active than were listed, everything this call ' +
+      'stopped is restarted and the mismatch is reported. ' +
+      'For a callable with no callers, use workato_ui_save_recipe_code instead.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'The callable recipe to save.' },
+        code: {
+          type: 'object',
+          description: 'Full recipe code tree. Use code_path for anything large.',
+        },
+        code_path: {
+          type: 'string',
+          description:
+            'Absolute path to a recipe JSON file (as written by workato_pull_recipe out_file). ' +
+            'Read in the bridge, so the tree never crosses the context.',
+        },
+        config: {
+          type: 'array',
+          description: "Recipe connection config. Defaults to the recipe's own.",
+        },
+        dependent_recipe_ids: {
+          type: 'array',
+          items: { type: 'number' },
+          description:
+            'Recipe ids that call this one. The fast, exact path — used verbatim, no discovery.',
+        },
+        scan_folder_id: {
+          type: 'number',
+          description:
+            'Instead of a list: read every recipe in this folder and treat those whose ' +
+            'call_recipe step targets recipe_id as the dependents. Costs one pull per recipe.',
+        },
+        expected_base_version_no: {
+          type: 'number',
+          description:
+            'Optimistic lock: refuse if the recipe moved past this version since you pulled it.',
+        },
+        ensure_running: {
+          type: 'boolean',
+          description: 'Start the callee after the save even if it was stopped beforehand.',
+        },
+        comment: {
+          type: 'string',
+          description:
+            'Version comment. CLIENT-VISIBLE in the recipe version history (these recipes get ' +
+            'promoted to the client production environment), so keep it neutral and boring — ' +
+            '"schema refresh", "config update". Never a narrative of what was changed or of ' +
+            'what an agent did. Defaults to "schema refresh".',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.CALLABLE_SCHEMA_SET,
+    description:
+      "Declare a callable recipe's parameter and result schemas as one coherent unit. " +
+      "A recipe function's contract lives in FOUR places that must agree and nothing checks " +
+      "that they do: the trigger's parameters_schema_json, the trigger's result_schema_json, " +
+      "the trigger's extended_output_schema (the `parameters` wrapper), and the return_result " +
+      "step's extended_input_schema + input {result:{...}} + visible_config_fields. " +
+      'MISSING result_schema_json IS SILENT AND TOTAL: the callee saves cleanly, its job ' +
+      "succeeds, its trace shows the full payload, and the caller's call_recipe output is " +
+      '{job_id, job_url, result: null} with every downstream pill resolving empty. This tool ' +
+      'writes all four together. Existing datapill mappings under input.result are preserved, ' +
+      'and values sitting flat on input (the pre-fix shape that CAUSES result:null) are migrated ' +
+      'under the result wrapper instead of being dropped. Pulls, mutates and saves in one call.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description: 'The CALLABLE recipe (trigger provider workato_recipe_function).',
+        },
+        parameters: {
+          type: 'array',
+          description:
+            'Input fields the callable accepts. Each {name, type, control_type?, label?, ' +
+            'optional?, properties?}. Only `name` is required; the rest are filled in the way ' +
+            'the schema designer would. At runtime these arrive under `parameters` — the ' +
+            'trigger pill path is ["parameters","<Name>"].',
+          items: { type: 'object' },
+        },
+        results: {
+          type: 'array',
+          description:
+            'Fields the callable returns. Same entry shape; nested arrays take of:"object" plus ' +
+            'properties[]. These must be WRITTEN under a `result` wrapper, which this tool does.',
+          items: { type: 'object' },
+        },
+        expected_base_version_no: {
+          type: 'number',
+          description: 'Optimistic lock against the version you pulled.',
+        },
+        restart_if_running: {
+          type: 'boolean',
+          description:
+            'Stop, save, restart when the recipe is running. Does NOT stop dependent callers — ' +
+            'use workato_recipe_save_with_dependents when the callable has running callers.',
+        },
+        ensure_running: { type: 'boolean', description: 'Start the recipe after saving.' },
+        comment: {
+          type: 'string',
+          description:
+            'Version comment. CLIENT-VISIBLE in the recipe version history — keep it neutral ' +
+            '("schema refresh", "schema update"), never a description of the work done. ' +
+            'Defaults to "schema refresh".',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.CALLER_BIND,
+    description:
+      'Teach a call_recipe step what its callee returns, and repoint the pills written against ' +
+      "the old shape. Reads the CALLEE's own trigger for the contract (nothing is guessed), then " +
+      "writes the caller step's extended_output_schema (job_id, job_url, and the callee's " +
+      '`result` object node) plus its extended_input_schema (the `parameters` node), and rewrites ' +
+      'every datapill in the caller that reads a result field straight off that step so its path ' +
+      'starts with "result". Run workato_callable_schema_set on the callee FIRST — a callee with ' +
+      'no result_schema_json is refused here, because binding to it would produce result:null.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description: 'The CALLER recipe (the one with the call_recipe step).',
+        },
+        callee_recipe_id: {
+          type: 'number',
+          description:
+            'The callable being called. Optional when the caller has exactly one call_recipe ' +
+            "step — it is read from that step's flow_id.",
+        },
+        step: {
+          type: 'string',
+          description:
+            'Which call_recipe step, by `as` id or step number. Needed only when several match.',
+        },
+        expected_base_version_no: { type: 'number', description: 'Optimistic lock.' },
+        restart_if_running: { type: 'boolean', description: 'Stop, save, restart when running.' },
+        ensure_running: { type: 'boolean', description: 'Start the recipe after saving.' },
+        comment: {
+          type: 'string',
+          description:
+            'Version comment. CLIENT-VISIBLE — keep it neutral ("schema refresh"). Defaults to ' +
+            '"schema refresh".',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.DATAPILL,
+    description:
+      'Build a datapill reference string exactly, instead of assembling one by hand. Workato ' +
+      "matches the _dp('<json>') literal BYTE-FOR-BYTE: one inserted space, or a line wrap, " +
+      'and the pill saves fine and then silently resolves to nothing. THREE dialects — recipe ' +
+      'step output ({pill_type, provider, line, path}), Workflow App widget ({source:"widget", ' +
+      'id, path}), and Workflow App page variable ({source:"page-variable", id, path}) — and ' +
+      'two modes: "interpolated" (#{_dp(...)}, for a normal string field) and ' +
+      '"formula" (bare _dp(...), valid only inside a value whose first character is "="). ' +
+      'Path shorthand: "rows[]" is the element under iteration (current_item), "rows#size" is the ' +
+      'collection length. Pure string assembly — no browser, no Workato call.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['recipe', 'widget', 'variable'],
+          description:
+            'Which dialect. Inferred from widget_id / variable_id when given, "recipe" otherwise.',
+        },
+        mode: {
+          type: 'string',
+          enum: ['interpolated', 'formula'],
+          description:
+            '"interpolated" (default) wraps as #{_dp(...)} for a plain string field. "formula" ' +
+            'emits a bare _dp(...) for use inside a leading-"=" expression.',
+        },
+        shorthand: {
+          type: 'string',
+          description:
+            'Recipe dialect in one token: "provider.line.path.parts", e.g. ' +
+            '"salesforce.9ad56b78.records[].Id" or "py_eval.84767f5e.output.rows#size".',
+        },
+        provider: {
+          type: 'string',
+          description: 'Recipe dialect: the step adapter, e.g. "salesforce", "py_eval".',
+        },
+        line: {
+          type: 'string',
+          description: 'Recipe dialect: the target step `as` id (8 hex chars), NOT its number.',
+        },
+        pill_type: {
+          type: 'string',
+          description: 'Recipe dialect. Default "output". "job_context" takes no provider/line.',
+        },
+        widget_id: {
+          type: 'string',
+          description:
+            'Widget dialect: the widget 8-hex id read from the page content. Never invent one.',
+        },
+        variable_id: {
+          type: 'string',
+          description:
+            'Page-variable dialect: the variable 8-hex id from the page content. Emits ' +
+            'source:"page-variable" — the shape the builder itself writes when a page variable ' +
+            'is dropped into a field.',
+        },
+        path: {
+          oneOf: [{ type: 'string' }, { type: 'array' }],
+          description:
+            'Dotted string or array. Widget and page-variable pills default to ["value"]. Array ' +
+            'entries may be literal {"path_element_type":"current_item"} / ' +
+            '{"path_element_type":"size"} objects.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: TOOL_NAMES.WORKATO.VERSION_DIFF,
     description:
       'Compare two saved versions of a recipe and return ONLY the changed steps (compact). ' +
@@ -2064,8 +2399,10 @@ export const TOOL_SCHEMAS: Tool[] = [
       'shape by default (step list, status, error, truncated input/output; schema noise ' +
       'like output_schema/extended_*_schema is stripped from summaries). ' +
       'For long recipes, narrow with lines:[104,118] (exact set) or line_range:[91,123] ' +
-      "(inclusive). Pass detail:'full' with a line selection to get a step's EXACT " +
-      'untruncated input/output — the way to answer "what exactly did step 118 receive ' +
+      "(inclusive). THE PER-STEP UNTRUNCATED READ IS detail:'full' PLUS lines:[N] (or " +
+      'line_range) — there is no `step` parameter, and passing one does nothing, so a trace ' +
+      'that still looks truncated means the line selection was missing. That pair is the ' +
+      'way to answer "what exactly did step 118 receive ' +
       'in this job". Pass full=true to get raw responses for both the job metadata and ' +
       'line details endpoints. Requires an open Workato tab. Both recipe_id and job_id ' +
       'are required — Workato job trace endpoints are recipe-scoped.',
@@ -3526,6 +3863,48 @@ export const TOOL_SCHEMAS: Tool[] = [
     },
   },
   {
+    name: TOOL_NAMES.WORKATO_LOOKUP.ROW_UPSERT,
+    description:
+      'Create-or-update one lookup-table row, keyed by a column value. The tool for ' +
+      'per-environment config: lookup tables do not carry across dev/test/prod, so the same ' +
+      'keyed rows get re-applied on every deploy, and doing that with row_create plus a manual ' +
+      'search is how duplicate keys appear. A duplicate is not harmless — the `lookup()` formula ' +
+      'returns the FIRST match, so a stale row silently wins. ' +
+      'Searches the whole table (all pages) for rows whose key_column equals key_value: none ' +
+      'creates, exactly one updates (merging, so columns you do not name keep their values), ' +
+      'and MORE THAN ONE IS REFUSED with the offending row ids rather than picking one. ' +
+      'Returns {table_id, row_id, action:"created"|"updated", changed_columns, row}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'number', description: 'Numeric lookup-table id.' },
+        key_column: {
+          type: 'string',
+          description: 'Column LABEL whose value identifies the row, e.g. "Key".',
+        },
+        key_value: {
+          type: ['string', 'number', 'boolean'],
+          description:
+            'Value to match in key_column. Compared exactly, as a string — lookup tables are ' +
+            'case-sensitive.',
+        },
+        values: {
+          type: 'object',
+          description:
+            'Column-label-keyed values to write, e.g. {"Value":"true","Notes":"set 2026-08-26"}. ' +
+            'Columns not named here keep their current value. The key column is written for you.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['table_id', 'key_column', 'key_value'],
+    },
+  },
+  {
     name: TOOL_NAMES.WORKATO_LOOKUP.ROW_SEARCH,
     description:
       'Server-side text search across rows of a lookup table (GET /lookup_tables/<id>.json?qterm=...). ' +
@@ -3985,6 +4364,373 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['profile'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LCAP.APPS_LIST,
+    description:
+      'List the Workflow Apps (LCAP) in the current workspace: id, name, project_id, unique_id, ' +
+      'live. Read-only. There is no endpoint that lists the PAGES in an app - page ids come from ' +
+      "the builder URL (app.workato.com/lcap/pages/<id>) or the project's asset view. Requires " +
+      'an open Workato tab in the right workspace.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab. Pass ' +
+            'this together with `profile` - an omitted profile resolves against the default ' +
+            'Chrome profile and reports "Tab not found" for a tab that exists.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 30000, clamped 10000-110000.',
+        },
+      },
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LCAP.PAGE_GET,
+    description:
+      'Read a Workflow App page. Read-only. Returns page metadata (name, path, folder, ' +
+      'updated_at, page variables, pageLoad handler) plus a widget INDEX: one row per widget ' +
+      'with id, type, name, x, width, row, owning container, which handler slots are wired, the ' +
+      'bound app-function recipe id, and whether `visible` is conditional. The index is the ' +
+      'default because a real page is 6 KB+ of JSON and most reads only need to know what is on ' +
+      "the page. Pass view:'full' for the raw `content` tree, or out_file to write " +
+      '{page_id, updated_at, content} to disk and keep the tree out of the context entirely - ' +
+      'edit that file and push it back with workato_lcap_page_save(content_path). Save the ' +
+      'returned updated_at and pass it as expected_updated_at when you save.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page_id: {
+          type: 'number',
+          description:
+            'Numeric page id, from the builder URL app.workato.com/lcap/pages/<page_id>.',
+        },
+        view: {
+          type: 'string',
+          enum: ['index', 'full'],
+          description:
+            "'index' (default) returns metadata plus the widget index. 'full' adds the raw " +
+            'content tree.',
+        },
+        out_file: {
+          type: 'string',
+          description:
+            'Absolute path to write {page_id, updated_at, content} as JSON. The tree never ' +
+            'enters the response; the widget index still does.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab. Pass ' +
+            'this together with `profile` - an omitted profile resolves against the default ' +
+            'Chrome profile and reports "Tab not found" for a tab that exists.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 30000, clamped 10000-110000.',
+        },
+      },
+      required: ['page_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LCAP.PAGE_SAVE,
+    description:
+      "Replace a Workflow App page's content tree (PUT is whole-tree; there is no partial " +
+      'update). WRITE. Guards, all of them earned: (1) refuses while the page builder is open ' +
+      "on that page, because the builder's Save overwrites with its cached tree - the symptom " +
+      'is "saved fine, changes vanished"; (2) refuses when a widget id present in the stored ' +
+      'page is missing from yours (ids are the address datapills use) unless ' +
+      'allow_widget_removal; (3) refuses a row collapse - removing a widget without renumbering ' +
+      "the rows of what remains drops the following containers' computed `top` so they all " +
+      'stack at 0, while the JSON reads back perfectly - unless allow_row_collapse; (4) refuses ' +
+      'an unknown `visible` opcode or wrong arity (opcodes are 1-14, 1-10 binary, 11-14 unary); ' +
+      '(5) refuses a _dp() payload that is not valid JSON, and compacts the ones that are; ' +
+      '(6) after the PUT it opens the page in a background tab and checks the RENDERED geometry, ' +
+      'reporting render_check passed/failed - the JSON is valid in the stacking failure, so ' +
+      'this is the only real proof. Pass expected_updated_at (from page_get) for optimistic ' +
+      'locking.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page_id: { type: 'number', description: 'Numeric page id.' },
+        content: {
+          type: 'object',
+          description:
+            'The complete replacement content tree: {type,maxWidth,spacing,background,variables,' +
+            'handlers,layout}. Provide this OR content_path.',
+        },
+        content_path: {
+          type: 'string',
+          description:
+            'Absolute path to a JSON file holding the tree, or a {content:...} envelope as ' +
+            'written by workato_lcap_page_get(out_file). Resolved in the native-server, so the ' +
+            'tree never passes through the tool call.',
+        },
+        expected_updated_at: {
+          type: 'string',
+          description:
+            "Optimistic lock: refuse if the stored page's updated_at differs. Pass the value " +
+            'workato_lcap_page_get returned.',
+        },
+        allow_widget_removal: {
+          type: 'boolean',
+          description:
+            'Permit widgets present in the stored page to be absent from this tree. Only when ' +
+            'the deletion is intended: every datapill pointing at a removed id resolves empty.',
+        },
+        allow_row_collapse: {
+          type: 'boolean',
+          description:
+            "Permit a layout's row extent to shrink after a removal. Check render_check in the " +
+            'response when you use this.',
+        },
+        force: {
+          type: 'boolean',
+          description: 'Save even though the page builder is open on this page.',
+        },
+        skip_render_check: {
+          type: 'boolean',
+          description:
+            'Skip the post-save render probe (it opens and closes a background tab). Only for ' +
+            'batched writes where a later save will be checked.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab. Pass ' +
+            'this together with `profile` - an omitted profile resolves against the default ' +
+            'Chrome profile and reports "Tab not found" for a tab that exists.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 30000, clamped 10000-110000.',
+        },
+      },
+      required: ['page_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LCAP.PAGE_VALIDATE,
+    description:
+      'Check a Workflow App page without writing anything. Read-only. With page_id: runs the ' +
+      'static checks over the stored tree AND opens the page in a background tab to check the ' +
+      'rendered geometry (every top level widget must carry a `top:`; no two may share a ' +
+      'bounding-box y). With content (or content_path): static checks only - layout shape, ' +
+      'widget id format and duplicates, `visible` opcodes and arity, broken _dp payloads. Use ' +
+      'this to diagnose "the page looks wrong but the JSON is fine", which is the signature of ' +
+      'the row-collapse bug.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page_id: {
+          type: 'number',
+          description: 'Validate the stored page (static checks plus the render probe).',
+        },
+        content: {
+          type: 'object',
+          description:
+            'Validate a tree in hand. With page_id, also diffed against the stored page.',
+        },
+        content_path: { type: 'string', description: 'Path to a JSON file holding the tree.' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab. Pass ' +
+            'this together with `profile` - an omitted profile resolves against the default ' +
+            'Chrome profile and reports "Tab not found" for a tab that exists.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 30000, clamped 10000-110000.',
+        },
+      },
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LCAP.WIDGET_PATCH,
+    description:
+      'Change presentational properties of ONE widget on a Workflow App page. WRITE, but the ' +
+      'safe subset: it reads the page, edits that widget, and saves through the same guards as ' +
+      'workato_lcap_page_save (builder-open, id preservation, row integrity, datapills, render ' +
+      'check). Allowed: label, hint, placeholder, text, alignment, color, title, description, x, ' +
+      'width, displayedRowsCount, allowRowCreation, allowRowDeletion, forbidEmptyRows, ' +
+      'addRowButtonText, columnsSettings, options, enabled, style, padding, margin, ' +
+      'backgroundColor, borderColor, pillsSupportMarkdown, multiValue, editable, name. REFUSES ' +
+      'id, type, handlers, appFunctionOptions, visible, layout, dataSource, validations - those ' +
+      'carry bindings or addresses and belong in a reviewed full-tree save. Most polish work is ' +
+      'exactly this list, and doing it by rewriting the whole tree is what creates the chance to ' +
+      'break the layout.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page_id: { type: 'number', description: 'Numeric page id.' },
+        widget_id: {
+          type: 'string',
+          description: "The widget's 8-hex id, from the index workato_lcap_page_get returns.",
+        },
+        props: {
+          type: 'object',
+          description: 'Properties to overwrite, e.g. {"label":"Post to NetSuite","width":6}.',
+        },
+        expected_updated_at: {
+          type: 'string',
+          description: 'Optimistic lock, as in workato_lcap_page_save.',
+        },
+        force: { type: 'boolean', description: 'Patch even though the builder is open.' },
+        skip_render_check: { type: 'boolean', description: 'Skip the post-save render probe.' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab. Pass ' +
+            'this together with `profile` - an omitted profile resolves against the default ' +
+            'Chrome profile and reports "Tab not found" for a tab that exists.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 30000, clamped 10000-110000.',
+        },
+      },
+      required: ['page_id', 'widget_id', 'props'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LCAP.PAGE_CREATE,
+    description:
+      'Create a Workflow App page in a folder. WRITE. Defaults to a valid empty page ' +
+      '([1] layout) when no content is given, so the usual flow is create then page_save with ' +
+      'the real tree. Note Workato regenerates `path` from `name`, so the path you pass is ' +
+      'advisory. Returns the new page id and its builder URL.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        folder_id: {
+          type: 'number',
+          description: "Numeric id of the Workflow App's folder (its project asset folder).",
+        },
+        name: { type: 'string', description: 'Page name. Stored verbatim, markdown included.' },
+        path: { type: 'string', description: 'Advisory: Workato regenerates it from `name`.' },
+        content: {
+          type: 'object',
+          description: 'Initial content tree. Defaults to an empty page.',
+        },
+        content_path: { type: 'string', description: 'Path to a JSON file holding the tree.' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab. Pass ' +
+            'this together with `profile` - an omitted profile resolves against the default ' +
+            'Chrome profile and reports "Tab not found" for a tab that exists.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 30000, clamped 10000-110000.',
+        },
+      },
+      required: ['folder_id', 'name'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_LCAP.PAGE_DELETE,
+    description:
+      'Permanently delete a Workflow App page. WRITE, no undo - requires confirm:true, and only ' +
+      'call it when the user explicitly asked. A deleted page takes its widget ids with it, so ' +
+      'anything bound to them is gone too.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page_id: { type: 'number', description: 'Numeric page id.' },
+        confirm: { type: 'boolean', description: 'Must be exactly true. There is no undo.' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab. Pass ' +
+            'this together with `profile` - an omitted profile resolves against the default ' +
+            'Chrome profile and reports "Tab not found" for a tab that exists.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 30000, clamped 10000-110000.',
+        },
+      },
+      required: ['page_id', 'confirm'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.API_REQUEST,
+    description:
+      "ESCAPE HATCH: issue an arbitrary request to the Workato app host under the user's " +
+      'logged-in session. Use it only for endpoints no dedicated tool covers yet - the ' +
+      'dedicated tools carry guards (silent-strip detection, datapill normalization, row ' +
+      'integrity, render checks) that this one has none of. Same-origin only: `path` is a path ' +
+      'on the Workato host, never a URL elsewhere. Sends x-requested-with automatically and ' +
+      'attaches x-csrf-token from the XSRF-TOKEN-V2 cookie on writes; the token is never ' +
+      'returned. Anything other than GET/HEAD needs allow_writes:true. A 404 on a /web_api/ ' +
+      'path usually means the tab is in the wrong workspace or environment, not that the object ' +
+      'is missing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        method: {
+          type: 'string',
+          enum: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
+          description: 'HTTP method. Default GET.',
+        },
+        path: {
+          type: 'string',
+          description:
+            'Path on the Workato app host, e.g. "/web_api/lcap/pages/61604.json" or ' +
+            '"/integrations/meta". Must start with "/"; an absolute URL is refused.',
+        },
+        query: {
+          type: 'object',
+          description: 'Query parameters, appended to the path. Values are stringified.',
+        },
+        body: {
+          description:
+            'Request body. An object is JSON-serialized with content-type: application/json; a ' +
+            'string is sent verbatim.',
+        },
+        headers: {
+          type: 'object',
+          description:
+            'Extra request headers, merged over the defaults. x-requested-with cannot be ' +
+            'removed - Workato /web_api routes require it.',
+        },
+        allow_writes: {
+          type: 'boolean',
+          description: 'Required for POST/PUT/PATCH/DELETE. No endpoint-specific guards run here.',
+        },
+        out_file: {
+          type: 'string',
+          description:
+            'Absolute path to write the raw response body to. Use it for large responses ' +
+            'instead of raising max_bytes.',
+        },
+        max_bytes: {
+          type: 'number',
+          description:
+            'Response body cap before truncation. Default 20000, clamped 512-200000. A ' +
+            'truncated body is returned as text, unparsed, with truncated:true.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab. Pass ' +
+            'this together with `profile` - an omitted profile resolves against the default ' +
+            'Chrome profile and reports "Tab not found" for a tab that exists.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 30000, clamped 10000-110000.',
+        },
+      },
+      required: ['path'],
     },
   },
 ];
