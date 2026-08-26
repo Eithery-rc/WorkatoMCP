@@ -1843,6 +1843,12 @@ export const TOOL_SCHEMAS: Tool[] = [
       'connectors, always available), "custom" (this workspace\'s own SDK connector), ' +
       '"certified" (Workato certified catalogue, not installed here). Sorted so the ' +
       'immediately usable apps come first. ' +
+      'NO CONNECTION MEANS STOP AND ASK THE USER: these tools cannot create one, and a step ' +
+      'needs its provider account_id in the recipe config, which does not exist until the ' +
+      'connection does. An app listed WITHOUT a "connection" source, or with one whose ' +
+      'authorization_status is not "success", is a blocker to raise before writing the step. ' +
+      'The exception is a "builtin" whose connection_required is false (email, logger, ' +
+      'py_eval, clock and the rest of the Workato tools), which needs nothing. ' +
       "WORKATO'S OWN CONNECTORS ARE NAMED NOTHING LIKE THEY ARE CALLED: HTTP is `rest`, Workato " +
       'Event Streams is `workato_pub_sub`, Scheduler is `clock`, Python snippets is `py_eval`, ' +
       'Workflow apps is `workato_workflow_task`. Guessing from the display name returns an EMPTY ' +
