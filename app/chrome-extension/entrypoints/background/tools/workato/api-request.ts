@@ -28,6 +28,13 @@ interface ApiRequestArgs {
   max_bytes?: number;
   timeout_ms?: number;
   tabId?: number;
+  /**
+   * Internal, set by the native-server when out_file is used, and absent from
+   * the public inputSchema. Disables the response cap: the body is going to a
+   * file, so capping it would silently write a truncated document under a name
+   * that reads as complete.
+   */
+  __uncapped?: boolean;
 }
 
 interface InPageResponse {
@@ -88,7 +95,8 @@ function apiRequestInPage(
         const value = r.headers.get(name);
         if (value !== null) picked[name] = value;
       }
-      const truncated = text.length > maxBytes;
+      // maxBytes 0 means no cap: the body is going to a file, not into context.
+      const truncated = maxBytes > 0 && text.length > maxBytes;
       return {
         ok: true,
         status: r.status,
@@ -196,7 +204,11 @@ class WorkatoApiRequestTool extends BaseBrowserToolExecutor {
         }
       }
 
-      const maxBytes = Math.min(Math.max(args.max_bytes ?? DEFAULT_MAX_BYTES, 512), 200_000);
+      // 0 = no cap, and only the out_file path asks for it.
+      const maxBytes =
+        args.__uncapped === true
+          ? 0
+          : Math.min(Math.max(args.max_bytes ?? DEFAULT_MAX_BYTES, 512), 200_000);
       const timeoutMs = Math.min(Math.max(args.timeout_ms ?? 30_000, 10_000), 110_000);
 
       const result = await runInWorkatoTab(

@@ -175,3 +175,77 @@ describe('buildAppMatcher', () => {
     expect(apps.filter(buildAppMatcher('   '))).toHaveLength(apps.length);
   });
 });
+
+/**
+ * Reduced in-page from /integrations/meta, verified live 2026-08-26. These are
+ * the connectors whose technical name cannot be derived from what a person
+ * calls them, which is the case this source exists for.
+ */
+const BUILTINS = {
+  result: [
+    {
+      name: 'workato_pub_sub',
+      title: 'Workato Event Streams',
+      aliases: ['Workato Event Streams', 'utility', 'utilities', 'pubsub', 'pub/sub', 'events'],
+      categories: ['Recipe Tools', 'Workato'],
+      connection_required: false,
+    },
+    {
+      name: 'rest',
+      title: 'HTTP',
+      categories: ['Developer Tool', 'API Integration'],
+      connection_required: true,
+    },
+    {
+      name: 'email',
+      title: 'Email by Workato',
+      aliases: ['Email by Workato', 'utility', 'workato', 'utilities'],
+      categories: ['Recipe Tools', 'Workato'],
+      connection_required: false,
+    },
+  ],
+};
+
+describe('built-in connectors', () => {
+  const apps = mergeAppSources({
+    connections: CONNECTIONS,
+    usedAdapters: USED_ADAPTERS,
+    builtins: BUILTINS,
+    custom: CUSTOM,
+    certified: CERTIFIED,
+  });
+
+  it('finds Workato Event Streams by the name a person would use', () => {
+    // "workato_event_streams" and "event_streams" both resolve to nothing at
+    // /integrations/meta — the adapter is workato_pub_sub. Without this source
+    // the app is unreachable from what the user actually says.
+    const hits = apps.filter(buildAppMatcher('event stream'));
+    expect(hits.map((a) => a.name)).toEqual(['workato_pub_sub']);
+    expect(hits[0].connection_required).toBe(false);
+  });
+
+  it('finds it by alias too', () => {
+    expect(apps.filter(buildAppMatcher('pub/sub')).map((a) => a.name)).toEqual(['workato_pub_sub']);
+  });
+
+  it('resolves HTTP, whose adapter name is "rest"', () => {
+    const hits = apps.filter(buildAppMatcher('HTTP'));
+    expect(hits.map((a) => a.name)).toEqual(['rest']);
+    expect(hits[0].connection_required).toBe(true);
+  });
+
+  it('merges a built-in that is also used in recipes, without duplicating it', () => {
+    const email = apps.filter((a) => a.name === 'email');
+    expect(email).toHaveLength(1);
+    expect(email[0].source.sort()).toEqual(['builtin', 'recipes']);
+    expect(email[0].title).toBe('Email by Workato');
+  });
+
+  it("ranks built-ins after the workspace's own apps but before the catalogue", () => {
+    const rankOf = (name: string) => apps.findIndex((a) => a.name === name);
+    expect(rankOf('salesforce')).toBeLessThan(rankOf('workato_pub_sub'));
+    expect(rankOf('workato_pub_sub')).toBeLessThan(
+      rankOf('new_connector_3_connector_32331_1635253734'),
+    );
+  });
+});

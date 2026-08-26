@@ -219,6 +219,8 @@ export interface StepHit {
   input?: unknown;
   /** True when this step declares its own schema rather than taking the adapter's. */
   has_extended_schema?: boolean;
+  /** True when the step is disabled in that recipe, so it is a weaker example. */
+  skip?: boolean;
 }
 
 /**
@@ -243,12 +245,18 @@ export function collectMatchingSteps(
     }
     if (!isRecord(value)) return;
 
-    if (value.provider === provider) {
+    // A step always carries a keyword ("trigger" for the root, "action",
+    // "if", "repeat_each", ...). A recipe's `config` entries carry `provider`
+    // too, under keyword "application" — those are connection bindings, not
+    // steps, and returning one as an example would be nonsense.
+    const keyword = typeof value.keyword === 'string' ? value.keyword : null;
+    if (value.provider === provider && keyword !== null && keyword !== 'application') {
       const stepName = typeof value.name === 'string' ? value.name : undefined;
       if (wantedAction === null || stepName?.toLowerCase() === wantedAction) {
         const hit: Omit<StepHit, 'recipe_id' | 'recipe_name' | 'folder_id'> = { provider };
         if (typeof value.number === 'number') hit.step_number = value.number;
-        if (typeof value.keyword === 'string') hit.keyword = value.keyword;
+        hit.keyword = keyword;
+        if (value.skip === true) hit.skip = true;
         if (stepName !== undefined) hit.name = stepName;
         if (typeof value.as === 'string') hit.as = value.as;
         if (typeof value.description === 'string') hit.description = value.description;

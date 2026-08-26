@@ -129,7 +129,10 @@ export function prepareLcapCall(name: string, rawArgs: Record<string, unknown>):
     const args = { ...rawArgs };
     delete args.out_file;
     // Ask for the whole body: it is going to disk, not into the context.
-    args.max_bytes = 200_000;
+    // max_bytes cannot express that (it clamps at 200 KB), so a larger
+    // response used to be written truncated under a name that read as
+    // complete. __uncapped is the extension-side "no cap" signal.
+    args.__uncapped = true;
     return { args, outFile: { path: outFile, kind: 'api' } };
   }
 
@@ -138,6 +141,10 @@ export function prepareLcapCall(name: string, rawArgs: Record<string, unknown>):
     const args = { ...rawArgs };
     delete args.out_file;
     args.raw = true;
+    // Raw mode caps at 20k chars and tells the caller to use out_file — which
+    // is here, so the cap has to come off or the escape hatch writes the same
+    // truncated document it was meant to avoid.
+    args.__uncapped = true;
     return { args, outFile: { path: outFile, kind: 'meta' } };
   }
 
@@ -199,6 +206,15 @@ export function writeLcapOutFile(outFile: LcapOutFile, result: CallToolResult): 
       ...rest,
       saved_to: outFile.path,
       bytes_written: text.length,
+      // Belt and braces: if the cap ever fails to lift, say so rather than
+      // reporting a byte count that reads as a complete document.
+      ...(payload.truncated === true
+        ? {
+            warning:
+              'The response was truncated before it reached disk, so this file is INCOMPLETE. ' +
+              `It holds ${text.length} of ${payload.total_bytes} bytes.`,
+          }
+        : {}),
     });
   }
 
@@ -212,5 +228,11 @@ export function writeLcapOutFile(outFile: LcapOutFile, result: CallToolResult): 
     ...rest,
     saved_to: outFile.path,
     bytes_written: text.length,
+    ...(payload.truncated === true
+      ? {
+          warning:
+            'The meta document was truncated before it reached disk, so this file is INCOMPLETE.',
+        }
+      : {}),
   });
 }

@@ -37,6 +37,13 @@ interface AdapterMetaArgs {
   /** In-page script timeout. Default 30000, clamped 10000–110000. */
   timeout_ms?: number;
   tabId?: number;
+  /**
+   * Internal, set by the native-server when out_file is used, and absent from
+   * the public inputSchema. Lifts the raw-mode character cap: the document is
+   * going to a file, and capping it there would write a truncated meta
+   * document while reporting the byte count as if it were whole.
+   */
+  __uncapped?: boolean;
 }
 
 /** One config field as the editor sees it. */
@@ -476,7 +483,7 @@ class WorkatoAdapterMetaTool extends BaseBrowserToolExecutor {
       // in the native-server) is the uncapped route.
       if (args.raw === true) {
         const rawText = JSON.stringify(result.meta);
-        const capped = rawText.length > RAW_CHAR_CAP;
+        const capped = args.__uncapped !== true && rawText.length > RAW_CHAR_CAP;
         return {
           content: [
             {
