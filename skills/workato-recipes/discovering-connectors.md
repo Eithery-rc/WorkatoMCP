@@ -31,13 +31,38 @@ enerflo_connector_5105163_1744901872          title: "Enerflo"
 - `connection` — a real connection exists here, so a step can authenticate today. The connection ids and `authorization_status` come with it; a `connection_lost` status is why an otherwise correct step fails at run time.
 - `recipes` — already used by a recipe here, so step 4 will find live examples.
 - `custom` — this workspace's own SDK connector.
+- `builtin` — one of Workato's own connectors, always available. See the table below: this is where the display name and the adapter name diverge hardest.
 - `certified` — in Workato's certified community catalogue, not installed here.
+
+### Workato's own connectors: the name is never the name
+
+The worst offenders are Workato's own built-in connectors, where the display name and the adapter name share almost nothing. Asking `/integrations/meta` for `workato_event_streams` or `event_streams` returns an empty document; the adapter is `workato_pub_sub`. Verified live:
+
+| What it is called          | `step.provider`                             | Connection? |
+| -------------------------- | ------------------------------------------- | ----------- |
+| HTTP                       | `rest`                                      | yes         |
+| Workato Event Streams      | `workato_pub_sub`                           | no          |
+| Scheduler by Workato       | `clock`                                     | no          |
+| Python snippets by Workato | `py_eval`                                   | no          |
+| CSV / JSON / XML tools     | `csv_parser` / `json_parser` / `xml_parser` | no          |
+| Variables by Workato       | `workato_variable`                          | no          |
+| Lookup tables by Workato   | `lookup_table`                              | no          |
+| Workato FileStorage        | `workato_files`                             | no          |
+| Workflow apps by Workato   | `workato_workflow_task`                     | no          |
+| Recipe function by Workato | `workato_recipe_function`                   | no          |
+| RecipeOps by Workato       | `workato_app`                               | yes         |
+| API platform by Workato    | `workato_api_platform`                      | no          |
+| Email by Workato           | `email`                                     | no          |
+| Logger by Workato          | `logger`                                    | no          |
+| FTP/FTPS, SFTP             | `ftps`, `sftp`                              | yes         |
+
+`workato_apps_list` carries all of these and searches their live titles and aliases, so "event stream", "pub/sub", "scheduler", "python" and "approval" each resolve to the right adapter. Only the list of names is fixed in the tool; titles and aliases are read from `/integrations/meta` on every call, so a rename shows up immediately.
 
 ### The one real gap
 
 **Workato serves no catalogue of its standard connectors.** The recipe editor's app picker issues no network request at all: the list is compiled into its bundle, the DOM carries titles without technical names, and the list is virtual-scrolled. There is no endpoint to page through.
 
-So an app missing from `workato_apps_list` is _not_ proof it does not exist. Resolve it by guessing instead, which is cheap because `/integrations/meta` takes a comma-separated list and silently omits names it does not know:
+That leaves the third-party standard connectors. An app missing from `workato_apps_list` is _not_ proof it does not exist. Resolve it by guessing instead, which is cheap because `/integrations/meta` takes a comma-separated list and silently omits names it does not know:
 
 ```
 workato_adapter_meta(adapter: ["slack", "gmail", "microsoft_teams"])

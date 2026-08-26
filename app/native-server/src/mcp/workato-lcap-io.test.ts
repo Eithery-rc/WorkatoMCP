@@ -110,16 +110,21 @@ describe('prepareLcapCall', () => {
       out_file: path.join(tmpDir, 'body.json'),
       max_bytes: 100,
     });
-    expect(prepared.args.max_bytes).toBe(200_000);
+    // max_bytes could not express "no cap": the extension clamps it at 200 KB,
+    // so a bigger response reached disk truncated under a complete-looking name.
+    expect(prepared.args.__uncapped).toBe(true);
     expect(prepared.outFile?.kind).toBe('api');
   });
 
-  test('adapter_meta(out_file) switches the tool into raw mode', () => {
+  test('adapter_meta(out_file) switches the tool into raw mode and lifts its cap', () => {
     const prepared = prepareLcapCall('workato_adapter_meta', {
       adapter: 'salesforce',
       out_file: path.join(tmpDir, 'meta.json'),
     });
     expect(prepared.args.raw).toBe(true);
+    // Raw mode caps at 20k chars and points the caller at out_file, so leaving
+    // the cap on here would truncate exactly the escape it recommends.
+    expect(prepared.args.__uncapped).toBe(true);
     expect(prepared.outFile?.kind).toBe('meta');
   });
 
@@ -167,6 +172,18 @@ describe('writeLcapOutFile', () => {
     const payload = JSON.parse((result.content as any)[0].text);
     expect(payload.body).toBeUndefined();
     expect(payload.bytes_written).toBeGreaterThan(0);
+  });
+
+  test('says the file is incomplete when the body still arrived truncated', () => {
+    const target = path.join(tmpDir, 'partial.json');
+    const result = writeLcapOutFile(
+      { path: target, kind: 'api' },
+      textResult({ status: 200, total_bytes: 900, truncated: true, body: 'half a body' }),
+    );
+    const payload = JSON.parse((result.content as any)[0].text);
+    // A byte count with no warning would read as a complete document.
+    expect(payload.warning).toMatch(/INCOMPLETE/);
+    expect(payload.warning).toContain('900');
   });
 
   test('passes an upstream error straight through', () => {

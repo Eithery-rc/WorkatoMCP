@@ -173,3 +173,62 @@ describe('secret handling in step inputs', () => {
     });
   });
 });
+
+describe('what counts as a step', () => {
+  it('ignores a recipe config entry, which carries a provider but is a connection binding', () => {
+    const tree = {
+      keyword: 'trigger',
+      provider: 'clock',
+      name: 'scheduled_event',
+      input: {},
+      config: [
+        {
+          keyword: 'application',
+          name: 'salesforce',
+          provider: 'salesforce',
+          account_id: 19092754,
+        },
+      ],
+      block: [
+        { number: 1, keyword: 'action', provider: 'salesforce', name: 'create_object', input: {} },
+      ],
+    };
+    const hits = collectMatchingSteps(tree, 'salesforce', null);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].step_number).toBe(1);
+  });
+
+  it('ignores a provider-shaped node with no keyword at all', () => {
+    expect(
+      collectMatchingSteps({ provider: 'salesforce', name: 'create_object' }, 'salesforce', null),
+    ).toEqual([]);
+  });
+
+  it('flags a disabled step, since it is a weaker example', () => {
+    const tree = {
+      keyword: 'trigger',
+      provider: 'clock',
+      name: 'scheduled_event',
+      block: [
+        {
+          number: 1,
+          keyword: 'action',
+          provider: 'salesforce',
+          name: 'search_sobjects',
+          skip: true,
+          input: {},
+        },
+        {
+          number: 2,
+          keyword: 'action',
+          provider: 'salesforce',
+          name: 'search_sobjects',
+          input: {},
+        },
+      ],
+    };
+    const [disabled, live] = collectMatchingSteps(tree, 'salesforce', null);
+    expect(disabled.skip).toBe(true);
+    expect(live.skip).toBeUndefined();
+  });
+});

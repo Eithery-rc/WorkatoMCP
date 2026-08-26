@@ -1834,13 +1834,19 @@ export const TOOL_SCHEMAS: Tool[] = [
       'List the apps this workspace can build recipe steps with, and their TECHNICAL adapter ' +
       'names. This is the step BEFORE workato_adapter_meta: that tool describes one connector ' +
       'in full but only once its name is known, and the name is exactly what cannot be guessed ' +
-      'for a custom connector ("netsuite_rest_connector_5105163_1745592003"). Merges four ' +
+      'for a custom connector ("netsuite_rest_connector_5105163_1745592003"). Merges five ' +
       'read-only sources by adapter name and marks each app with where it came from: ' +
       '"connection" (a real connection exists here, so a step can authenticate today, with the ' +
       'connection ids and authorization status), "recipes" (already used by a recipe here, so ' +
-      'workato_recipe_step_search will find live examples), "custom" (this workspace\'s own SDK ' +
-      'connector), "certified" (Workato certified catalogue, not installed here). Sorted so the ' +
+      'workato_recipe_step_search will find live examples), "builtin" (one of Workato\'s own ' +
+      'connectors, always available), "custom" (this workspace\'s own SDK connector), ' +
+      '"certified" (Workato certified catalogue, not installed here). Sorted so the ' +
       'immediately usable apps come first. ' +
+      "WORKATO'S OWN CONNECTORS ARE NAMED NOTHING LIKE THEY ARE CALLED: HTTP is `rest`, Workato " +
+      'Event Streams is `workato_pub_sub`, Scheduler is `clock`, Python snippets is `py_eval`, ' +
+      'Workflow apps is `workato_workflow_task`. Guessing from the display name returns an EMPTY ' +
+      'meta document, indistinguishable from "no such app". Their titles and aliases are read ' +
+      'live, so searching "event stream", "pub/sub" or "approval" lands on the right adapter. ' +
       'KNOWN LIMIT, also stated in the response: Workato serves NO catalogue of its ~1000 ' +
       'standard connectors — the recipe editor compiles that list into its own bundle and makes ' +
       'no request for it. An app missing from this list is therefore not proof it does not ' +

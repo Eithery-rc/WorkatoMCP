@@ -22,6 +22,11 @@ import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dis
  *   /web_api/certified_custom_adapters.json           — Workato's certified
  *       community catalogue (~70 KB), searched only when asked.
  *
+ * A fifth source is Workato's own built-in connectors, seeded from a fixed
+ * list of NAMES and enriched live from /integrations/meta. Those are the ones
+ * whose name nobody can derive from what a person calls them: "HTTP" is `rest`,
+ * "Workato Event Streams" is `workato_pub_sub`, "Scheduler" is `clock`.
+ *
  * KNOWN LIMIT, stated in the response rather than hidden: Workato serves no
  * catalogue of its ~1000 STANDARD connectors. The recipe editor's app picker
  * issues no network request at all — the list is compiled into its bundle, and
@@ -56,6 +61,8 @@ interface InPageResult {
   usedAdapters: SourceResult;
   custom: SourceResult;
   certified: SourceResult;
+  /** Built-in connectors, already reduced in-page to name/title/aliases/categories. */
+  builtins: SourceResult;
 }
 
 /**
@@ -66,6 +73,7 @@ interface InPageResult {
 function fetchAppSourcesInPage(
   includeCertified: boolean,
   connectionPages: number,
+  builtinNames: string[],
 ): Promise<InPageResult> {
   const opts: RequestInit = {
     credentials: 'include',
@@ -115,6 +123,35 @@ function fetchAppSourcesInPage(
     });
   }
 
+  // Workato's own built-in connectors. Only the NAMES are known ahead of time;
+  // titles, aliases and categories are read live, so a renamed connector shows
+  // its current name rather than a stale copy. Reduced here rather than shipped
+  // whole: the response is one document per adapter.
+  function fetchBuiltins(): Promise<SourceResult> {
+    if (builtinNames.length === 0) return Promise.resolve({ ok: true, body: null });
+    return getJson(`/integrations/meta?name=${encodeURIComponent(builtinNames.join(','))}`).then(
+      (res) => {
+        if (!res.ok) return res;
+        const doc = res.body as Record<string, any> | null;
+        if (!doc || typeof doc !== 'object') return { ok: true, body: { result: [] } };
+        const slim = [];
+        for (const key of Object.keys(doc)) {
+          const a = doc[key];
+          if (!a || typeof a !== 'object') continue;
+          slim.push({
+            name: key,
+            title: typeof a.title === 'string' ? a.title : undefined,
+            aliases: Array.isArray(a.aliases) ? a.aliases : undefined,
+            categories: Array.isArray(a.categories) ? a.categories : undefined,
+            connection_required:
+              a.config && typeof a.config.required === 'boolean' ? a.config.required : undefined,
+          });
+        }
+        return { ok: true, body: { result: slim } };
+      },
+    );
+  }
+
   return Promise.all([
     fetchConnections(1, []),
     getJson('/web_api/mixed_assets/adapters.json'),
@@ -122,11 +159,13 @@ function fetchAppSourcesInPage(
     includeCertified
       ? getJson('/web_api/certified_custom_adapters.json')
       : Promise.resolve({ ok: true, body: null } as SourceResult),
+    fetchBuiltins(),
   ]).then((r) => ({
     connections: r[0],
     usedAdapters: r[1],
     custom: r[2],
     certified: r[3],
+    builtins: r[4],
   }));
 }
 
@@ -155,11 +194,15 @@ export interface AppEntry {
    * Where this app was seen. Order of usefulness:
    *   connection — has a working connection here, usable right now
    *   recipes    — already used by a recipe here, so there are live examples
+   *   builtin    — one of Workato's own connectors, always available
    *   custom     — this workspace's own SDK connector
    *   certified  — in Workato's certified catalogue, not installed here
    */
-  source: ('connection' | 'recipes' | 'custom' | 'certified')[];
+  source: ('connection' | 'recipes' | 'builtin' | 'custom' | 'certified')[];
   connections?: AppConnection[];
+  categories?: string[];
+  /** False = no connection needed, and no `account_id` in the recipe config entry. */
+  connection_required?: boolean;
   triggers_count?: number;
   actions_count?: number;
 }
@@ -208,6 +251,7 @@ function applyAdapterConfig(app: AppEntry, config: unknown): void {
 export function mergeAppSources(sources: {
   connections?: unknown;
   usedAdapters?: unknown;
+  builtins?: unknown;
   custom?: unknown;
   certified?: unknown;
 }): AppEntry[] {
@@ -240,6 +284,27 @@ export function mergeAppSources(sources: {
     }
   }
 
+  const builtins = isRecord(sources.builtins) ? sources.builtins.result : undefined;
+  if (Array.isArray(builtins)) {
+    for (const raw of builtins) {
+      if (!isRecord(raw)) continue;
+      const name = typeof raw.name === 'string' ? raw.name : '';
+      if (!name) continue;
+      const app = upsert(map, name);
+      markSource(app, 'builtin');
+      // Applied the same way as a custom adapter's config block, plus the two
+      // fields only the built-ins carry here.
+      applyAdapterConfig(app, raw);
+      if (Array.isArray(raw.categories)) {
+        const categories = raw.categories.filter((c): c is string => typeof c === 'string');
+        if (categories.length > 0) app.categories = categories;
+      }
+      if (typeof raw.connection_required === 'boolean') {
+        app.connection_required = raw.connection_required;
+      }
+    }
+  }
+
   const custom = isRecord(sources.custom) ? sources.custom.result : undefined;
   if (Array.isArray(custom)) {
     for (const raw of custom) {
@@ -267,14 +332,57 @@ export function mergeAppSources(sources: {
   const rank = (app: AppEntry): number => {
     if (app.source.includes('connection')) return 0;
     if (app.source.includes('recipes')) return 1;
-    if (app.source.includes('custom')) return 2;
-    return 3;
+    if (app.source.includes('builtin')) return 2;
+    if (app.source.includes('custom')) return 3;
+    return 4;
   };
   return [...map.values()].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 }
 
 /** Pages of connections to walk. 20 per page, so this covers 200 connections. */
 const CONNECTION_PAGES = 10;
+
+/**
+ * Workato's own built-in connectors, by adapter name.
+ *
+ * These are the ones whose technical name cannot be derived from what a person
+ * calls them, which is the case this list exists for. Verified live 2026-08-26:
+ *
+ *   rest                  -> "HTTP"
+ *   workato_pub_sub       -> "Workato Event Streams"
+ *   clock                 -> "Scheduler by Workato"
+ *   py_eval               -> "Python snippets by Workato"
+ *   csv_parser            -> "CSV tools by Workato"
+ *   workato_workflow_task -> "Workflow apps by Workato"
+ *   workato_app           -> "RecipeOps by Workato"
+ *   workato_files         -> "Workato FileStorage"
+ *
+ * Only the NAMES are fixed here. Title, aliases, categories and
+ * connection_required are read live from /integrations/meta on every call, so
+ * the searchable text is never a stale copy. A connector Workato adds later is
+ * simply absent until this list grows, which degrades to the behaviour that
+ * existed before it: guess the name and confirm with workato_adapter_meta.
+ */
+const BUILTIN_ADAPTERS = [
+  'clock',
+  'csv_parser',
+  'email',
+  'ftps',
+  'json_parser',
+  'logger',
+  'lookup_table',
+  'py_eval',
+  'rest',
+  'sftp',
+  'workato_api_platform',
+  'workato_app',
+  'workato_files',
+  'workato_pub_sub',
+  'workato_recipe_function',
+  'workato_variable',
+  'workato_workflow_task',
+  'xml_parser',
+];
 
 class WorkatoAppsListTool extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.WORKATO.APPS_LIST;
@@ -295,7 +403,7 @@ class WorkatoAppsListTool extends BaseBrowserToolExecutor {
       const raw = await runInWorkatoTab(
         tab.tabId,
         fetchAppSourcesInPage,
-        [includeCertified, CONNECTION_PAGES],
+        [includeCertified, CONNECTION_PAGES, BUILTIN_ADAPTERS],
         { timeoutMs },
       );
 
@@ -309,6 +417,7 @@ class WorkatoAppsListTool extends BaseBrowserToolExecutor {
       const all = mergeAppSources({
         connections: raw.connections.body,
         usedAdapters: raw.usedAdapters.ok ? raw.usedAdapters.body : undefined,
+        builtins: raw.builtins.ok ? raw.builtins.body : undefined,
         custom: raw.custom.ok ? raw.custom.body : undefined,
         certified: raw.certified.ok ? raw.certified.body : undefined,
       });
@@ -319,6 +428,7 @@ class WorkatoAppsListTool extends BaseBrowserToolExecutor {
       const degraded = (
         [
           ['used_in_recipes', raw.usedAdapters],
+          ['builtin_connectors', raw.builtins],
           ['custom_connectors', raw.custom],
           ['certified_catalogue', raw.certified],
         ] as const
