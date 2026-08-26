@@ -6,6 +6,13 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+## bridge 1.4.1 · shared 1.1.1 (2026-08-26)
+
+### Fixed
+
+- **`workato_lcap_page_save` no longer refuses ordinary side-by-side layout.** The row-merge guard judged the fact that widgets moved onto one row, so it blocked a normal edit: the live forms carry three 4-wide fields in a row. It now judges the merged row's width and refuses only when the widths sum past the 12 column grid, which is when the widgets actually overlap and the layout's height collapses. The message names the column count. Found by smoke-testing the family against a live page, where the guard rejected a page that rendered correctly.
+- **The row-collapse guard had stopped firing.** Widening the internal placement map from a row number to `{row, width}` left the collapse check comparing objects, so `Math.max` produced `NaN` and the deleted-divider regression passed silently. A broken guard looks exactly like a working one until something real breaks; the existing regression test caught it.
+
 ## bridge 1.4.0 · shared 1.1.0 (2026-08-26)
 
 ### Added
