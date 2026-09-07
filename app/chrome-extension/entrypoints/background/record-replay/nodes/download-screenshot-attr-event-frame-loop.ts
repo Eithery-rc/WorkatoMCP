@@ -26,16 +26,14 @@ export const handleDownloadNode: NodeRuntime<any> = {
 export const screenshotNode: NodeRuntime<any> = {
   run: async (ctx, step) => {
     const s: any = expandTemplatesDeep(step as any, ctx.vars);
-    const args: any = { name: 'workflow', storeBase64: true };
+    const args: any = { name: 'workflow', storeBase64: true, savePng: false };
     if (s.fullPage) args.fullPage = true;
     if (s.selector && typeof s.selector === 'string' && s.selector.trim())
       args.selector = s.selector;
     const res = await handleCallTool({ name: TOOL_NAMES.BROWSER.SCREENSHOT, args });
-    const text = (res as any)?.content?.find((c: any) => c.type === 'text')?.text;
-    try {
-      const payload = text ? JSON.parse(text) : null;
-      if (s.saveAs && payload && payload.base64Data) ctx.vars[s.saveAs] = payload.base64Data;
-    } catch {}
+    // The capture is an MCP image block; the text block holds metadata only.
+    const image = (res as any)?.content?.find((c: any) => c.type === 'image')?.data;
+    if (s.saveAs && typeof image === 'string' && image.length > 0) ctx.vars[s.saveAs] = image;
     return {} as ExecResult;
   },
 };

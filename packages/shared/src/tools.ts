@@ -570,7 +570,10 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.SCREENSHOT,
     description:
-      '[Prefer read_page over taking a screenshot and Prefer chrome_computer] Take a screenshot of the current page or a specific element. For new usage, use chrome_computer with action="screenshot". Use this tool if you need advanced options.',
+      '[Prefer read_page over taking a screenshot and Prefer chrome_computer] Take a screenshot of the current page or a specific element. For new usage, use chrome_computer with action="screenshot". Use this tool if you need advanced options. ' +
+      'storeBase64:true returns the capture as an MCP image block; the accompanying text block holds metadata only (tabId, url, name, width, height, mimeType, bytes, fileSaved, fullPath), never the base64 payload. ' +
+      'storeBase64 and savePng are independent flags: setting both returns the image and writes a PNG to the Downloads folder. ' +
+      'out_file writes the image bytes to an absolute path of your choosing and returns a saved_to summary; add no_inline:true to keep the image out of the response.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -594,16 +597,27 @@ export const TOOL_SCHEMAS: Tool[] = [
         storeBase64: {
           type: 'boolean',
           description:
-            'return screenshot in base64 format (default: false) if you want to see the page, recommend set this to be true',
+            'Return the capture as an MCP image block (default: false). Set this when you want to look at the page; the metadata width/height then describe that image.',
         },
         fullPage: {
           type: 'boolean',
-          description: 'Store screenshot of the entire page (default: true)',
+          description:
+            'Capture the whole scrollable page instead of the viewport (default: false). Independent of storeBase64 and savePng.',
         },
         savePng: {
           type: 'boolean',
           description:
-            'Save screenshot as PNG file (default: true)，if you want to see the page, recommend set this to be false, and set storeBase64 to be true',
+            'Save the capture as a PNG in the Chrome Downloads folder (default: true). Independent of storeBase64; set false when you only want the image block.',
+        },
+        out_file: {
+          type: 'string',
+          description:
+            'Absolute path to write the captured image to (its directory must exist). Requires storeBase64:true; the response keeps the image block unless no_inline is set.',
+        },
+        no_inline: {
+          type: 'boolean',
+          description:
+            'With out_file, return only the file summary and leave the image block out of the response (default: false).',
         },
       },
       required: [],
