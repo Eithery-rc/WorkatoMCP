@@ -50,7 +50,58 @@ sequenceDiagram
 3. A Workato tab in the requesting window
 4. Any open Workato app tab
 
-Deliberately **never** the focused tab — focus drift used to send Workato calls into unrelated pages. Hosts are matched against `*.workato.com` and `*.workato.is`, and non-app subdomains (docs, marketing, status) are ignored. Zero matches raise `TabNotFound`; two different app hosts raise `MultipleWorkatoHosts`.
+Deliberately **never** the focused tab: focus drift used to send Workato calls into unrelated pages. Hosts are matched against `*.workato.com` and `*.workato.is`, and non-app subdomains (docs, marketing, status) are ignored. Zero matches raise `TabNotFound`; two different app hosts raise `MultipleWorkatoHosts`. An explicit `tabId` that no longer resolves to a signed-in app tab throws rather than falling through to another tab, and `findWorkatoTab` takes an optional `windowId` so window-scoped resolution lives in the dispatcher rather than in one tool.
+
+## Session context
+
+A Workato call's identity is **profile plus tab**, because Workato resolves the workspace and the environment from the tab's own session. Nothing in a response used to say which one that was.
+
+`session-context.ts` in the extension reads `/web_api/auth_user.json` and slims it to `{host, workspace_id, workspace_name, environment, user_id}`, cached per tab for 60 s and dropped on a URL change, a tab close or any read error. `workato_session_context` exposes it directly.
+
+- **The context block.** Every successful `workato_*` result gets one extra text block, always LAST and under 200 bytes: `{"context":{tab_id, host, workspace_id, workspace_name, environment}}`, with the routed `profile` added by the bridge. Producing it can never fail a call. Every response parser in the bridge reads the FIRST block, so orchestrators are unaffected.
+- **The pinned tuple.** `createToolRouter` holds one `SessionContext` (profile, tabId, host, workspace_id, workspace_name, environment, pinned_at, registry generation). `workato_switch_profile` with a `tabId` probes that tab once and pins the whole tuple; every later call, top-level and nested, carries the pinned tab and an `expected_context`.
+- **Verification.** Write entry points call `assertExpectedContext` before acting and throw `ContextMismatch`, naming expected and actual. `ProfileRegistry` bumps a generation counter on connect and disconnect; when it moves, the pinned tab is re-read once and the call is refused with `ContextChanged` if the workspace or environment differ.
+- **On disk.** `workato_pull_recipe(out_file)` writes an `origin` block into the envelope (pulled_at, profile, tab, host, workspace id and name, environment, folder). The save path turns it back into an expected context and defaults `expected_base_version_no` from the file's `version_no`. `ignore_file_version` and `allow_context_mismatch` are the deliberate overrides, consumed in the bridge and never forwarded to the extension.
+
+## The guarded mutation engine
+
+Every native recipe write runs through one module, `app/native-server/src/mcp/workato-recipe-engine.ts`, in this order:
+
+1. Pull once, `view: "full"`, forwarding `tabId` / `windowId`.
+2. Refuse a stale caller-supplied `expected_base_version_no` before any operation runs; otherwise default it to the pulled `version_no`.
+3. Deep-clone the tree and apply every operation to the CLONE.
+4. Renumber the whole tree when structure changed.
+5. Derive extended schemas over the whole tree (`workato-recipe-schema.ts`) unless `auto_schema: false`.
+6. Validate locally: numbering, `as` format and uniqueness, `uuid` presence, block ordering, `foreach` source placement, datapill references.
+7. MERGE the pulled `config` rather than rebuilding it, so `account_id` and `skip_validation` survive and only a new provider is appended.
+8. Save once through `workato_ui_save_recipe_code`, then summarize once with `persisted` / `valid` / `verified`, `changed_paths` and `version_no`.
+
+`workato_recipe_apply` batches up to 50 operations through the same path. `workato_recipe_validate` reuses steps 1 to 6 and stops there; it never calls the save tool, which a test asserts.
+
+**Where the legacy names live now.** `workato_recipe_add_step`, `workato_recipe_set_step_input` and `workato_recipe_map_datapill` were extension tools with their own CDP implementation. They are now thin wrappers over the engine's ops, routed in the bridge through `WORKATO_RECIPE_MUTATOR_TOOLS`, and `app/chrome-extension/entrypoints/background/tools/workato-recipe/` is deleted. There is one implementation rather than two that drift, and **the bridge and the extension must ship together** for this reason.
+
+## The operations journal
+
+`app/native-server/src/mcp/workato-operations.ts` makes `workato_recipe_save_with_dependents` survive a client timeout or a bridge restart.
+
+- **Location.** One JSON file per operation in the bridge state directory (`%LOCALAPPDATA%\mcp-chrome-bridge\operations` on Windows), with an `os.tmpdir()` fallback and `WORKATOMCP_OPERATIONS_DIR` for tests. Atomic tmp plus rename writes, pruned once per process at 200 files or 7 days.
+- **Contents.** `operation_id`, `kind`, timestamps, context, the args WITHOUT the code tree (a `code_path` plus a sha256 prefix), every affected recipe with the running state and version it had BEFORE the operation, phases with timestamps and results, and an `interrupted` marker.
+- **Phases.** The phase is written BEFORE the call it describes, so an interrupted call still leaves a trace. A process `exit` hook marks any still-running operation interrupted synchronously.
+- **Resume.** `workato_operation_status` is bridge-local: the read path makes no extension call at all. `resume: true` re-reads every affected recipe, restarts only what was running before and only when the saved version is usable and connections are healthy, re-issues an unknown save under the journalled version lock (so Workato answers `already_applied`), and names exact ids and reasons for anything it will not finish. Nothing is restored blindly on a transport that just failed.
+
+## The snapshot cache
+
+A recipe read is two requests, and they used to be able to straddle a save. `pull-recipe.ts` fetches metadata first and then pins the code to that exact version (`code.json?mode=view&version_no=<n>`), and caches the pair in the service worker keyed by **tab host plus recipe plus version**, bounded at 32 entries and 20 MB.
+
+A key that does not match the current version simply cannot be served, so a stale entry is structurally impossible; every extension write path also calls `invalidateRecipeSnapshot` so the memory is freed promptly. `loadRecipeSnapshot(tab, recipeId, {timeoutMs, ifVersion})` is how another tool reads a recipe without a second fetch: `workato_list_jobs` (report labels), `workato_test_recipe` and `workato_recipe_callers` all go through it.
+
+## Auto-file post-processing
+
+`app/native-server/src/mcp/workato-auto-file.ts` gives the read surface one escape hatch instead of a per-tool one.
+
+- **Served-schema injection.** `withOutFileToolSchemas` adds `out_file`, `auto_file` and `auto_file_threshold_chars` to every tool in `AUTO_FILE_SCHEMA_TOOLS` at `listTools` time, filling in only a property the tool does not already declare. Nothing changes in `tools.ts`; adding a read tool to the set is one line in `READ_TOOLS`.
+- **Prepare, then apply.** `prepareAutoFileCall` extracts and strips the three arguments before the browser round trip (so a bad path fails early) and returns early for the four tools that own their own `out_file` hook: `workato_pull_recipe`, `workato_lcap_page_get`, `workato_api_request`, `workato_adapter_meta`. `applyAutoFile` runs at the single success return, writing the full text or the decoded image bytes with a tmp plus rename write and returning a summary: `saved_to`, `bytes`, `content_type`, `version_no`, top-level keys, depth-1 array counts, and the payload's own truncation flags copied verbatim.
+- **Not hooked.** The nested `callExtension` inside the orchestrators is deliberately left alone: spilling an orchestrator's own pull would hand it a summary instead of the payload. Bridge-local tools (`workato_recipe_apply`, `workato_recipe_validate`, `workato_operation_status`, `workato_datapill`, `workato_bridge_info`) return before the post-processor and take none of these properties.
 
 ## Multi-profile support
 
@@ -89,8 +140,8 @@ Recipe saves accept `expected_base_version_no` for optimistic locking, so a conc
 app/chrome-extension/entrypoints/background/
 ├── native-host.ts                 # bridge message listener
 └── tools/
-    ├── workato/                   # recipes, jobs, connections, folders, dispatch, CSRF, slimming
-    ├── workato-recipe/            # code-tree mutators (pull → mutate → push)
+    ├── workato/                   # recipes, jobs, connections, callers, folders, dispatch,
+    │                              #   CSRF, session context, snapshot cache, slimming
     ├── workato-ui/                # live editor automation + save_recipe_code
     ├── workato-lookup/            # lookup tables
     ├── workato-data-table/        # data tables
@@ -99,10 +150,12 @@ app/chrome-extension/entrypoints/background/
 
 app/native-server/src/
 ├── server/index.ts                # Fastify routes, MCP transports
-├── server/profile-registry.ts     # per-profile WebSocket connections
+├── server/profile-registry.ts     # per-profile WebSocket connections, generation counter
 ├── native-messaging-host.ts       # stdio framing to/from Chrome
 ├── file-handler.ts                # local file reads/writes for the round-trip
-└── mcp/                           # MCP server + stdio entrypoint
+└── mcp/                           # MCP server, stdio entrypoint, server identity,
+                                  #   the recipe mutation engine and validator,
+                                  #   caller discovery, the operations journal, auto-file
 ```
 
 ## Adding a tool

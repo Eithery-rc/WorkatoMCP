@@ -37,7 +37,21 @@ The pulled object is `{ recipe_id, code, version }`. `code` is the trigger node,
 }
 ```
 
-`version.config` entries: `{"keyword":"application","provider":"salesforce","name":"salesforce","skip_validation":false,"account_id":14474811}` — one per distinct app `provider`. `account_id` is omitted for system providers (`logger`, `workato_recipe_function`, `workato_variable`, `workato_pub_sub`, `clock`, `csv_parser`, `py_eval`).
+`version.config` entries: `{"keyword":"application","provider":"salesforce","name":"salesforce","skip_validation":false,"account_id":14474811}`, one per distinct app `provider`. `account_id` is omitted for system providers (`logger`, `workato_recipe_function`, `workato_variable`, `workato_pub_sub`, `clock`, `csv_parser`, `py_eval`).
+
+### What a compact view keeps, and what it previews
+
+`workato_pull_recipe`'s `compact` and `outline` views are projections of the tree above, not the tree itself. Two things are worth knowing before reading one.
+
+**Execution semantics survive.** Alongside `input`, the node-root keys `source`, `repeat_mode`, `clear_scope`, `batch_size` and `comment` are kept, and the loop source appears in the step header, so a compact view of a `foreach` says what it iterates. `if` / `else` / `try` / `catch` structure is unchanged. `outline` reports `input_keys` per step in place of the input it drops.
+
+**Long values are previewed, not copied.** Anything over 240 characters (a `list_item_schema_json`, an `output_schema`, a sample document, a Python or SQL body) is replaced by a marker that names the way back, followed by the first 240 characters:
+
+```
+<<preview 240 of 9021 chars; path=input.code; read with step:"py01", paths:["input.code"]>>
+```
+
+`paths: [...]`, `include: ["code"]` and `view: "full"` all return the value verbatim, so nothing is lost, it just has to be asked for. Never write a tree back from a compact view: use `view: "full"` or the `out_file` round trip.
 
 ---
 
@@ -75,6 +89,25 @@ Setting only `input` saves cleanly and leaves the editor showing an empty picker
 ```
 
 Required: `as`, `input.time_unit`, `input.trigger_every`. `time_unit` ∈ `minutes`/`hours`/`days`. `trigger_every` is a **string** integer.
+
+**That bare shape is NOT sufficient on a save (probed live 2026-09-07, contradicting what this file used to say).** Saving `{"time_unit":"minutes","trigger_every":"60"}` (and the same for `days`/`1`) with no `extended_input_schema` is accepted with `code_errors: []` and `trigger_every` is **dropped on readback**; `workato_ui_save_recipe_code` reports `persisted_incomplete`. `time_unit` persists on its own, so it is a base field. Adding the schema on the trigger makes `trigger_every` stick:
+
+```json
+"extended_input_schema": [
+  {
+    "name": "trigger_every",
+    "type": "string",
+    "control_type": "select",
+    "label": "Trigger every",
+    "optional": false,
+    "options": [["1", "1"], ["2", "2"], "...", ["60", "60"]]
+  }
+]
+```
+
+The option list is a range, one entry per integer in the unit (minutes 1 to 60, hours 1 to 24, days 1 to 31), and the value the step already carries must be inside it. Evidence: recipe 82145419 versions 4 and 5 dropped the field, version 7 persisted it and the editor showed "Trigger every 60 minutes".
+
+You rarely have to write this by hand: the native mutation engine derives it (see [Extended schemas](#extended-schemas--not-safe-to-omit-silent-strip-rule)).
 
 ### Recipe Function — `provider:"workato_recipe_function", name:"execute"`
 
@@ -290,7 +323,9 @@ There is **no `repeat_while` keyword**. The loop is `keyword:"repeat"`; its firs
 
 - `catch.as` is required.
 - `max_retry_count="0"` means no retry. `retry_interval` is seconds (string).
-- **Catch output field names are NOT `error_message`/`error_type`** — those are the documented names but Workato rejects them with `"Unknown data field 'Error message'"` on validation. The actual output schema is unknown — TODO, verify via the UI once Workato shows the catch's datapill picker. For now, write static catch-side log messages without referencing the catch's output, OR add an `extended_output_schema` declaring whatever fields you want to use (Workato will accept the names you declare).
+- **Catch output field names are NOT `error_message`/`error_type`.** Those are the documented names but Workato rejects them with `"Unknown data field 'Error message'"` on validation. `message` is the one confirmed to work: a step inside the catch reading `catch.<as>.message` resolves.
+- **A `catch` needs no `extended_output_schema`.** Its output shape comes from the runtime, so `workato_recipe_validate` never raises `datapill_target_no_output_schema` on one, and nothing auto-derives a schema for it. Declaring one is still allowed (Workato accepts the names you declare) but it is not the fix for an unresolved catch field.
+- **A step inside the catch reading the catch's own output is not a forward reference.** `workato_recipe_validate`'s upstream check exempts it: the catch node is in scope for its own block.
 
 ### Stop — `keyword:"stop"`
 
@@ -616,6 +651,8 @@ Bulk update: `input.object`, `input.csv_data.{csv,csv_columns,col_sep,skip_first
 
 `topic_id` is the numeric id as a string.
 
+**A recipe step is the ONLY way to publish to a topic.** There is no publish API: `POST /web_api/pub_sub/topics/<id>/messages.json` is a 404 and the topics UI has no publish action (probed 2026-09-07), which is why no `workato_publish_message` tool exists. To put a message on a topic, build a `workato_pub_sub` / `publish_to_topic` (or `publish_to_topic_batch`) step with `input {topic_id, message}` plus the matching `extended_input_schema`, and run it with `workato_test_recipe`. `workato_call_action` cannot do it either: its endpoint needs a real connection id and rejects an adapter name. Topic CRUD and the message history endpoint are in `platform-endpoints.md`.
+
 ### Workato Recipe Function — `workato_recipe_function / call_recipe`
 
 ```json
@@ -637,7 +674,9 @@ Bulk update: `input.object`, `input.csv_data.{csv,csv_columns,col_sep,skip_first
 }
 ```
 
-`flow_id` is the target recipe id **as a string**. `parameters` must match the target trigger's `parameters_schema_json`. Outputs available under `provider:"workato_recipe_function", line:"<as>", path:[...]`.
+`flow_id` is the target recipe id **as a string**, on both `call_recipe` and `call_recipe_async`. That single key is the whole static call graph: it is what `workato_recipe_callers` matches when it scans candidate recipes, and what Workato's own dependency graph (`GET /dependency_graphs/<id>.json?asset_type=recipe`) reports as a Flow to Flow edge. A `flow_id` built from a datapill or a formula cannot be resolved by any static scan and comes back under `unresolved_dynamic_targets`.
+
+`parameters` must match the target trigger's `parameters_schema_json`. Outputs available under `provider:"workato_recipe_function", line:"<as>", path:[...]`.
 
 **Silent-strip rule applies here too** — `input.parameters` is dropped on save unless you include the matching `extended_input_schema`:
 
@@ -675,12 +714,12 @@ Each parameter in the target's `parameters_schema_json` becomes one entry in `pr
 ### `as` and UUID
 
 - `as` is **exactly 8 lowercase hex chars** (`/^[0-9a-f]{8}$/`) — e.g. `"7a8394a3"`, `"641f89e1"`. Required on every node that produces output. Used as the datapill `line`.
-- **Workato silently rejects non-hex `as` values.** E.g. `"declare1"` (contains `l` which is not hex) is treated as an invalid identifier; foreach.source pointing at such an `as` will fail with `"Unknown data field <Capitalized>"`. Always use proper hex like `crypto.randomBytes(4).toString('hex')`.
-- `uuid` is the full UUID v4; the API tolerates omitting it on simple action shapes but every saved recipe has it. Generate with `crypto.randomUUID()`.
+- **A non-hex `as` is a real hazard, but not a universal rejection.** `"declare1"` (contains `l`, which is not hex) is treated as an invalid identifier and a `foreach.source` pointing at it fails with `"Unknown data field <Capitalized>"`. Other hand-written anchors do work: `tjcall01` was observed live on a running recipe. So `workato_recipe_validate` and the mutation engine report a non-hex `as` on an existing step as a WARNING rather than refusing the save, and leave the anchor alone. Always MINT proper hex yourself, `crypto.randomBytes(4).toString('hex')`.
+- **`uuid` is required on every node.** It is the full UUID v4. A tree with a node missing one is rejected outright with `code is invalid: line=0, uuid not present` (verified live), whatever the shape of the action, so the older "tolerated on simple action shapes" reading is wrong. Generate with `crypto.randomUUID()`. The native mutation engine mints one for every node it creates and refuses the save otherwise; a node that predates the rule and has none is reported as a warning rather than an error, so a legacy recipe stays editable.
 
 ### `version.config` deduplication
 
-Each distinct `provider` used in the recipe gets one entry. Providers that need no connection omit `account_id`; connection-based providers include it. The general test is `connection_required` from `workato_adapter_meta` (`config.required` in the raw meta) — do not rely on a fixed list, which is how `email` gets missed: it is not a system provider by name but its config entry carries no `account_id` either. Verified live: `{"keyword":"application","name":"email","provider":"email","skip_validation":false}` alongside a salesforce entry that does have one. Connection-free by inspection: `logger`, `workato_recipe_function`, `workato_variable`, `workato_pub_sub`, `clock`, `csv_parser`, `py_eval`, `email`. See `discovering-connectors.md`.
+Each distinct `provider` used in the recipe gets one entry. Providers that need no connection omit `account_id`; connection-based providers include it. The mutation engine MERGES this array rather than rebuilding it, so an existing `account_id` and `skip_validation` always survive a write and only a provider new to the recipe is appended. A `remove_step` that leaves a provider unused drops its entry only when the entry carries no `account_id`; a bound entry is kept, because dropping a binding is not something a step deletion should decide. `workato_recipe_connections` reports a left-over entry as `status: "unused"` and `workato_recipe_validate` as `config_entry_unused`, neither of which blocks anything. The general test is `connection_required` from `workato_adapter_meta` (`config.required` in the raw meta): do not rely on a fixed list, which is how `email` gets missed: it is not a system provider by name but its config entry carries no `account_id` either. Verified live: `{"keyword":"application","name":"email","provider":"email","skip_validation":false}` alongside a salesforce entry that does have one. Connection-free by inspection: `logger`, `workato_recipe_function`, `workato_variable`, `workato_pub_sub`, `clock`, `csv_parser`, `py_eval`, `email`. See `discovering-connectors.md`.
 
 ### Extended schemas — NOT safe to omit (silent-strip rule)
 
@@ -692,6 +731,26 @@ Each distinct `provider` used in the recipe gets one entry. Providers that need 
 Trivial inputs (a single string field on a base-schema field like `logger.input.message`) **don't** need extended schemas. The danger zone is structured/array inputs and any output that gets sourced by foreach/datapill references.
 
 When writing the schema, mirror the shape Workato itself emits: `{label, name, type, of?, properties[], control_type?, optional?, hint?}`. The `name` must match the key under `input` (input schema) or the path segment (output schema).
+
+#### These are now derived for you (`auto_schema`)
+
+Every native recipe write (`workato_recipe_apply`, `workato_recipe_add_step`, `workato_recipe_set_input_path` and the rest of the family) runs through one engine that derives these schemas from the step's own declaration before saving, unless you pass `auto_schema: false`. The derivation covers the **whole tree**, not only the edited step, because a save rewrites the whole tree: an untouched `declare_list` with no schema loses its items on this save just as surely as an edited one.
+
+| Step               | Derived from                     | Schemas written                                    | Evidence   |
+| ------------------ | -------------------------------- | -------------------------------------------------- | ---------- |
+| `declare_list`     | `input.list_item_schema_json`    | `extended_input_schema` + `extended_output_schema` | verified   |
+| clock trigger      | its own `input.time_unit`        | `extended_input_schema` for `trigger_every`        | verified   |
+| `insert_to_list`   | the declaring step's declaration | `extended_input_schema`                            | documented |
+| `declare_variable` | `input.variables.schema`         | `extended_output_schema`                           | documented |
+| `update_variables` | the declaring step's declaration | `extended_input_schema`                            | documented |
+
+The declaration is the only source. A list that happens to hold three strings says nothing about the type its author declared, so a missing declaration is refused with a reason rather than guessed. A schema that disagrees with its declaration is corrected and the differences listed; one that agrees is left byte for byte alone, and `label` and `control_type` are never compared, so a cosmetic difference is not churn. The response reports every one under `derived_schemas`.
+
+`call_recipe`'s `input.parameters` is deliberately **not** auto-derived, even though the same silent strip applies: `workato_caller_bind` writes that key from the callee's contract, and two writers on one key would fight. The recipe_function trigger's own `parameters` wrapper is likewise left to `workato_callable_schema_set`.
+
+**Preview it without saving.** `workato_recipe_validate(recipe_id)` (or `code_path`, or an inline `code` tree) reports the same `derived_schemas` as a dry run, alongside `structured_input_no_schema` and `datapill_target_no_output_schema` warnings for the cases nothing can derive. It never calls the save tool, so it costs no version.
+
+Two paths do NOT derive, because they drive the save tool directly rather than the mutation engine: a plain `workato_ui_save_recipe_code` and `workato_recipe_save_with_dependents`. Write the schemas yourself on those, or make the edit through the engine.
 
 ### Genuinely optional metadata keys (safe to omit on creation)
 
@@ -724,7 +783,7 @@ Common mistakes:
 - Inlining `=['a','b','c']` as foreach `source` instead of using a Variables `declare_list` + datapill reference.
 - Using `keyword:"repeat_while"` (there's no such thing — use `repeat` with a `while_condition` first child).
 - **Treating `else`/`elsif` as siblings of `if`** — they NEST inside `if.block` at the end. Same for `catch`: nests as the last entry inside `try.block`.
-- **Trusting documented catch field names `error_message`/`error_type`** — Workato rejects those. The real catch output schema is undocumented; either skip catch-output references or declare your own via `extended_output_schema`.
+- **Trusting documented catch field names `error_message`/`error_type`.** Workato rejects those; `catch.<as>.message` is the one confirmed to resolve. A catch needs no `extended_output_schema` for it.
 - **Using a non-hex `as`** (e.g. `"caller00"`, `"declare1"`). Must be `/^[0-9a-f]{8}$/`.
 - **Omitting `extended_output_schema`** on a step whose output is referenced by a downstream datapill — the reference fails validation.
 - **Omitting `extended_input_schema`** when writing structured `input` fields (arrays, nested objects) — Workato silently drops them on save. Symptom: `code_errors:[]` but `pull_recipe` shows the data is gone.

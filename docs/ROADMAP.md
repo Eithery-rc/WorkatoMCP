@@ -2,74 +2,72 @@
 
 What's planned, what was considered and rejected, and why. Nothing here is a commitment to a date.
 
-Most items come from real recipe-building sessions — the pattern that repeats often enough to deserve a tool. That's the bar: a tool should absorb a _frequent narrow edit_, not a one-off architectural change.
+Most items come from real recipe-building sessions: the pattern that repeats often enough to deserve a tool. That's the bar. A tool should absorb a _frequent narrow edit_, not a one-off architectural change.
 
 ## Planned
 
-### `workato_recipe_apply_to_steps`
-
-Apply one mutation to several steps atomically, reporting per-step outcomes.
-
-```
-workato_recipe_apply_to_steps(
-  recipe_id, steps: ["5c0d4007", "04e75065"],
-  operation: { kind: "set_input_path", path: "records.custbody_client_email",
-               value: "datapill(py_eval.1616311d.lines[].client_email)" },
-)
-```
-
-Nearly every mapping change in practice lands on two or more parallel steps — an Invoice step and its Credit Memo twin, a Vendor Bill and its Bill Credit. Today that's a loop around `workato_recipe_set_input_path`, which means N round-trips and N version bumps for one logical change.
-
-### `workato_recipe_validate`
-
-Run Workato's server-side validation without saving, so silent-strip and schema-mismatch problems surface before a version is created rather than after. Today the only way to see `code_errors` is to save and read them back.
-
-### Raw step view
-
-`workato_pull_recipe(step: ...)` returns the compact view, with datapills rewritten in shorthand and extended schemas stripped. Wholesale edits need the exact `_dp(...)` JSON plus `extended_input_schema` / `extended_output_schema` verbatim. Either a `view: "raw"` on the step mode or a sibling tool.
-
 ### `workato_recipe_refresh_schema`
 
-The recipe editor's schema-refresh button is backed by `POST /connections/<id>/extended_schema.json`. Wrapping it would let an agent re-derive a step's schema after a connector-side field change instead of hand-writing the array. The endpoint has been captured; reliability across connectors still needs checking — it returned empty for `execute_suiteql` during earlier reconnaissance.
+The recipe editor's schema-refresh button is backed by `POST /connections/<id>/extended_schema.json`. Wrapping it would let an agent re-derive a step's schema after a connector-side field change instead of hand-writing the array. The endpoint has been captured; reliability across connectors still needs checking, since it returned empty for `execute_suiteql` during earlier reconnaissance. Note that this is a different problem from `auto_schema`, which derives a schema from a declaration the step already carries and needs no connection at all.
 
 ### `workato_lookup_table_get_row`
 
 Single-row lookup by key column and value, without paging through the whole table. Spot-checking a value before referencing it in a formula is currently more expensive than it should be.
 
-### Better `code_errors` hints
-
-`code_errors: [[12, [["Records", null, "can't be blank", ["records"]]]]]` almost always means a structured input was silently stripped because the step lacked an `extended_input_schema`. The save now detects the strip itself by reading the tree back, so what's left is mapping Workato's own error tuples onto the offending step and field — the readback names the paths, the `code_errors` array still doesn't.
-
 ### `workato_create_connection`
 
 Stubbed at [`workato/create-connection.stub.ts`](../app/chrome-extension/entrypoints/background/tools/workato/create-connection.stub.ts) with the endpoint and body shape documented. Held back deliberately: creating a connection means handling auth material, which every other tool in this project is built to never touch. It needs a provider allowlist and a clear story on where credentials come from before it ships.
 
+### Follow-ups the 2026-09-07 release left open
+
+Each of these is a gap a shipped package named for itself rather than hid.
+
+| Item                                               | Why it matters                                                                                                                                                                                                                                                                                                                                         |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A continuation cursor for `workato_recipe_callers` | A workspace-wide scan can list up to `max_recipes` candidates and read each one's code sequentially. When the time budget runs out the response says so (`completeness: partial`, with the unread count), but there is no cursor to resume from, so the next attempt starts over                                                                       |
+| Auto-file cleanup                                  | Files written by `auto_file` accumulate under `<tmpdir>/workatomcp-results/session-<pid>-<stamp>/` for the life of the machine's temp directory. No TTL, no size cap                                                                                                                                                                                   |
+| `windowId` coverage                                | `findWorkatoTab` takes a `windowId` now, but `resolveTabId` still falls THROUGH to global discovery when the named window holds no Workato tab, and several tools (`workato_test_recipe` among them) expose no `windowId` at all. Unifying the two would change behaviour for every `workato_ui`, lookup and data-table tool, so it needs its own pass |
+| A transitive write gate for `workato_test_recipe`  | The gate reads only the recipe under test. A connectionless recipe whose step calls a callee that does touch Salesforce runs without `allow_writes`. The callee index from `workato_recipe_callers` is the natural input                                                                                                                               |
+| Job `title` matching                               | `match` on the `title` field is implemented and unit-tested but was never validated live: the probe found no job anywhere in the workspace with a non-empty title, and whether the server `query` matches a title is likewise unverified                                                                                                               |
+| `mergeFieldSchemas` has no tool surface            | It merges adapter meta with a step's own schema and reports provenance and a strict `complete` flag. Wiring it needs one `workato_adapter_meta` call per provider set, which would put a network call inside an otherwise network-free validator. An opt-in flag on `workato_recipe_validate` is the obvious home                                      |
+| Orchestrator-internal auto-file                    | The nested `callExtension` inside the orchestrators is deliberately not hooked, because a spilled pull would hand the orchestrator a summary instead of the payload. Spilling there needs a per-call opt-in                                                                                                                                            |
+| Bridge coverage thresholds                         | 70/80/80/80 configured, actual 69.15/59.5/70.5/75.4, and now formally non-gating in CI                                                                                                                                                                                                                                                                 |
+
 ## Known debt
 
-**The extension does not typecheck cleanly.** `pnpm typecheck` reports around 100 errors, all in code inherited from the upstream project — `record-replay-v3` and its tests, `element-marker`, `gif-recorder`, and a few browser tools. None are in the Workato tool families, and the build is unaffected (WXT/Vite transpiles without typechecking), which is why the errors went unnoticed for so long.
+**The extension does not typecheck cleanly.** `pnpm typecheck` reports around 107 errors, all in code inherited from the upstream project: `record-replay-v3` and its tests, `element-marker`, `gif-recorder`, and a few browser tools. None are in the Workato tool families, and the build is unaffected (WXT/Vite transpiles without typechecking), which is why the errors went unnoticed for so long.
 
-CI typechecks `workatomcp-shared` and `workatomcp-bridge` as a gate and reports the extension separately without failing the run. Paying this down means either fixing the inherited code or dropping the parts of the record-replay feature this fork doesn't use — the second is probably the better trade, since none of it serves the Workato use case.
+Paying this down means either fixing the inherited code or dropping the parts of the record-replay feature this fork doesn't use. The second is probably the better trade, since none of it serves the Workato use case.
+
+**CI now runs both test suites.** The extension vitest suite and the bridge jest suite gate the build after Lint, alongside the typecheck of `workatomcp-shared` and `workatomcp-bridge`. The extension typecheck is still reported without failing the run. Bridge coverage thresholds are explicitly non-gating: a red test should fail the build, a percentage should not.
 
 ## Considered and rejected
 
 Some things are better left as code the agent writes, not tools:
 
-- **Bulk structural refactors** — wrapping twenty steps in `if` / `try` / `catch` branches is naturally a script over the pulled tree, not an API.
-- **Cross-step regex sweeps** — file-edit territory. Pull with `out_file`, edit, push.
-- **Complex formula construction** — a ten-line SuiteQL formula interleaving four datapills is authoring work, not a parameterized call. The [`workato-recipes` skill](../skills/workato-recipes/) exists to make that authoring correct.
+- **Bulk structural refactors.** Wrapping twenty steps in `if` / `try` / `catch` branches is naturally a script over the pulled tree, not an API. `workato_recipe_apply`'s structural ops cover the narrow, addressable cases (insert, remove, move, loop source, connection binding); a sweeping re-shape is still a tree rewrite plus one save.
+- **Cross-step regex sweeps.** File-edit territory. `workato_recipe_grep` finds the places; pull with `out_file`, edit, push.
+- **Complex formula construction.** A ten-line SuiteQL formula interleaving four datapills is authoring work, not a parameterized call. The [`workato-recipes` skill](../skills/workato-recipes/) exists to make that authoring correct.
+- **`workato_publish_message`.** There is no publish endpoint. `POST /web_api/pub_sub/topics/<id>/messages.json` is a 404 and the topics UI has no publish action, probed live on 2026-09-07. The supported path is documented instead: a `workato_pub_sub` / `publish_to_topic` step run under `workato_test_recipe`. Adding a tool that wrapped a workaround would have made an unsupported path look supported.
+- **Splitting the tool catalogue behind a gateway.** The measured 38.9k reference tokens describe the serialized catalogue, not a charge on every request, and Claude Code defers MCP tool definitions by default: names and server instructions arrive first, schemas on demand. Lazy discovery already addresses the upfront cost, so reducing the tool count is not a prerequisite for anything. The effort went into better names, a task-to-tool table in the server instructions and the skill, and a 2 KB budget test on descriptions.
+- **Automatic formula-template deduplication.** Collapsing near-identical formulas obscures the real differences between them, and a lossless design was never found. Projection and targeted search give a clearer first benefit at no risk of hiding a divergence that matters.
 
 ## Superseded
 
-| Idea                                | Superseded by                                                                                                           |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `workato_push_recipe`               | `workato_ui_save_recipe_code`, which does the same PUT with version locking, restart handling, and timeout verification |
-| `workato_run_soql`                  | `workato_run_query`, generic across SOQL, SuiteQL, and SQL                                                              |
-| `workato_schema_derive`             | `workato_recipe_set_extended_schema`                                                                                    |
-| Nested-path Python round-trips      | `workato_recipe_set_input_path` / `delete_input_path` / `set_py_eval_code`                                              |
-| "Active tab isn't Workato" failures | Unified tab resolution — explicit `tabId`, pinned session tab, or any Workato app tab                                   |
+| Idea                                  | Superseded by                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workato_recipe_apply_to_steps`       | `workato_recipe_apply`, which takes up to 50 arbitrary operations across any steps in one pull, validate, save, readback cycle rather than one operation replayed over a step list                                                                                                                                                                                                                |
+| Server-side `workato_recipe_validate` | `workato_recipe_validate` as LOCAL validation. Workato has no validate-without-save endpoint (`validate.json` and `ready.json` are both 404, probed live), so the tool runs structure, binding, datapill and schema checks in the bridge and states its `coverage` explicitly: formulas are Ruby and are not parsed, and nothing is executed                                                      |
+| Raw step view                         | `workato_pull_recipe(step, paths: [...])` and `include: ["schemas","code"]`, which return the exact `_dp(...)` JSON and the verbatim extended schemas without a second view mode                                                                                                                                                                                                                  |
+| Better `code_errors` hints            | Partly shipped: a save now reports `persisted_invalid` (a version exists and Workato rejects it) separately from `persisted_incomplete` (a version exists and input keys were dropped, with the paths named), and `workato_recipe_validate` predicts the binding and datapill breaks before a version is created. Mapping Workato's own error tuples back onto a step and field is still not done |
+| `workato_push_recipe`                 | `workato_ui_save_recipe_code`, which does the same PUT with version locking, restart handling, and timeout verification                                                                                                                                                                                                                                                                           |
+| `workato_run_soql`                    | `workato_run_query`, generic across SOQL, SuiteQL, and SQL                                                                                                                                                                                                                                                                                                                                        |
+| `workato_schema_derive`               | `workato_recipe_set_extended_schema`, and since 2026-09-07 the engine's own `auto_schema` derivation                                                                                                                                                                                                                                                                                              |
+| Nested-path Python round-trips        | `workato_recipe_set_input_path` / `delete_input_path` / `set_py_eval_code`                                                                                                                                                                                                                                                                                                                        |
+| "Active tab isn't Workato" failures   | Unified tab resolution: explicit `tabId`, pinned session tab, or any Workato app tab, with the pinned workspace verified before every write                                                                                                                                                                                                                                                       |
 
 Stub files for the superseded tools remain in the source tree as historical reference for the endpoint shapes.
 
 ## Design notes
 
-Specs and implementation plans for shipped work live in [`docs/design/`](design/). They record the reverse-engineered endpoints — request shapes, headers, gotchas — and are the first place to look before adding a tool that touches an unfamiliar part of the Workato API.
+Specs and implementation plans for shipped work live in [`docs/design/`](design/). They record the reverse-engineered endpoints, request shapes, headers and gotchas, and are the first place to look before adding a tool that touches an unfamiliar part of the Workato API. The live-verified endpoint captures are also distributed with the skill, in [`skills/workato-recipes/platform-endpoints.md`](../skills/workato-recipes/platform-endpoints.md).

@@ -23,10 +23,17 @@ Load `app/chrome-extension/dist/chrome-mv3` as an unpacked extension and confirm
 ```bash
 pnpm typecheck
 pnpm lint
+pnpm test
 pnpm build
 ```
 
-`pnpm lint` and `pnpm build` must pass. `pnpm typecheck` currently reports around 100 pre-existing errors in code inherited from the upstream project — see [Known debt](docs/ROADMAP.md#known-debt). Don't add to them: anything you touch in `packages/shared`, `app/native-server`, or the `tools/workato*` directories must be clean, and CI gates on the first two. `pnpm format` applies Prettier.
+`pnpm lint`, the tests and `pnpm build` must pass. `pnpm typecheck` currently reports around 107 pre-existing errors in code inherited from the upstream project: see [Known debt](docs/ROADMAP.md#known-debt). Don't add to them. Anything you touch in `packages/shared`, `app/native-server`, or the `tools/workato*` directories must be clean, and CI gates on the first two. `pnpm format` applies Prettier.
+
+**CI runs both test suites.** After Lint, `.github/workflows/ci.yml` runs the extension vitest suite and `pnpm --filter workatomcp-bridge test --coverage=false`. A red test fails the build; the bridge coverage thresholds are deliberately non-gating. Note the flag form: `pnpm --filter workatomcp-bridge test -- --coverage=false` does not work, because pnpm forwards the bare `--` to jest, which reads it as a test-name pattern and exits with "No tests found".
+
+**`pnpm build:extension` now runs `check:bundle`.** The extension's `build` script is `wxt build && npm run check:bundle`, so both `pnpm build` and `pnpm build:extension` run the guard. It fails when the built background script contains a `function _<name>InPage` helper, or an `_asyncToGenerator` wrapper around a function whose name ends in `InPage`, for any name other than the two allowlisted service-worker helpers. That is the shape an `async` in-page function compiles into, and only half of it survives serialization into the tab. `scripts/check-bundle.mjs` takes an optional bundle path as `argv[2]`, and deliberately carries no shebang: with one, vitest fails to parse the module and the whole suite goes red.
+
+Two further gates fire on any new tool: every `'workato_*'` literal in `app/native-server/src/mcp` must exist in `TOOL_NAMES` (a genuine PROVIDER literal such as `workato_pub_sub` goes in the test's `PROVIDER_LITERALS` allowlist instead), and every served description must be under 2048 bytes with no em-dash or en-dash in the Workato families.
 
 ## Adding a Workato tool
 
@@ -45,7 +52,18 @@ Conventions that keep the tool usable by an agent:
 - **Use plain JavaScript in page context.** `chrome.scripting.executeScript` serializes the function, so write `function () { ... .then(...) }` — `async`/`await` gets rewritten by the bundler into helpers that don't survive serialization.
 - **Read CSRF from the `XSRF-TOKEN-V2` cookie**, not a meta tag.
 
-New endpoints discovered by inspecting the Workato UI's network traffic should be recorded in `docs/design/specs/` so the next tool doesn't have to rediscover them.
+### Adding a read tool
+
+A read tool that can return a large result should serve `out_file`, `auto_file` and `auto_file_threshold_chars`. Do not add those three properties to its schema entry: add its name to `READ_TOOLS` in [`app/native-server/src/mcp/workato-auto-file.ts`](app/native-server/src/mcp/workato-auto-file.ts), one line, and `withOutFileToolSchemas` injects them into the served schema. Only add them to `tools.ts` when the wording genuinely has to differ, since the injector fills in a property only when it is absent.
+
+Two things make the summary useful, so keep them true:
+
+- **Emit a parseable JSON payload in the FIRST text block** (plain JSON, or the `summary\nJSON` form). The summary reports `version_no`, top-level keys and depth-1 array counts from it. A tool that returns prose gets a file and an empty `top_level_keys`.
+- **Name your continuation field one of the known ones.** Truncation flags are copied verbatim by name: `truncated`, `truncated_fields`, `total_bytes`, `total_items`, `total_count`, `has_more`, `next_page`, `next_cursor`, `limit`, `coverage`, `search_mode`, `warning`. A differently named field needs a line in `TRUNCATION_KEYS`, or the summary will hide the fact that the result is partial.
+
+A tool that answers inside the bridge (an orchestrator, or a local tool such as `workato_operation_status`) returns before the post-processor, so adding it to `READ_TOOLS` would do nothing.
+
+New endpoints discovered by inspecting the Workato UI's network traffic should be recorded in `docs/design/specs/` so the next tool doesn't have to rediscover them, and, when they are worth an agent's attention at authoring time, in [`skills/workato-recipes/platform-endpoints.md`](skills/workato-recipes/platform-endpoints.md).
 
 ## Commits and pull requests
 
