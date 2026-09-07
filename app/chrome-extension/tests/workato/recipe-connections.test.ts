@@ -179,10 +179,34 @@ describe('fetchRecipeConnectionsInPage', () => {
     vi.unstubAllGlobals();
   });
 
-  function stubFetch(config: unknown) {
+  /** A code tree whose steps use exactly `providers`, the trigger first. */
+  function codeTree(providers: string[]): Record<string, unknown> {
+    const [trigger, ...actions] = providers;
+    return {
+      number: 0,
+      keyword: 'trigger',
+      provider: trigger,
+      name: 'new_object',
+      block: actions.map((provider, i) => ({
+        number: i + 1,
+        keyword: 'action',
+        provider,
+        name: 'do_thing',
+        as: `s${i}`,
+      })),
+    };
+  }
+
+  function stubFetch(config: unknown, providers: string[] = ['salesforce', 'logger', 'slack']) {
     const calls: string[] = [];
     const fetchMock = vi.fn(async (url: string) => {
       calls.push(url);
+      if (url.includes('/code.json')) {
+        return {
+          status: 200,
+          text: async () => JSON.stringify({ result: JSON.stringify(codeTree(providers)) }),
+        };
+      }
       if (url.startsWith('/recipes/')) {
         return {
           status: 200,
@@ -242,11 +266,98 @@ describe('fetchRecipeConnectionsInPage', () => {
     ]);
     expect(raw.connections?.['19092754']).toMatchObject({ id: 19092754 });
     expect(raw.meta_required).toEqual({ logger: false, slack: true });
+    expect(raw.step_providers).toEqual(['salesforce', 'logger', 'slack']);
     expect(calls).toEqual([
       '/recipes/72272208.json',
       '/connections/19092754.json',
       '/integrations/meta?name=logger%2Cslack&cacheKey=x',
+      '/recipes/72272208/code.json?mode=view',
     ]);
+  });
+
+  it('reports a provider no step uses as unused rather than missing', async () => {
+    // The salesforce entry is what remove_step leaves behind: no account_id
+    // and no step using it. Reporting it as missing blocked caller restarts.
+    stubFetch(
+      JSON.stringify([
+        { keyword: 'application', name: 'logger', provider: 'logger' },
+        {
+          keyword: 'application',
+          name: 'salesforce',
+          provider: 'salesforce',
+          skip_validation: false,
+        },
+      ]),
+      ['logger'],
+    );
+
+    const raw = await fetchRecipeConnectionsInPage(82145419);
+    expect(raw.step_providers).toEqual(['logger']);
+
+    const payload = projectRecipeConnections(raw);
+    const salesforce = payload.connections.find((c) => c.provider === 'salesforce');
+    expect(salesforce?.status).toBe('unused');
+    expect(salesforce?.error).toContain('no step in this recipe uses provider salesforce');
+    expect(payload.healthy).toBe(true);
+    expect(payload.blocking).toEqual([]);
+    expect(payload.actions).toEqual([]);
+  });
+
+  it('keeps missing for a provider the steps DO use', async () => {
+    stubFetch(
+      JSON.stringify([
+        { keyword: 'application', name: 'slack', provider: 'slack', skip_validation: false },
+      ]),
+      ['slack'],
+    );
+
+    const payload = projectRecipeConnections(await fetchRecipeConnectionsInPage(82145419));
+    expect(payload.connections[0].status).toBe('missing');
+    expect(payload.healthy).toBe(false);
+    expect(payload.actions[0]).toContain('Provider slack');
+  });
+
+  it('never infers unused from a code read that failed', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/code.json')) return { status: 500, text: async () => 'boom' };
+      if (url.startsWith('/recipes/')) {
+        return {
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              result: {
+                recipe_data: {
+                  state: 'stopped',
+                  running: false,
+                  flow: {
+                    name: 'Milestone Test',
+                    version_no: 7,
+                    config: JSON.stringify([
+                      { keyword: 'application', name: 'slack', provider: 'slack' },
+                    ]),
+                  },
+                },
+              },
+            }),
+        };
+      }
+      if (url.startsWith('/integrations/meta')) {
+        return {
+          status: 200,
+          text: async () => JSON.stringify({ slack: { config: { required: true } } }),
+        };
+      }
+      return { status: 404, text: async () => 'not found' };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const raw = await fetchRecipeConnectionsInPage(82145419);
+    expect(raw.step_providers).toBeUndefined();
+    expect(raw.code_error).toMatch(/HTTP 500/);
+
+    const payload = projectRecipeConnections(raw);
+    expect(payload.connections[0].status).toBe('missing');
+    expect(payload.code_error).toMatch(/HTTP 500/);
   });
 
   it('accepts config already parsed as an array', async () => {
@@ -261,6 +372,7 @@ describe('fetchRecipeConnectionsInPage', () => {
       JSON.stringify([
         { keyword: 'application', name: 'sftp', provider: 'sftp', account_id: 999999 },
       ]),
+      ['sftp'],
     );
 
     const raw = await fetchRecipeConnectionsInPage(72272208);
