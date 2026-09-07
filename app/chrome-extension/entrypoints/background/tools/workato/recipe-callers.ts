@@ -26,6 +26,15 @@ import { cachedRecipeVersions } from './recipe-snapshot';
  *          EXECUTION HISTORY, not a static dependency: it proves a caller ran,
  *          it never proves a caller does not exist.
  *
+ * The code scan's folder scope is NOT server-side. /web_api/mixed_assets.json
+ * accepts folder_id and ignores it (verified 2026-09-07: a single folder id
+ * answered with recipes from four folders), so a folder, project or own-folder
+ * scope resolves exact membership from GET
+ * /dependency_graphs.json?asset_type=recipe&folder_id=<id> and intersects the
+ * candidate listing with it. The listing itself stays workspace-wide with
+ * adapters=workato_recipe_function, which is a real server-side filter and
+ * keeps the candidate set to recipes that can call a recipe at all.
+ *
  * Honesty rules baked into the response: the scan reports the folders it
  * listed, the pages it walked and whether it reached the end of each of them;
  * recipes it could not read are listed by id and reason; dynamic call targets
@@ -136,6 +145,10 @@ export interface ScanInPageResult {
   recipes_listed?: number;
   listing_errors?: string[];
   listing_complete?: boolean;
+  /** How folder membership was decided for the code scan. */
+  membership_source?: 'dependency_graph' | 'workspace_list';
+  /** Recipes the dependency-graph listing reported for the scoped folders. */
+  folder_members?: number;
   failure?: { stage: string; status?: number; message: string };
 }
 
@@ -266,12 +279,59 @@ export function fetchCallerScanInPage(opts: ScanOptions): Promise<ScanInPageResu
   }
 
   /**
-   * Walk every page of one listing. `count` from the response decides when the
-   * end is reached, so a short page caused by server-side filtering does not
-   * look like the end of the list.
+   * Exact membership of one folder. The recipe list endpoint ignores
+   * folder_id, so this top-level dependency graph listing is the only answer
+   * to "which recipes live in this folder". It returns
+   * {"result":[[recipe_id,"name"], ...]}.
+   */
+  function folderMembers(folderId: number): Promise<{ ids: number[]; error?: string }> {
+    const url = `/dependency_graphs.json?asset_type=recipe&folder_id=${folderId}`;
+    return getJson(url).then((res) => {
+      if (res.status < 200 || res.status >= 300) {
+        return { ids: [], error: `GET ${url} returned HTTP ${res.status}` };
+      }
+      const result = res.json && (res.json as any).result;
+      if (!Array.isArray(result)) {
+        return { ids: [], error: `GET ${url}: unexpected shape, expected result to be an array` };
+      }
+      const ids: number[] = [];
+      for (let i = 0; i < result.length; i++) {
+        const row = result[i];
+        const id = Array.isArray(row) ? Number(row[0]) : Number(row);
+        if (!Number.isFinite(id)) continue;
+        if (ids.indexOf(id) < 0) ids.push(id);
+      }
+      return { ids: ids };
+    });
+  }
+
+  /** Union of the membership of every scoped folder. */
+  function collectMembers(folderIds: number[]): Promise<{ ids: number[]; errors: string[] }> {
+    const ids: number[] = [];
+    const errors: string[] = [];
+    function next(index: number): Promise<{ ids: number[]; errors: string[] }> {
+      if (index >= folderIds.length) return Promise.resolve({ ids: ids, errors: errors });
+      return folderMembers(folderIds[index]).then((res) => {
+        if (res.error) errors.push(res.error);
+        for (let i = 0; i < res.ids.length; i++) {
+          if (ids.indexOf(res.ids[i]) < 0) ids.push(res.ids[i]);
+        }
+        return next(index + 1);
+      });
+    }
+    return next(0);
+  }
+
+  /**
+   * Walk every page of the candidate listing. `count` from the response decides
+   * when the end is reached, so a short page caused by server-side filtering
+   * does not look like the end of the list.
+   *
+   * `memberIds` is the folder scope, applied here because Workato ignores
+   * folder_id on this endpoint. null means workspace-wide.
    */
   function walkListing(
-    folderId: number | null,
+    memberIds: number[] | null,
     acc: CandidateRow[],
     errors: string[],
     pagesSoFar: number,
@@ -281,10 +341,9 @@ export function fetchCallerScanInPage(opts: ScanOptions): Promise<ScanInPageResu
       seen: number,
       pages: number,
     ): Promise<{ pages: number; complete: boolean }> {
-      let url =
+      const url =
         '/web_api/mixed_assets.json?asset_type=recipe&adapters=workato_recipe_function' +
         `&sort_term=name&per_page=20&page=${n}`;
-      if (folderId !== null) url = url + `&folder_id=${folderId}`;
       return getJson(url).then((res) => {
         if (res.status < 200 || res.status >= 300) {
           errors.push(`GET ${url} returned HTTP ${res.status}`);
@@ -300,6 +359,7 @@ export function fetchCallerScanInPage(opts: ScanOptions): Promise<ScanInPageResu
           const item = items[i];
           const id = Number(item.id);
           if (!Number.isFinite(id)) continue;
+          if (memberIds !== null && memberIds.indexOf(id) < 0) continue;
           acc.push({
             id: id,
             name: item.name == null ? undefined : String(item.name),
@@ -314,6 +374,11 @@ export function fetchCallerScanInPage(opts: ScanOptions): Promise<ScanInPageResu
         const perPage = Number(result.per_page) > 0 ? Number(result.per_page) : items.length;
         const seenNow = seen + items.length;
         if (acc.length >= opts.maxRecipes) return { pages: pages, complete: false };
+        // Every member of the scope has been located: nothing further in the
+        // list can belong to it, so the walk is done and complete.
+        if (memberIds !== null && acc.length >= memberIds.length) {
+          return { pages: pages, complete: true };
+        }
         if (items.length === 0) return { pages: pages, complete: true };
         if (Number.isFinite(total) && seenNow >= total) return { pages: pages, complete: true };
         if (!Number.isFinite(total) && items.length < perPage) {
@@ -326,32 +391,56 @@ export function fetchCallerScanInPage(opts: ScanOptions): Promise<ScanInPageResu
     return page(1, 0, pagesSoFar + 1);
   }
 
-  function walkAll(
-    folderIds: number[],
-  ): Promise<{ candidates: CandidateRow[]; pages: number; errors: string[]; complete: boolean }> {
+  function walkAll(folderIds: number[]): Promise<{
+    candidates: CandidateRow[];
+    pages: number;
+    errors: string[];
+    complete: boolean;
+    members?: number;
+    membershipSource: 'dependency_graph' | 'workspace_list';
+  }> {
     const acc: CandidateRow[] = [];
     const errors: string[] = [];
     if (!opts.wantCode) {
-      return Promise.resolve({ candidates: acc, pages: 0, errors: errors, complete: true });
-    }
-    const targets: (number | null)[] =
-      opts.scopeMode === 'workspace' ? [null] : (folderIds as (number | null)[]);
-    let pages = 0;
-    let complete = true;
-    function next(index: number): Promise<void> {
-      if (index >= targets.length) return Promise.resolve();
-      return walkListing(targets[index], acc, errors, pages).then((res) => {
-        pages = res.pages;
-        if (!res.complete) complete = false;
-        return next(index + 1);
+      return Promise.resolve({
+        candidates: acc,
+        pages: 0,
+        errors: errors,
+        complete: true,
+        membershipSource: 'workspace_list' as const,
       });
     }
-    return next(0).then(() => ({
-      candidates: acc,
-      pages: pages,
-      errors: errors,
-      complete: complete,
-    }));
+    if (opts.scopeMode === 'workspace') {
+      return walkListing(null, acc, errors, 0).then((res) => ({
+        candidates: acc,
+        pages: res.pages,
+        errors: errors,
+        complete: res.complete,
+        membershipSource: 'workspace_list' as const,
+      }));
+    }
+    return collectMembers(folderIds).then((membership) => {
+      for (let i = 0; i < membership.errors.length; i++) errors.push(membership.errors[i]);
+      if (membership.ids.length === 0) {
+        // An empty (or unreadable) folder needs no listing walk at all.
+        return {
+          candidates: acc,
+          pages: 0,
+          errors: errors,
+          complete: membership.errors.length === 0,
+          members: 0,
+          membershipSource: 'dependency_graph' as const,
+        };
+      }
+      return walkListing(membership.ids, acc, errors, 0).then((res) => ({
+        candidates: acc,
+        pages: res.pages,
+        errors: errors,
+        complete: res.complete && membership.errors.length === 0,
+        members: membership.ids.length,
+        membershipSource: 'dependency_graph' as const,
+      }));
+    });
   }
 
   return loadGraph().then((graphOut) =>
@@ -381,7 +470,9 @@ export function fetchCallerScanInPage(opts: ScanOptions): Promise<ScanInPageResu
           recipes_listed: listed.candidates.length,
           listing_errors: listed.errors,
           listing_complete: listed.complete,
+          membership_source: listed.membershipSource,
         };
+        if (listed.members !== undefined) result.folder_members = listed.members;
         if (graphOut.graph) result.graph = graphOut.graph;
         if (graphOut.error) result.graph_error = graphOut.error;
         return result;
@@ -816,10 +907,18 @@ export interface FailedRead {
 export interface ScopeInfo {
   mode: ScopeMode;
   folder_ids: number[];
+  /** Candidates in scope: for a folder scope this IS the folder membership. */
   recipes_listed: number;
   recipes_read: number;
   pages: number;
   complete: boolean;
+  /**
+   * 'dependency_graph' when folder membership came from
+   * /dependency_graphs.json (the recipe list endpoint ignores folder_id).
+   */
+  membership?: 'dependency_graph' | 'workspace_list';
+  /** Recipes the dependency-graph listing reported for the scoped folders. */
+  folder_members?: number;
 }
 
 export interface BuildInput {
@@ -1062,8 +1161,8 @@ export function buildCallersPayload(input: BuildInput): Record<string, unknown> 
   if (input.graph_error) reasons.push(`dependency graph unavailable: ${input.graph_error}`);
   if (!input.scope.complete) {
     reasons.push(
-      'the candidate listing did not reach the end of every scanned folder (page cap, ' +
-        'recipe cap or a failed page)',
+      'the candidate listing did not cover the whole scope (page cap, recipe cap, a failed ' +
+        'page, or a folder whose membership listing could not be read)',
     );
   }
   if (input.failed_reads.length > 0) {
@@ -1499,6 +1598,8 @@ class WorkatoRecipeCallersTool extends BaseBrowserToolExecutor {
         pages: scan.pages ?? 0,
         complete: scopeComplete,
       };
+      if (scan.membership_source !== undefined) scope.membership = scan.membership_source;
+      if (scan.folder_members !== undefined) scope.folder_members = scan.folder_members;
 
       const payload = buildCallersPayload({
         recipe_id: recipeId,

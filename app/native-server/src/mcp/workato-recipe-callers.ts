@@ -6,6 +6,11 @@
  * an orchestrator consume that answer without asking the model to enumerate
  * callers by hand, and (the part that matters) carries the tool's honesty
  * forward: when the scan came back partial, everything downstream is told so.
+ *
+ * A folder scope is resolved inside the extension, not by the recipe list
+ * endpoint: Workato ignores folder_id there, so membership comes from the
+ * dependency-graph listing. The payload shape is unchanged, so nothing here
+ * needs to know more than that the scope it asked for is the scope it got.
  */
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';

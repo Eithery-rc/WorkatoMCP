@@ -12,6 +12,15 @@ import { buildSlimRecipe, extractHighlights, type RecipeListItem } from './slim-
  * "ECO" answers with "New/updated records". The name-only modes here are
  * applied client-side over walked pages, and every response says how much of
  * the workspace was actually looked at.
+ *
+ * folder_id is NOT server-side either. /web_api/mixed_assets.json accepts it
+ * and ignores it (verified 2026-09-07: folder_id=30573643 answered with 20
+ * recipes across four folders), so the folder filter is applied here. Exact
+ * membership comes from GET
+ * /dependency_graphs.json?asset_type=recipe&folder_id=<id>, which answers
+ * {"result":[[recipe_id,"name"], ...]}; the page walk then only supplies the
+ * item metadata and stops as soon as every member has been seen. When that
+ * listing cannot be read the walk falls back to filtering on item.folder_id.
  */
 
 type MatchMode = 'fulltext' | 'name_substring' | 'name_word' | 'name_exact' | 'name_regex';
@@ -68,6 +77,16 @@ export interface SearchRecipesWalkResult {
   /** True when a page after the first failed: coverage is unknown, not finished. */
   incomplete?: boolean;
   incomplete_reason?: string;
+  /** How the folder scope was applied. Absent when no folder_id was given. */
+  folder_filter?: 'dependency_graph' | 'item_folder_id';
+  /** Recipes the dependency-graph listing reported for the folder. */
+  folder_members?: number;
+  /** How many of those the walk actually saw in the list pages. */
+  folder_members_seen?: number;
+  /** Why the membership listing could not be used, when it could not. */
+  folder_membership_error?: string;
+  /** Recipes the pages returned before the folder filter dropped them. */
+  scanned_before_filter?: number;
   failure?: {
     stage: 'search' | 'shape';
     status?: number;
@@ -176,11 +195,71 @@ export function searchRecipesInPage(
     count: 0,
     perPage: PER_PAGE,
     pagesScanned: 0,
+    scannedBeforeFilter: 0,
     lastPage: opts.startPage,
     endOfList: false,
     incomplete: false,
     incompleteReason: undefined as string | undefined,
+    /** Exact folder membership, or null when it could not be established. */
+    memberIds: null as Record<string, boolean> | null,
+    memberCount: 0,
+    membersSeen: 0,
+    membershipError: undefined as string | undefined,
   };
+
+  /**
+   * Exact membership of the scoped folder. The recipe list endpoint ignores
+   * folder_id, so this top-level dependency graph listing is the only answer
+   * to "which recipes live in this folder".
+   */
+  function loadMembership(folderId: number): Promise<void> {
+    const url = `/dependency_graphs.json?asset_type=recipe&folder_id=${folderId}`;
+    return fetch(url, fetchOpts).then(
+      (r) =>
+        r.text().then((body) => {
+          if (r.status < 200 || r.status >= 300) {
+            state.membershipError = `GET ${url} returned HTTP ${r.status}`;
+            return;
+          }
+          try {
+            const json = JSON.parse(body) as { result?: unknown };
+            const list = Array.isArray(json.result) ? json.result : [];
+            const ids: Record<string, boolean> = {};
+            let count = 0;
+            for (let i = 0; i < list.length; i++) {
+              const row = list[i];
+              const id = Array.isArray(row) ? Number(row[0]) : Number(row);
+              if (!Number.isFinite(id)) continue;
+              if (ids[String(id)]) continue;
+              ids[String(id)] = true;
+              count++;
+            }
+            state.memberIds = ids;
+            state.memberCount = count;
+          } catch (e) {
+            state.membershipError = `GET ${url}: JSON.parse failed: ${
+              e instanceof Error ? e.message : String(e)
+            }`;
+          }
+        }),
+      (e) => {
+        state.membershipError = `GET ${url} failed: ${e instanceof Error ? e.message : String(e)}`;
+      },
+    );
+  }
+
+  /** Client-side folder filter: by exact membership when known, else by item.folder_id. */
+  function inFolder(item: unknown): boolean {
+    if (opts.folderId === null || opts.folderId === undefined) return true;
+    const rec = item && typeof item === 'object' ? (item as Record<string, unknown>) : null;
+    const id = rec ? Number(rec.id) : NaN;
+    if (state.memberIds !== null) {
+      if (!Number.isFinite(id) || !state.memberIds[String(id)]) return false;
+      state.membersSeen++;
+      return true;
+    }
+    return rec != null && Number(rec.folder_id) === Number(opts.folderId);
+  }
 
   function loop(page: number): Promise<SearchRecipesWalkResult> {
     return fetchPage(page).then((res) => {
@@ -197,8 +276,18 @@ export function searchRecipesInPage(
       state.count = Number(res.count || 0);
       if (typeof res.per_page === 'number' && res.per_page > 0) state.perPage = res.per_page;
       const items = res.items || [];
-      for (let i = 0; i < items.length; i++) state.items.push(trimItem(items[i]));
+      state.scannedBeforeFilter += items.length;
+      for (let i = 0; i < items.length; i++) {
+        if (!inFolder(items[i])) continue;
+        state.items.push(trimItem(items[i]));
+      }
       if (items.length < state.perPage) {
+        state.endOfList = true;
+        return finish();
+      }
+      // Every recipe of the folder has been seen: nothing later in the list
+      // can belong to this scope, so the walk is done and complete.
+      if (state.memberIds !== null && state.membersSeen >= state.memberCount) {
         state.endOfList = true;
         return finish();
       }
@@ -213,7 +302,7 @@ export function searchRecipesInPage(
   }
 
   function finish(): SearchRecipesWalkResult {
-    return {
+    const out: SearchRecipesWalkResult = {
       ok: true,
       items: state.items,
       count: state.count,
@@ -224,9 +313,29 @@ export function searchRecipesInPage(
       incomplete: state.incomplete,
       incomplete_reason: state.incompleteReason,
     };
+    if (opts.folderId !== null && opts.folderId !== undefined) {
+      out.folder_filter = state.memberIds !== null ? 'dependency_graph' : 'item_folder_id';
+      out.scanned_before_filter = state.scannedBeforeFilter;
+      if (state.memberIds !== null) {
+        out.folder_members = state.memberCount;
+        out.folder_members_seen = state.membersSeen;
+      }
+      if (state.membershipError !== undefined) {
+        out.folder_membership_error = state.membershipError;
+      }
+    }
+    return out;
   }
 
-  return loop(opts.startPage);
+  if (opts.folderId === null || opts.folderId === undefined) return loop(opts.startPage);
+  return loadMembership(opts.folderId).then(() => {
+    // An empty folder needs no walk at all.
+    if (state.memberIds !== null && state.memberCount === 0) {
+      state.endOfList = true;
+      return finish();
+    }
+    return loop(opts.startPage);
+  });
 }
 
 /** Does this recipe's name satisfy the client-side match mode? */
@@ -379,6 +488,21 @@ class WorkatoSearchRecipesTool extends BaseBrowserToolExecutor {
         complete,
         next_page: nextPage,
         ...(result.incomplete ? { incomplete_reason: result.incomplete_reason } : {}),
+        ...(folderId === null
+          ? {}
+          : {
+              folder_id: folderId,
+              folder_filter: 'client-side: Workato ignores folder_id on the recipe list endpoint',
+              folder_membership:
+                result.folder_filter === 'dependency_graph'
+                  ? 'exact, from GET /dependency_graphs.json?asset_type=recipe&folder_id=<id>'
+                  : 'best effort, from item.folder_id on each listed recipe',
+              folder_members: result.folder_members,
+              recipes_listed_before_folder_filter: result.scanned_before_filter,
+              ...(result.folder_membership_error
+                ? { folder_membership_error: result.folder_membership_error }
+                : {}),
+            }),
       };
 
       const payload = {

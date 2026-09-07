@@ -580,6 +580,10 @@ async function lifecycle(
  *
  * `scan_folder_id` is the original single-folder argument and still works; it
  * is simply the one-element form of `scan_folder_ids`.
+ *
+ * The folder scope is exact but not server-side: workato_recipe_callers
+ * resolves membership through Workato's dependency-graph listing, because the
+ * recipe list endpoint accepts folder_id and ignores it.
  */
 export function readScanScope(args: JsonObject): {
   folder_ids: number[];
@@ -704,15 +708,22 @@ async function runOperation(ctx: Ctx, recipeId: number): Promise<CallToolResult>
 
   const reportFor = (id: number): DependentReport | undefined => reports.find((d) => d.id === id);
 
+  // The initial version of each dependent, kept here because upsertRecipe
+  // REPLACES the record: a later journalDependent(report) with no version
+  // argument used to blank the version_no captured at preflight.
+  const initialVersions = new Map<number, number>();
+
   /** Mirror one dependent report into the journal. */
   const journalDependent = (report: DependentReport, initialVersion?: number): void => {
+    if (typeof initialVersion === 'number') initialVersions.set(report.id, initialVersion);
+    const known = initialVersions.get(report.id);
     upsertRecipe(op, {
       recipe_id: report.id,
       name: report.name,
       role: 'caller',
       initial: {
         running: report.was_running,
-        version_no: initialVersion ?? null,
+        version_no: known ?? null,
       },
       stopped: report.stopped,
       restarted: report.restarted,
