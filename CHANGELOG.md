@@ -6,6 +6,17 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+### Added
+
+- **`workato_recipe_callers`**: who calls a recipe, with the evidence labelled. A long session found 2 of 5 callers in three folders after 68 calls, because the only discovery path was a folder scan that read page 1 and stopped. This combines three sources: Workato's own dependency graph (`GET /dependency_graphs/<id>.json?asset_type=recipe`, the Flow to Flow edges behind the Operations hub dependency page, one request and workspace-wide), a paged code scan that matches `call_recipe` / `call_recipe_async` `input.flow_id` and is the only source that can name the calling step, and `calling_recipe_id` off recent jobs, which is observed execution history and is labelled as such. Scope is the recipe's own folder by default, or `folder_ids`, a project, or the whole workspace; every page of every scanned folder is walked and the candidate listing is narrowed server-side with `adapters=workato_recipe_function`. Also returns callees, connections, lookup tables and workflow-app pages from the graph, and optionally the transitive caller closure with any call cycle.
+- **Caller discovery says what it did not see.** `unresolved_dynamic_targets` lists call steps whose `flow_id` is a datapill or a formula, which no static scan can resolve; `failed_reads` names the recipes it could not open and why (deleted, moved, no permission); `scope` reports the folders listed, pages walked, recipes read and whether every listing reached its end; and `completeness` is `partial` with reasons whenever any of that applies. A list of N callers is never presented as proof that only N exist.
+- A version-aware caller index, held in memory and in `chrome.storage.session`, keyed on the recipe list's `updated_at`. A repeated call re-reads only the recipes that actually changed; `refresh: true` forces a full re-read.
+
+### Changed
+
+- **`workato_recipe_save_with_dependents` discovers callers instead of scanning one page of one folder.** `scan_folder_id` now runs `workato_recipe_callers` (one call, not one recipe pull per candidate) and keeps working unchanged; `scan_folder_ids`, `scan_project_id` and `scan_scope` widen the search to several folders, a project or the workspace. When discovery comes back partial, the save says so in its response instead of presenting the dependent list as complete.
+- The `active_dependent_recipes_count` cross-check now fires on a refused dependent stop as well as on a failed save, and compares Workato's count against the callers this call actually discovered and stopped, naming the gap as a warning.
+
 ## bridge 1.5.0 · shared 1.2.0 (2026-08-26)
 
 ### Added
