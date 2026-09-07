@@ -5,7 +5,7 @@ import { ERROR_MESSAGES, TIMEOUTS } from '@/common/constants';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { clickTool, fillTool } from './interaction';
 import { keyboardTool } from './keyboard';
-import { screenshotTool } from './screenshot';
+import { base64ByteLength, screenshotTool } from './screenshot';
 import { screenshotContextManager, scaleCoordinates } from '@/utils/screenshot-context';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
 import {
@@ -1257,15 +1257,19 @@ class ComputerTool extends BaseBrowserToolExecutor {
           if (!base64Data) {
             return createErrorResponse('Failed to capture zoom screenshot via CDP');
           }
+          // Same envelope as chrome_screenshot: a real MCP image block plus a
+          // small metadata block, never the base64 payload inside JSON text.
           return {
             content: [
+              { type: 'image', data: base64Data, mimeType: 'image/png' },
               {
                 type: 'text',
                 text: JSON.stringify({
                   success: true,
                   action: 'zoom',
                   mimeType: 'image/png',
-                  base64Data,
+                  bytes: base64ByteLength(base64Data),
+                  image_returned: true,
                   region: { x0: rx0, y0: ry0, x1: rx1, y1: ry1 },
                 }),
               },
@@ -1278,11 +1282,14 @@ class ComputerTool extends BaseBrowserToolExecutor {
         }
       }
       case 'screenshot': {
-        // Reuse existing screenshot tool; it already supports base64 save option
+        // Reuse the screenshot tool: it returns the capture as an MCP image
+        // block. savePng stays off here, this action is for looking at the
+        // page, not for filling the Downloads folder.
         const result = await screenshotTool.execute({
           name: 'computer',
           storeBase64: true,
           fullPage: false,
+          savePng: false,
         });
         return result;
       }

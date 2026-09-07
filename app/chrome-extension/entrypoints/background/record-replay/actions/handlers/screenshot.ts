@@ -18,6 +18,13 @@ function extractToolText(result: unknown): string | undefined {
   return typeof text === 'string' && text.trim() ? text : undefined;
 }
 
+/** Extract the base64 payload from the tool result's MCP image block. */
+function extractToolImage(result: unknown): string | undefined {
+  const content = (result as { content?: Array<{ type?: string; data?: string }> })?.content;
+  const data = content?.find((c) => c?.type === 'image' && typeof c.data === 'string')?.data;
+  return typeof data === 'string' && data.length > 0 ? data : undefined;
+}
+
 export const screenshotHandler: ActionHandler<'screenshot'> = {
   type: 'screenshot',
 
@@ -63,6 +70,7 @@ export const screenshotHandler: ActionHandler<'screenshot'> = {
       args: {
         name: 'workflow',
         storeBase64: true,
+        savePng: false,
         fullPage: action.params.fullPage === true,
         selector,
         tabId,
@@ -73,22 +81,16 @@ export const screenshotHandler: ActionHandler<'screenshot'> = {
       return failed('UNKNOWN', extractToolText(res) || 'Screenshot failed');
     }
 
-    // Parse response
-    const text = extractToolText(res);
-    if (!text) {
-      return failed('UNKNOWN', 'Screenshot tool returned an empty response');
-    }
-
-    let payload: unknown;
-    try {
-      payload = JSON.parse(text);
-    } catch {
-      return failed('UNKNOWN', 'Screenshot tool returned invalid JSON');
-    }
-
-    const base64Data = (payload as { base64Data?: unknown })?.base64Data;
-    if (typeof base64Data !== 'string' || base64Data.length === 0) {
-      return failed('UNKNOWN', 'Screenshot tool returned empty base64Data');
+    // The capture comes back as an MCP image block; the text block alongside it
+    // carries only metadata (never the base64 payload).
+    const base64Data = extractToolImage(res);
+    if (!base64Data) {
+      return failed(
+        'UNKNOWN',
+        extractToolText(res)
+          ? 'Screenshot tool returned no image block'
+          : 'Screenshot tool returned an empty response',
+      );
     }
 
     // Store in variables if saveAs specified
