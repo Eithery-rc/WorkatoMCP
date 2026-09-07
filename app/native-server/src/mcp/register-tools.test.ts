@@ -6,6 +6,31 @@ import {
   withProfileRoutingToolSchemas,
 } from './register-tools';
 import { profileRegistry } from '../server/profile-registry';
+import nativeMessagingHostInstance from '../native-messaging-host';
+
+/** A workato_session_context response, as the extension returns it. */
+const sessionContextReply = (tabId: number, overrides: Record<string, unknown> = {}) => ({
+  status: 'success',
+  data: {
+    content: [
+      {
+        type: 'text',
+        text:
+          'tab context\n' +
+          JSON.stringify({
+            tab_id: tabId,
+            host: 'app.workato.com',
+            workspace_id: 5150,
+            workspace_name: 'Acme prod',
+            environment: 'production',
+            user_id: 7,
+            ...overrides,
+          }),
+      },
+    ],
+    isError: false,
+  },
+});
 
 describe('register-tools profile routing', () => {
   afterEach(() => {
@@ -60,6 +85,7 @@ describe('register-tools profile routing', () => {
     const router = createToolRouter();
 
     await router.handleToolCall('workato_switch_profile', { profile: 'centium', tabId: 42 });
+    sendRequest.mockClear();
     await router.handleToolCall('workato_whoami', {});
     await router.handleToolCall('get_windows_and_tabs', {});
 
@@ -77,6 +103,120 @@ describe('register-tools profile routing', () => {
     ]);
   });
 
+  test('pins the tab workspace by probing workato_session_context on switch', async () => {
+    jest.spyOn(profileRegistry, 'getConnectedProfiles').mockReturnValue(['centium']);
+    jest.spyOn(profileRegistry, 'getActiveProfile').mockReturnValue('centium');
+    const sendRequest = jest
+      .spyOn(profileRegistry, 'sendRequest')
+      .mockImplementation(async (_profile: any, payload: any) => {
+        if (payload?.name === 'workato_session_context') {
+          return sessionContextReply(payload.args.tabId) as any;
+        }
+        return { status: 'success', data: { content: [{ type: 'text', text: 'ok' }] } } as any;
+      });
+    const router = createToolRouter();
+
+    const switched = await router.handleToolCall('workato_switch_profile', {
+      profile: 'centium',
+      tabId: 42,
+    });
+
+    expect((sendRequest.mock.calls[0][1] as any).name).toBe('workato_session_context');
+    expect((switched.content?.[0] as any).text).toContain('workspace 5150');
+
+    const listed = await router.handleToolCall('workato_list_profiles', {});
+    const payload = JSON.parse((listed.content?.[0] as any).text);
+    expect(payload.session_context).toMatchObject({
+      profile: 'centium',
+      tab_id: 42,
+      host: 'app.workato.com',
+      workspace_id: 5150,
+      environment: 'production',
+    });
+
+    // Every later Workato call carries the pinned tab AND the pinned workspace.
+    sendRequest.mockClear();
+    await router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
+    expect((sendRequest.mock.calls[0][1] as any).args).toEqual({
+      recipe_id: 1,
+      tabId: 42,
+      expected_context: {
+        host: 'app.workato.com',
+        workspace_id: 5150,
+        environment: 'production',
+      },
+    });
+  });
+
+  test('never falls back to another transport when a profile is pinned', async () => {
+    jest.spyOn(profileRegistry, 'getConnectedProfiles').mockReturnValue(['centium', 'bluBanyan']);
+    jest.spyOn(profileRegistry, 'sendRequest').mockImplementation(async (_p: any, payload: any) => {
+      if (payload?.name === 'workato_session_context') throw new Error('socket closed');
+      throw new Error('socket closed');
+    });
+    const nativeHost = jest
+      .spyOn(nativeMessagingHostInstance, 'sendRequestToExtensionAndWait')
+      .mockResolvedValue({ status: 'success', data: { content: [] } } as any);
+    const router = createToolRouter();
+
+    await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+    const result = await router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as any).text;
+    expect(text).toContain('pinned profile "centium"');
+    expect(text).toContain('bluBanyan');
+    expect(nativeHost).not.toHaveBeenCalled();
+  });
+
+  test('does not use the native host while any profile is connected', async () => {
+    jest.spyOn(profileRegistry, 'getConnectedProfiles').mockReturnValue(['centium']);
+    jest.spyOn(profileRegistry, 'getActiveProfile').mockReturnValue('centium');
+    jest.spyOn(profileRegistry, 'sendRequest').mockRejectedValue(new Error('ws down') as never);
+    const nativeHost = jest
+      .spyOn(nativeMessagingHostInstance, 'sendRequestToExtensionAndWait')
+      .mockResolvedValue({ status: 'success', data: { content: [] } } as any);
+    const router = createToolRouter();
+
+    const result = await router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
+
+    expect(result.isError).toBe(true);
+    expect((result.content?.[0] as any).text).toContain('bridge default profile "centium"');
+    expect(nativeHost).not.toHaveBeenCalled();
+  });
+
+  test('stamps the routed profile into the extension context block', async () => {
+    jest.spyOn(profileRegistry, 'getConnectedProfiles').mockReturnValue(['centium']);
+    jest.spyOn(profileRegistry, 'sendRequest').mockResolvedValue({
+      status: 'success',
+      data: {
+        content: [
+          { type: 'text', text: '{"recipe_id":1}' },
+          {
+            type: 'text',
+            text: '{"context":{"tab_id":42,"host":"app.workato.com","workspace_id":5150}}',
+          },
+        ],
+        isError: false,
+      },
+    } as never);
+    const router = createToolRouter();
+
+    await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+    const result = await router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
+
+    const blocks = result.content as any[];
+    expect(blocks).toHaveLength(2);
+    expect(JSON.parse(blocks[1].text).context).toEqual({
+      tab_id: 42,
+      host: 'app.workato.com',
+      workspace_id: 5150,
+      profile: 'centium',
+    });
+    // The tool payload block is untouched.
+    expect(blocks[0].text).toBe('{"recipe_id":1}');
+  });
+
   test('lets explicit tab or window targets override a pinned session tab id', async () => {
     jest.spyOn(profileRegistry, 'getConnectedProfiles').mockReturnValue(['centium']);
     const sendRequest = jest.spyOn(profileRegistry, 'sendRequest').mockResolvedValue({
@@ -86,6 +226,7 @@ describe('register-tools profile routing', () => {
     const router = createToolRouter();
 
     await router.handleToolCall('workato_switch_profile', { profile: 'centium', tabId: 42 });
+    sendRequest.mockClear();
     await router.handleToolCall('workato_whoami', { tabId: 7 });
     await router.handleToolCall('workato_ui_list_steps', { windowId: 3 });
 
@@ -195,6 +336,9 @@ describe('register-tools native orchestrator routing', () => {
         if (name === 'workato_recipe_status') {
           return text({ recipe_id: args.recipe_id, running: false, name: 'r' }) as any;
         }
+        if (name === 'workato_session_context') {
+          return sessionContextReply(args.tabId) as any;
+        }
         return text({ ok: true }) as any;
       });
   }
@@ -232,6 +376,32 @@ describe('register-tools native orchestrator routing', () => {
     const saveArgs = sendRequest.mock.calls[1][1] as any;
     expect(saveArgs.args.code.input.result_schema_json).toContain('je_count');
     expect(saveArgs.args.comment).toBe('schema refresh');
+  });
+
+  test('injects the pinned tab and workspace into every nested orchestrator call', async () => {
+    const sendRequest = stubExtension();
+    const router = createToolRouter();
+    await router.handleToolCall('workato_switch_profile', { profile: 'centium', tabId: 42 });
+    sendRequest.mockClear();
+
+    await router.handleToolCall('workato_callable_schema_set', {
+      recipe_id: 76902508,
+      results: [{ name: 'je_count', type: 'integer' }],
+    });
+
+    const nested = sendRequest.mock.calls.map((call: any) => call[1]);
+    expect(nested.map((call: any) => call.name)).toEqual([
+      'workato_pull_recipe',
+      'workato_ui_save_recipe_code',
+    ]);
+    for (const call of nested) {
+      expect(call.args.tabId).toBe(42);
+      expect(call.args.expected_context).toEqual({
+        host: 'app.workato.com',
+        workspace_id: 5150,
+        environment: 'production',
+      });
+    }
   });
 
   test('workato_recipe_save_with_dependents refuses rather than guessing dependents', async () => {
