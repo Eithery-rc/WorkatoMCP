@@ -382,6 +382,82 @@ describe('buildValidationReport', () => {
     expect(report.valid).toBe(false);
     expect(report.errors.some((error) => error.code === 'structure')).toBe(true);
   });
+
+  test('a non-hex `as` on an existing step is a warning, not an error', () => {
+    // Workato accepts anchors like "tjcall01" on a saved recipe. Calling a
+    // working recipe invalid over one is a false alarm the caller cannot fix.
+    const code = cleanCode();
+    code.block[1].as = 'tjcall01';
+    code.block[1].input.message = 'no datapills here';
+    const report = buildValidationReport({ code, config: cleanConfig() });
+    expect(report.valid).toBe(true);
+    expect(report.errors).toEqual([]);
+    expect(report.warnings.some((warning) => warning.code === 'structure')).toBe(true);
+  });
+
+  test('a catch reading its own error is not a forward reference', () => {
+    const code = cleanCode();
+    code.block.push({
+      number: 3,
+      keyword: 'try',
+      uuid: '55555555-5555-4555-8555-555555555555',
+      input: {},
+      block: [
+        {
+          number: 4,
+          keyword: 'catch',
+          as: 'cc11dd22',
+          uuid: '66666666-6666-4666-8666-666666666666',
+          input: {
+            message:
+              '#{_dp(\'{"pill_type":"output","provider":"catch","line":"cc11dd22","path":["message"]}\')}',
+          },
+          block: [],
+        },
+      ],
+    });
+    const findings = checkDatapillReferences(code);
+    expect(findings.filter((f) => f.code === 'datapill_not_upstream')).toEqual([]);
+  });
+
+  test('a catch needs no extended_output_schema for its own message', () => {
+    // The catch publishes message/error implicitly; it never carries a schema,
+    // so demanding one produced a finding no edit could ever clear.
+    const code = cleanCode();
+    code.block.push({
+      number: 3,
+      keyword: 'try',
+      uuid: '55555555-5555-4555-8555-555555555555',
+      input: {},
+      block: [
+        {
+          number: 4,
+          keyword: 'catch',
+          as: 'cc11dd22',
+          uuid: '66666666-6666-4666-8666-666666666666',
+          input: {},
+          block: [
+            {
+              number: 5,
+              keyword: 'action',
+              provider: 'logger',
+              name: 'log_message',
+              as: 'ee33ff44',
+              uuid: '77777777-7777-4777-8777-777777777777',
+              input: {
+                message:
+                  '#{_dp(\'{"pill_type":"output","provider":"catch","line":"cc11dd22","path":["message"]}\')}',
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const findings = checkSchemas(code).filter(
+      (f) => f.code === 'datapill_target_no_output_schema',
+    );
+    expect(findings).toEqual([]);
+  });
 });
 
 describe('workato_recipe_validate handler', () => {
