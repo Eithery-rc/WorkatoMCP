@@ -7,6 +7,12 @@ import {
   workatoNotFoundHint,
   WorkatoDispatchError,
 } from './tab-dispatch';
+import {
+  describeStartError,
+  fetchRecipeActivationState,
+  normalizeStartError,
+  type NormalizedConfigError,
+} from './recipe-state';
 
 /**
  * workato_recipe_status — the cheap post-write verification read.
@@ -129,6 +135,20 @@ export async function fetchRecipeStatus(
   return result.status;
 }
 
+/**
+ * Activation record from /web_api/recipes/<id>/state.json.
+ *
+ * `state` is Workato's activation state (stopped, permanently_stopped,
+ * activating). error_message and config_errors are present only when a start
+ * attempt was refused; a recipe that was never started reports no error, which
+ * is not the same as "this recipe can start".
+ */
+export interface RecipeActivation {
+  state: string;
+  error_message?: string;
+  config_errors?: NormalizedConfigError[];
+}
+
 class WorkatoRecipeStatusTool extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.WORKATO.RECIPE_STATUS;
 
@@ -139,8 +159,37 @@ class WorkatoRecipeStatusTool extends BaseBrowserToolExecutor {
       }
       const tab = await findWorkatoTab(args.tabId);
       const status = await fetchRecipeStatus(tab.tabId, args.recipe_id);
+
+      // One extra small GET: the last activation attempt's error. It is the only
+      // record of why a start did not take, and /recipes/<id>.json does not have it.
+      let activation: RecipeActivation | undefined;
+      let activationUnavailable: string | undefined;
+      try {
+        const raw = await fetchRecipeActivationState(tab.tabId, args.recipe_id);
+        const startError = normalizeStartError(raw);
+        activation = { state: raw.state };
+        if (startError) {
+          if (startError.message !== undefined) {
+            activation.error_message = startError.message;
+          } else if (startError.config_errors.length === 0) {
+            // requirements_errors / param_errors / code_errors only: keep them visible.
+            activation.error_message = describeStartError(startError);
+          }
+          if (startError.config_errors.length > 0) {
+            activation.config_errors = startError.config_errors;
+          }
+        }
+      } catch (err) {
+        activationUnavailable = err instanceof Error ? err.message : String(err);
+      }
+
+      const payload: Record<string, unknown> = { ...status };
+      if (activation) payload.activation = activation;
+      if (activationUnavailable !== undefined)
+        payload.activation_unavailable = activationUnavailable;
+
       return {
-        content: [{ type: 'text', text: JSON.stringify(status) }],
+        content: [{ type: 'text', text: JSON.stringify(payload) }],
         isError: false,
       };
     } catch (err) {
