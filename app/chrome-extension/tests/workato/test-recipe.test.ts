@@ -222,8 +222,48 @@ describe('assessTestWriteGate', () => {
     expect(gate).toEqual({
       connection_backed: [],
       unbound_step_providers: [],
+      unbound_providers: [],
       requires_allow_writes: false,
     });
+  });
+
+  it('reports a config entry with no account_id for a provider that needs one', () => {
+    // The shape remove_step leaves behind: salesforce has an entry, no
+    // account_id, and a step still uses it. Workato refuses the run itself.
+    const config = JSON.stringify([
+      { keyword: 'application', name: 'logger', provider: 'logger', skip_validation: false },
+      {
+        keyword: 'application',
+        name: 'salesforce',
+        provider: 'salesforce',
+        skip_validation: false,
+      },
+    ]);
+    const gate = assessTestWriteGate(config, SALESFORCE_CODE);
+    expect(gate.unbound_providers).toEqual(['salesforce']);
+    expect(gate.connection_backed).toEqual([]);
+    // netsuite has no entry at all, which is the pre-existing gate.
+    expect(gate.unbound_step_providers).toEqual(['netsuite']);
+  });
+
+  it('does not report an account-less entry for a connectionless provider', () => {
+    const gate = assessTestWriteGate(CONNECTIONLESS_CONFIG, RECIPE_FUNCTION_CODE);
+    expect(gate.unbound_providers).toEqual([]);
+  });
+
+  it('does not report an account-less entry no step uses', () => {
+    const config = JSON.stringify([
+      { keyword: 'application', name: 'logger', provider: 'logger', skip_validation: false },
+      {
+        keyword: 'application',
+        name: 'salesforce',
+        provider: 'salesforce',
+        skip_validation: false,
+      },
+    ]);
+    // Nothing in this tree is a salesforce step, so the entry is dead weight.
+    const gate = assessTestWriteGate(config, RECIPE_FUNCTION_CODE);
+    expect(gate.unbound_providers).toEqual([]);
   });
 
   it('requires allow_writes when a config entry carries an account_id', () => {

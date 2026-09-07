@@ -73,6 +73,12 @@ export interface WriteGateAssessment {
   connection_backed: string[];
   /** Step providers with no config entry at all: treated as connection-backed. */
   unbound_step_providers: string[];
+  /**
+   * Providers a step uses whose config entry exists but carries no account_id,
+   * and which are not connectionless. Workato refuses the run itself; this
+   * refuses it before the HTTP call and says which connection is missing.
+   */
+  unbound_providers: string[];
   requires_allow_writes: boolean;
 }
 
@@ -293,28 +299,59 @@ export function collectStepProviders(code: unknown): string[] {
 }
 
 /**
+ * Adapters observed to carry no `account_id` in a recipe config because they
+ * need no connection. Kept in step with CONNECTIONLESS_PROVIDERS in the
+ * bridge's workato-recipe-engine.ts.
+ */
+export const CONNECTIONLESS_PROVIDERS: ReadonlySet<string> = new Set([
+  'clock',
+  'csv_parser',
+  'email',
+  'logger',
+  'py_eval',
+  'workato_pub_sub',
+  'workato_recipe_function',
+  'workato_variable',
+]);
+
+/**
  * A test run executes the recipe's real steps, so any connection-backed provider
  * means real records can change. Connection-backed is read from version.config:
  * an entry carries `account_id` only when its provider needs a connection.
+ *
+ * The absence of an account_id is NOT proof of connectionlessness. A config
+ * entry left behind by a removed step, or one whose connection was never bound,
+ * carries no account_id either, and treating that as connectionless sent runs
+ * Workato then refused itself. Such an entry is reported in unbound_providers.
  */
 export function assessTestWriteGate(configRaw: unknown, code: unknown): WriteGateAssessment {
   const entries = parseRecipeConfig(configRaw);
   const connection_backed: string[] = [];
   const known: string[] = [];
+  const unboundConfig: string[] = [];
   for (const entry of entries) {
     const provider = typeof entry.provider === 'string' ? entry.provider : '';
     if (provider === '') continue;
     if (known.indexOf(provider) === -1) known.push(provider);
     const accountId = entry.account_id;
     const bound = typeof accountId === 'number' ? Number.isFinite(accountId) : accountId != null;
-    if (bound && connection_backed.indexOf(provider) === -1) connection_backed.push(provider);
+    if (bound) {
+      if (connection_backed.indexOf(provider) === -1) connection_backed.push(provider);
+    } else if (!CONNECTIONLESS_PROVIDERS.has(provider) && unboundConfig.indexOf(provider) === -1) {
+      unboundConfig.push(provider);
+    }
   }
-  const unbound_step_providers = collectStepProviders(code).filter(
-    (provider) => known.indexOf(provider) === -1,
+  const stepProviders = collectStepProviders(code);
+  const unbound_step_providers = stepProviders.filter((provider) => known.indexOf(provider) === -1);
+  // Only a provider a step actually uses can break the run. A leftover entry
+  // for a provider no step uses is dead weight, not a blocker.
+  const unbound_providers = unboundConfig.filter(
+    (provider) => stepProviders.indexOf(provider) !== -1,
   );
   return {
     connection_backed,
     unbound_step_providers,
+    unbound_providers,
     requires_allow_writes: connection_backed.length > 0 || unbound_step_providers.length > 0,
   };
 }
@@ -864,6 +901,18 @@ class WorkatoTestRecipeTool extends BaseBrowserToolExecutor {
 
     // Write gate BEFORE any HTTP: a test run executes the recipe's real steps.
     const gate = assessTestWriteGate(context.config, context.code);
+    // Workato refuses this run with "account_id can't be blank" after the
+    // request has already gone out. Refuse it here, naming the provider.
+    if (gate.unbound_providers.length > 0) {
+      const named = gate.unbound_providers.join(', ');
+      return createErrorResponse(
+        `WorkatoUnboundConnection: recipe ${recipeId} uses provider ${named}, which needs a ` +
+          'connection, and the recipe config carries no account_id for it. Workato refuses the ' +
+          'run. These tools cannot create a connection: ask the user to create one at ' +
+          `app.workato.com/connections/new (adapter ${gate.unbound_providers[0]}) and tell you ` +
+          'its name, then bind it with workato_recipe_apply(bind_connection). Nothing was sent.',
+      );
+    }
     if (gate.requires_allow_writes && args.allow_writes !== true) {
       const named = gate.connection_backed.concat(gate.unbound_step_providers).join(', ');
       return createErrorResponse(
