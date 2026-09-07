@@ -95,6 +95,39 @@ describe('searchableValues', () => {
     const loop = sampleCode().block![1];
     expect(searchableValues(loop, 'all').map((v) => v.path)).toContain('source');
   });
+
+  it('includes the callee name of a call_recipe step, which lives outside input', () => {
+    // input.flow_id is the id; the NAME exists only in dynamicPickListSelection.
+    const call: RawNode = {
+      number: 4,
+      keyword: 'action',
+      provider: 'workato_recipe_function',
+      name: 'call_recipe',
+      as: 'tjexp01',
+      input: { flow_id: '76902508', parameters: { DryRun: 'true' } },
+      dynamicPickListSelection: { flow_id: 'Time Journal Engine (callable)' },
+    };
+    const values = searchableValues(call, 'all');
+    expect(values.map((v) => v.path)).toContain('dynamicPickListSelection.flow_id');
+    const hit = grepRecipeTree(call, matcher('Time Journal Engine'));
+    expect(hit.matches.map((m) => m.path)).toEqual(['dynamicPickListSelection.flow_id']);
+  });
+
+  it('includes the job report columns on the trigger node', () => {
+    const trigger: RawNode = {
+      number: 0,
+      keyword: 'trigger',
+      provider: 'clock',
+      as: 'trigger00',
+      input: { interval: 'daily' },
+      job_report_schema: [{ name: 'custom_column_0', label: 'Marker code' }],
+      job_report_config: { custom_column_0: 'GIRAFFE-4412 static' },
+    };
+    const paths = searchableValues(trigger, 'all').map((v) => v.path);
+    expect(paths).toContain('job_report_schema[0].label');
+    expect(paths).toContain('job_report_config.custom_column_0');
+    expect(grepRecipeTree(trigger, matcher('GIRAFFE-4412')).total_matches).toBe(1);
+  });
 });
 
 describe('grepRecipeTree', () => {

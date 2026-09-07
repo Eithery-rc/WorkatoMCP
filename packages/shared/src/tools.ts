@@ -1704,9 +1704,10 @@ export const TOOL_SCHEMAS: Tool[] = [
           enum: ['input', 'all'],
           description:
             "Where to look. 'all' (default) covers step input (conditions included), " +
-            'titles, descriptions, comments, the foreach source and the extended ' +
-            "schemas. 'input' searches only the configured input, which is the fastest " +
-            'way to find a mapping.',
+            'titles, descriptions, comments, the foreach source, the extended schemas, ' +
+            "the picker selections that hold a called recipe's NAME, and the job report " +
+            "columns on the trigger. 'input' searches only the configured input, which " +
+            'is the fastest way to find a mapping.',
         },
         max_matches: {
           type: 'number',
