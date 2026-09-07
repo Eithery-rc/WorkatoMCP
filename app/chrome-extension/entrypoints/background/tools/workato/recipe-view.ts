@@ -138,6 +138,123 @@ export interface FieldEntry {
   optional: boolean;
   control_type: string;
   io: 'in' | 'out';
+  /**
+   * Where this field came from, present only when a step view merged the
+   * adapter's own field list into the recipe's:
+   *   'dynamic': declared on the step (extended_input_schema)
+   *   'static':  declared by the adapter, absent from the step
+   *   'both':    declared in both places
+   * Absent when no merge happened, which is the common case.
+   */
+  provenance?: FieldProvenance;
+}
+
+export type FieldProvenance = 'static' | 'dynamic' | 'both';
+
+/**
+ * One adapter field as `workato_adapter_meta` slims it. Declared structurally
+ * so recipe-view does not depend on adapter-meta (the fetch lives in the tool
+ * layer, and the merge below must stay a pure, testable function).
+ */
+export interface StaticFieldSource {
+  name?: string;
+  label?: string;
+  type?: string;
+  control_type?: string;
+  optional?: boolean;
+  /** Item type of an array field: `of: 'object'` means the items are objects. */
+  of?: string;
+  properties?: StaticFieldSource[];
+}
+
+/** The adapter's static input fields for one operation, plus what they miss. */
+export interface StaticFieldSet {
+  fields: FieldEntry[];
+  /**
+   * False when the adapter declares `extends_input_schema` for this operation:
+   * the real field list is derived per connection/object, so the static list is
+   * a floor, not the whole set.
+   */
+  complete: boolean;
+}
+
+/** `<provider>/<action name>` -> that operation's static input fields. */
+export type StaticFieldIndex = Record<string, StaticFieldSet>;
+
+/** The key `StaticFieldIndex` is built and looked up with. */
+export function staticFieldKey(provider: string, name: string): string {
+  return `${provider}/${name}`;
+}
+
+/**
+ * Flatten an adapter's slim input fields into the same dotted-path shape
+ * `flattenSchema` produces for a step's own schema, so the two lists merge.
+ */
+export function flattenAdapterFields(
+  entries: StaticFieldSource[] | undefined,
+  parentPath = '',
+): FieldEntry[] {
+  if (!Array.isArray(entries)) return [];
+  const fields: FieldEntry[] = [];
+  for (const entry of entries) {
+    const name = typeof entry?.name === 'string' ? entry.name : '';
+    if (!name) continue;
+    const path = parentPath ? `${parentPath}.${name}` : name;
+    fields.push({
+      path,
+      name,
+      label: typeof entry.label === 'string' ? entry.label : '',
+      type: typeof entry.type === 'string' ? entry.type : '',
+      optional: entry.optional !== false,
+      control_type: typeof entry.control_type === 'string' ? entry.control_type : '',
+      io: 'in',
+    });
+    if (Array.isArray(entry.properties) && entry.properties.length > 0) {
+      const isArray = entry.type === 'array' || entry.of === 'object';
+      fields.push(...flattenAdapterFields(entry.properties, isArray ? `${path}[]` : path));
+    }
+  }
+  return fields;
+}
+
+/**
+ * Merge the step's own field list with the adapter's static one.
+ *
+ * The step's list wins on every field it declares (it is what Workato actually
+ * renders and validates against), keeps its order, and is marked 'both' when
+ * the adapter declares the same path. Fields only the adapter knows about are
+ * appended as 'static': a step whose `extended_input_schema` is empty has no
+ * other way of telling the caller what it can be given.
+ */
+export function mergeFieldSources(
+  dynamic: readonly FieldEntry[],
+  staticFields: readonly FieldEntry[],
+): FieldEntry[] {
+  const staticByPath = new Map<string, FieldEntry>();
+  for (const field of staticFields) {
+    if (!staticByPath.has(field.path)) staticByPath.set(field.path, field);
+  }
+  const seen = new Set<string>();
+  const merged: FieldEntry[] = [];
+  for (const field of dynamic) {
+    seen.add(field.path);
+    const fromAdapter = staticByPath.get(field.path);
+    merged.push({
+      ...field,
+      // Fill only what the step left blank: the step's own values are the
+      // authoritative ones.
+      label: field.label || (fromAdapter?.label ?? ''),
+      type: field.type || (fromAdapter?.type ?? ''),
+      control_type: field.control_type || (fromAdapter?.control_type ?? ''),
+      provenance: fromAdapter ? 'both' : 'dynamic',
+    });
+  }
+  for (const field of staticFields) {
+    if (seen.has(field.path)) continue;
+    seen.add(field.path);
+    merged.push({ ...field, provenance: 'static' });
+  }
+  return merged;
 }
 
 /** How a step's input leaf is wired. */
@@ -181,6 +298,12 @@ export interface StepView {
   fields?: FieldEntry[];
   total_fields?: number;
   fields_truncated?: boolean;
+  /**
+   * True when `fields` is the whole settable input surface of this step.
+   * False when the step declares no schema and the adapter's static list could
+   * not be read, or when the adapter derives its fields per connection/object.
+   */
+  fields_complete?: boolean;
   available_datapills?: DatapillRef[];
   total_datapills?: number;
   datapills_truncated?: boolean;
@@ -761,6 +884,27 @@ export interface InspectStepOptions extends CompactOptions {
   versionNo?: number;
   /** Emit the continuation cursor. Multi-step reads build their own. */
   emitCursor?: boolean;
+  /**
+   * Adapter static input fields, keyed by `staticFieldKey(provider, name)`.
+   * The tool layer fetches these (one adapter-meta read per call, only when
+   * `include` asks for fields and a step declares no schema of its own) and
+   * passes them in; this module never fetches.
+   */
+  staticFields?: StaticFieldIndex;
+}
+
+/**
+ * The adapter static fields for this node, or null when there are none to
+ * merge: the node is not an app action, or the tool layer did not read (or
+ * could not read) that operation's meta.
+ */
+function lookupStaticFields(node: RawNode, opts: InspectStepOptions): StaticFieldSet | null {
+  const index = opts.staticFields;
+  if (!index) return null;
+  const provider = typeof node.provider === 'string' ? node.provider : '';
+  const name = typeof node.name === 'string' ? node.name : '';
+  if (!provider || !name) return null;
+  return index[staticFieldKey(provider, name)] ?? null;
 }
 
 function matchesNeedle(needle: string | null, ...values: string[]): boolean {
@@ -806,11 +950,19 @@ export function inspectStep(
   const allMappings = sections.has('mappings')
     ? flattenInput(node.input ?? {}, '', mappingOpts).filter((m) => matchesNeedle(needle, m.path))
     : [];
-  const allFields = sections.has('fields')
-    ? flattenSchema(node.extended_input_schema, 'in').filter((f) =>
-        matchesNeedle(needle, f.name, f.label),
-      )
+  const dynamicFields = sections.has('fields')
+    ? flattenSchema(node.extended_input_schema, 'in')
     : [];
+  // A step with no schema of its own says nothing about what it accepts. When
+  // the tool layer supplied the adapter's static field list for this exact
+  // operation, merge it in and say where each field came from.
+  const staticSet =
+    sections.has('fields') && dynamicFields.length === 0 ? lookupStaticFields(node, opts) : null;
+  const mergedFields = staticSet
+    ? mergeFieldSources(dynamicFields, staticSet.fields)
+    : dynamicFields;
+  const fieldsComplete = dynamicFields.length > 0 ? true : staticSet !== null && staticSet.complete;
+  const allFields = mergedFields.filter((f) => matchesNeedle(needle, f.name, f.label));
   const targetNumber = typeof node.number === 'number' ? node.number : Number.POSITIVE_INFINITY;
   const allDatapills = sections.has('datapills')
     ? collectUpstreamDatapills(code, targetNumber, node).filter((d) =>
@@ -868,6 +1020,7 @@ export function inspectStep(
     view.fields = packed.lists.fields.items as FieldEntry[];
     view.total_fields = packed.lists.fields.total;
     view.fields_truncated = packed.lists.fields.next_offset !== null;
+    view.fields_complete = fieldsComplete;
   }
   if (sections.has('datapills')) {
     view.available_datapills = packed.lists.available_datapills.items as DatapillRef[];

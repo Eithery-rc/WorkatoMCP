@@ -47,7 +47,7 @@ interface AdapterMetaArgs {
 }
 
 /** One config field as the editor sees it. */
-interface SlimField {
+export interface SlimField {
   name: string;
   type?: string;
   control_type?: string;
@@ -88,7 +88,7 @@ const MAX_FIELD_DEPTH = 3;
 const MAX_OPTIONS = 40;
 
 /** One trigger or action, slimmed to what an agent needs to write a step. */
-interface SlimOperation {
+export interface SlimOperation {
   name: string;
   kind: 'trigger' | 'action';
   title?: string;
@@ -126,7 +126,7 @@ interface InPageResult {
  * DO NOT add async/await (WXT/Vite rewrites it into a hoisted helper that does
  * not survive Function.prototype.toString; see pull-recipe.ts).
  */
-function fetchAdapterMetaInPage(names: string[]): Promise<InPageResult> {
+export function fetchAdapterMetaInPage(names: string[]): Promise<InPageResult> {
   const url = `/integrations/meta?name=${encodeURIComponent(names.join(','))}&cacheKey=x`;
   return fetch(url, {
     credentials: 'include',
@@ -436,6 +436,33 @@ export function buildAdapterView(
       'lists, or field_grep:"schema" to find fields by name/label across every operation.';
   }
   return view;
+}
+
+/**
+ * The static input fields one adapter operation declares, for a caller that
+ * already holds a raw meta document.
+ *
+ * Used by `workato_pull_recipe` to answer "what can this step be given?" for a
+ * step whose own `extended_input_schema` is empty. Returns null when the meta
+ * does not describe that adapter or that operation at all, so the caller can
+ * report the gap instead of an empty field list.
+ */
+export function findOperationInputFields(
+  meta: unknown,
+  adapter: string,
+  operation: string,
+): { fields: SlimField[]; extends_input_schema: boolean } | null {
+  const view = buildAdapterView(adapter, meta, { operation, includeHelp: false });
+  if (!view.found) return null;
+  const wanted = operation.toLowerCase();
+  const match = [...(view.actions ?? []), ...(view.triggers ?? [])].find(
+    (op) => op.name.toLowerCase() === wanted,
+  );
+  if (!match) return null;
+  return {
+    fields: match.input ?? [],
+    extends_input_schema: match.extends_input_schema === true,
+  };
 }
 
 /** Raw-mode cap. Past this the caller is told to use out_file instead. */
