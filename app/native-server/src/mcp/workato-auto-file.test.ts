@@ -41,6 +41,9 @@ describe('isAutoFileEligible', () => {
   test('claims workato tools and chrome_screenshot, never an existing out_file tool', () => {
     expect(isAutoFileEligible('workato_job_trace')).toBe(true);
     expect(isAutoFileEligible('chrome_screenshot')).toBe(true);
+    // Both can return a large document and neither declares its own out_file.
+    expect(isAutoFileEligible('workato_recipe_version_diff')).toBe(true);
+    expect(isAutoFileEligible('workato_recipe_status')).toBe(true);
     expect(isAutoFileEligible('workato_pull_recipe')).toBe(false);
     expect(isAutoFileEligible('workato_api_request')).toBe(false);
     expect(isAutoFileEligible('workato_adapter_meta')).toBe(false);
@@ -191,6 +194,31 @@ describe('applyAutoFile text results', () => {
     expect(fs.readFileSync(outFile, 'utf8')).toBe(text);
     expect(summary.content_type).toBe('text/plain');
     expect(summary.item_counts).toEqual({ recipes: 2 });
+  });
+
+  test('copies the search coverage keys into the summary', () => {
+    const outFile = path.join(tmpDir, 'jobs.json');
+    const { plan } = prepareAutoFileCall('workato_list_jobs', { out_file: outFile });
+    const payload = {
+      jobs: [{ id: 'j-1' }],
+      search_mode: 'local',
+      coverage: { scanned: 500, matched: 1, complete: false },
+      truncated: false,
+      next_cursor: 'j-9',
+    };
+
+    const result = applyAutoFile(
+      'workato_list_jobs',
+      plan,
+      textResult(JSON.stringify(payload)),
+    ) as any;
+    const summary = parseSummary(result);
+
+    expect(summary.search_mode).toBe('local');
+    expect(summary.coverage).toEqual({ scanned: 500, matched: 1, complete: false });
+    // Preserve false: "not truncated" is information, not noise.
+    expect(summary.truncated).toBe(false);
+    expect(summary.next_cursor).toBe('j-9');
   });
 
   test('never writes for a failed call', () => {
