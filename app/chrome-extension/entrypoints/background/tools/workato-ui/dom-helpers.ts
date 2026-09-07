@@ -256,6 +256,23 @@ export async function getTabUrl(tabId: number): Promise<string> {
   return tab.url ?? '';
 }
 
+/**
+ * The recipe id a Workato editor/viewer URL points at, or null.
+ *
+ * Workato recipe URLs look like `/recipes/12345`, `/recipes/12345/edit`,
+ * `/recipes/12345-some-slug/edit` and, inside a project, `/recipes/12345/jobs`.
+ * The UI tools that drive the editor take no recipe_id, so this is how a save
+ * made through the editor learns which recipe it changed. A URL that names no
+ * recipe returns null rather than a guess.
+ */
+export function recipeIdFromUrl(url: string): number | null {
+  if (typeof url !== 'string' || url === '') return null;
+  const match = /\/recipes\/(\d+)/.exec(url);
+  if (!match) return null;
+  const id = Number(match[1]);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
 // ---------------------------------------------------------------------------
 // Workato DOM snippets
 // ---------------------------------------------------------------------------

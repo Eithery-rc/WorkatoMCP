@@ -30,6 +30,7 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { ensureAttached } from '../browser/snapshot/debugger-session';
 import { evaluateInPage, getTabUrl, resolveTabId } from '../workato-ui/dom-helpers';
+import { assertExpectedContext } from '../workato/session-context';
 import type {
   DataTableAddColumnArgs,
   DataTableCreateArgs,
@@ -593,6 +594,7 @@ class WorkatoDataTableCreateImpl extends BaseBrowserToolExecutor {
       }
 
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
       const url = await getTabUrl(tabId);
       if (!ensureWorkato(url)) {
@@ -694,6 +696,7 @@ class WorkatoDataTableRenameImpl extends BaseBrowserToolExecutor {
         );
       }
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
       const url = await getTabUrl(tabId);
       if (!ensureWorkato(url)) {
@@ -777,6 +780,7 @@ class WorkatoDataTableDeleteImpl extends BaseBrowserToolExecutor {
         );
       }
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
       const url = await getTabUrl(tabId);
       if (!ensureWorkato(url)) {
@@ -890,6 +894,7 @@ class WorkatoDataTableAddColumnImpl extends BaseBrowserToolExecutor {
       }
 
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
       const url = await getTabUrl(tabId);
       if (!ensureWorkato(url)) {
@@ -1048,6 +1053,7 @@ class WorkatoDataTableUpdateColumnImpl extends BaseBrowserToolExecutor {
       }
 
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
       const url = await getTabUrl(tabId);
       if (!ensureWorkato(url)) {
@@ -1172,6 +1178,7 @@ class WorkatoDataTableDeleteColumnImpl extends BaseBrowserToolExecutor {
       }
 
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
       const url = await getTabUrl(tabId);
       if (!ensureWorkato(url)) {
@@ -1415,6 +1422,7 @@ class WorkatoDataTableRowCreateImpl extends BaseBrowserToolExecutor {
         );
       }
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
       const url = await getTabUrl(tabId);
       if (!ensureWorkato(url)) {
@@ -1524,6 +1532,7 @@ class WorkatoDataTableRowUpdateImpl extends BaseBrowserToolExecutor {
         );
       }
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
       const url = await getTabUrl(tabId);
       if (!ensureWorkato(url)) {
@@ -1622,6 +1631,7 @@ class WorkatoDataTableRowDeleteImpl extends BaseBrowserToolExecutor {
       }
 
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
       const url = await getTabUrl(tabId);
       if (!ensureWorkato(url)) {

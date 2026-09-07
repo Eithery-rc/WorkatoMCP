@@ -19,7 +19,9 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { ensureAttached } from '../browser/snapshot/debugger-session';
 import { evaluateInPage, getTabUrl, resolveTabId } from '../workato-ui/dom-helpers';
+import { assertExpectedContext } from '../workato/session-context';
 import type {
+  ExpectedTabContext,
   LookupTableCreateArgs,
   LookupTableDeleteArgs,
   LookupTableGetArgs,
@@ -465,6 +467,7 @@ class WorkatoLookupTableCreateImpl extends BaseBrowserToolExecutor {
     console.log('[workato-lookup] table_create requested:', args);
     try {
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
 
       const url = await getTabUrl(tabId);
@@ -580,6 +583,7 @@ class WorkatoLookupTableRenameImpl extends BaseBrowserToolExecutor {
         );
       }
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
 
       const url = await getTabUrl(tabId);
@@ -678,6 +682,7 @@ class WorkatoLookupTableSetColumnsImpl extends BaseBrowserToolExecutor {
       }
 
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
 
       const url = await getTabUrl(tabId);
@@ -763,6 +768,7 @@ class WorkatoLookupTableDeleteImpl extends BaseBrowserToolExecutor {
         );
       }
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
 
       const url = await getTabUrl(tabId);
@@ -870,6 +876,7 @@ class WorkatoLookupTableRowCreateImpl extends BaseBrowserToolExecutor {
         );
       }
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
 
       const url = await getTabUrl(tabId);
@@ -1010,6 +1017,7 @@ class WorkatoLookupTableRowUpdateImpl extends BaseBrowserToolExecutor {
         );
       }
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
 
       const url = await getTabUrl(tabId);
@@ -1223,6 +1231,7 @@ class WorkatoLookupTableRowUpsertImpl extends BaseBrowserToolExecutor {
         );
       }
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
 
       const url = await getTabUrl(tabId);
@@ -1331,6 +1340,7 @@ class WorkatoLookupTableRowDeleteImpl extends BaseBrowserToolExecutor {
         );
       }
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
 
       const url = await getTabUrl(tabId);
@@ -1544,6 +1554,7 @@ class WorkatoLookupTableImportCsvImpl extends BaseBrowserToolExecutor {
     filename?: string;
     tabId?: number;
     windowId?: number;
+    expected_context?: ExpectedTabContext;
   }): Promise<ToolResult> {
     const mode = args?.mode === 'replace' ? 'replace' : 'append';
     const skipFirstRow = args?.skip_first_row === true;
@@ -1599,6 +1610,7 @@ class WorkatoLookupTableImportCsvImpl extends BaseBrowserToolExecutor {
       }
 
       const tabId = await resolveTabId(args);
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
 
       const url = await getTabUrl(tabId);

@@ -331,8 +331,13 @@ export interface RawMetaResponse {
     job?: {
       id?: string | number;
       status?: string;
+      title?: string;
       started_at?: string;
       completed_at?: string;
+      /** Workato erased this job's data under the retention policy. */
+      erased?: boolean;
+      /** The recipe ran under zero data retention, so nothing was ever stored. */
+      zero_retention?: boolean;
       error?: {
         message?: string;
         error_type?: string;
@@ -384,6 +389,63 @@ export interface SlimTrace {
   }>;
   lines_truncated: boolean;
   kms_error: boolean;
+}
+
+/**
+ * What an erased job answers instead of a trace.
+ *
+ * Workato keeps the job row after its data is erased: the list still shows the
+ * job, `/jobs/<id>` still returns its header, and `line_details` comes back as
+ * an empty array. Rendering that as a zero-step trace tells the caller the job
+ * did nothing, which is the opposite of the truth. This shape says the data is
+ * unavailable, and why.
+ */
+export interface ErasedTrace {
+  job_id: string | number;
+  erased: true;
+  zero_retention?: boolean;
+  note: string;
+  recipe: { id: number; name: string; version_no: number };
+  status: string;
+  title?: string;
+  started_at: string;
+  completed_at: string;
+}
+
+/** Message returned for every erased job. */
+export const ERASED_TRACE_NOTE = 'job data was erased by retention; line details are unavailable';
+
+/**
+ * True when the job metadata says its data is gone. `zero_retention` alone is
+ * not enough: it describes the recipe's policy, and Workato sets `erased` on
+ * the job once the data has actually been removed.
+ */
+export function isErasedJob(meta: RawMetaResponse): boolean {
+  return meta.result?.job?.erased === true;
+}
+
+/** The erased-job answer: the job header plus an explicit reason, no steps. */
+export function buildErasedTrace(jobId: string | number, meta: RawMetaResponse): ErasedTrace {
+  const job = meta.result?.job ?? {};
+  const recipe = meta.result?.recipe ?? {};
+  const payload: ErasedTrace = {
+    job_id: jobId,
+    erased: true,
+    note: ERASED_TRACE_NOTE,
+    recipe: {
+      id: Number(recipe.id ?? 0),
+      name: String(recipe.name ?? ''),
+      version_no: Number(recipe.version_no ?? 0),
+    },
+    status: String(job.status ?? 'unknown'),
+    started_at: job.started_at ?? '',
+    completed_at: job.completed_at ?? '',
+  };
+  // Preserve false: "this recipe does retain data and this job was swept"
+  // reads differently from "nothing was ever stored".
+  if (typeof job.zero_retention === 'boolean') payload.zero_retention = job.zero_retention;
+  if (typeof job.title === 'string' && job.title !== '') payload.title = job.title;
+  return payload;
 }
 
 export function buildSlimTrace(

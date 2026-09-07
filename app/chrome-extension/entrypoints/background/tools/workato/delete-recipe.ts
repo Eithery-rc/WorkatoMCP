@@ -3,6 +3,7 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
 import { assertExpectedContext, type ExpectedTabContext } from './session-context';
+import { invalidateRecipeSnapshot } from './recipe-snapshot';
 import { fetchRecipeStatusInPage } from './recipe-status';
 
 /**
@@ -176,6 +177,9 @@ class WorkatoDeleteRecipeTool extends BaseBrowserToolExecutor {
               : ''),
         );
       }
+
+      // The recipe is gone: nothing cached about it can ever be served again.
+      invalidateRecipeSnapshot(args.recipe_id);
 
       const payload: Record<string, unknown> = {
         recipe_id: args.recipe_id,

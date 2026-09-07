@@ -1,13 +1,7 @@
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
-import {
-  findWorkatoTab,
-  isWorkatoAppHost,
-  runInWorkatoTab,
-  WORKATO_URL_PATTERNS,
-  WorkatoDispatchError,
-} from './tab-dispatch';
+import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
 import { stripConnectionSecrets } from './strip-secrets';
 
 /**
@@ -528,30 +522,6 @@ export async function fetchRecipeConnections(
   return projectRecipeConnections(raw);
 }
 
-/** Resolve the target tab, honouring an explicit tabId first and windowId second. */
-async function resolveTab(tabId?: number, windowId?: number) {
-  if (typeof tabId === 'number') return findWorkatoTab(tabId);
-  if (typeof windowId === 'number') {
-    const tabs = await chrome.tabs.query({ windowId, url: WORKATO_URL_PATTERNS });
-    const match = tabs.find(
-      (t) =>
-        typeof t.id === 'number' &&
-        typeof t.url === 'string' &&
-        isWorkatoAppHost(new URL(t.url).host),
-    );
-    if (!match || typeof match.id !== 'number') {
-      throw new WorkatoDispatchError(
-        'TabNotFound',
-        `No logged-in Workato app tab in window ${windowId}. Open https://app.workato.com there, ` +
-          'or pass tabId.',
-        { windowId },
-      );
-    }
-    return findWorkatoTab(match.id);
-  }
-  return findWorkatoTab();
-}
-
 class WorkatoRecipeConnectionsTool extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.WORKATO.RECIPE_CONNECTIONS;
 
@@ -561,7 +531,7 @@ class WorkatoRecipeConnectionsTool extends BaseBrowserToolExecutor {
         return createErrorResponse('Param [recipe_id] must be a finite number');
       }
 
-      const tab = await resolveTab(args.tabId, args.windowId);
+      const tab = await findWorkatoTab(args.tabId, { windowId: args.windowId });
       const raw = await runInWorkatoTab(tab.tabId, fetchRecipeConnectionsInPage, [args.recipe_id], {
         timeoutMs: 30_000,
       });

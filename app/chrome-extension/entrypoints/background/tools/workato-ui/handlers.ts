@@ -20,6 +20,7 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { ensureAttached, sendCommand } from '../browser/snapshot/debugger-session';
 import { isWorkatoAppHost, WORKATO_URL_PATTERNS } from '../workato/tab-dispatch';
 import { assertExpectedContext } from '../workato/session-context';
+import { invalidateRecipeSnapshot } from '../workato/recipe-snapshot';
 import {
   axName,
   axRole,
@@ -33,6 +34,7 @@ import {
   getTabUrl,
   LIST_STEPS_SNIPPET,
   pollUntil,
+  recipeIdFromUrl,
   resolveBackendNodeToObjectId,
   resolveTabId,
   sleep,
@@ -1260,9 +1262,21 @@ class WorkatoUiSaveRecipeImpl extends BaseBrowserToolExecutor {
         );
       }
 
+      // The editor wrote a new recipe version. This tool never takes a
+      // recipe_id, so the id comes from the tab it just saved in; when the URL
+      // does not name one there is nothing to invalidate and the version-keyed
+      // cache stays correct anyway (a stale key can never be served).
+      const savedRecipeId = recipeIdFromUrl(await getTabUrl(tabId));
+      if (savedRecipeId !== null) invalidateRecipeSnapshot(savedRecipeId);
+
       return {
         content: [
-          { type: 'text', text: `saved recipe (ng-dirty cleared in ${cleared.elapsedMs}ms)` },
+          {
+            type: 'text',
+            text:
+              `saved recipe (ng-dirty cleared in ${cleared.elapsedMs}ms)` +
+              (savedRecipeId !== null ? ` [recipe ${savedRecipeId}]` : ''),
+          },
         ],
         isError: false,
       };
@@ -2117,6 +2131,10 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
             suffix,
         );
       }
+
+      // The PUT landed and Workato wrote a new version: every cached snapshot
+      // of this recipe now describes an older tree.
+      invalidateRecipeSnapshot(args.recipe_id);
 
       // --- Post-save: readback verification ---------------------------------
       // Workato answers 200 with an empty code_errors even when it dropped

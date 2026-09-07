@@ -49,6 +49,8 @@ export const READ_TOOLS = new Set<string>([
   'workato_recipe_callers',
   'workato_recipe_grep',
   'workato_recipe_connections',
+  'workato_recipe_version_diff',
+  'workato_recipe_status',
   'workato_apps_list',
   'workato_pick_list',
   'workato_run_query',
@@ -339,6 +341,7 @@ const TRUNCATION_KEYS = [
   'next_cursor',
   'limit',
   'coverage',
+  'search_mode',
   'warning',
 ];
 

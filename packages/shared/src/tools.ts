@@ -1530,25 +1530,27 @@ export const TOOL_SCHEMAS: Tool[] = [
       "Fetch a Workato recipe's code tree plus version metadata. Read-only. " +
       'Requires an open Workato tab (*.workato.com or *.workato.is) using the same ' +
       "session as the recipe's account.\n\n" +
-      'By default returns a COMPACT view: the full step tree with bulky UI-metadata ' +
-      'sections stripped, _dp(...) datapills shortened to a readable datapill(...) ' +
-      'form, loop semantics kept (source, repeat_mode, clear_scope, batch_size), and ' +
-      'any value over 240 chars replaced by a "<<preview ... path=...>>" marker that ' +
-      'names the exact read-back call. Every view carries version_no; every list has ' +
-      'a limit, a total and a cursor, and a filter never removes the limit.\n\n' +
+      'By default returns a COMPACT view: the step tree with UI metadata stripped, ' +
+      '_dp(...) datapills shortened to datapill(...), loop semantics kept (source, ' +
+      'repeat_mode, clear_scope, batch_size), and any value over 240 chars replaced ' +
+      'by a "<<preview ... path=...>>" marker naming the read-back call. Every view ' +
+      'carries version_no; every list has a limit, a total and a cursor, and a filter ' +
+      'never removes the limit.\n\n' +
       'Usage pipeline:\n' +
       '1. pull_recipe(recipe_id) -> compact tree, the cheap whole-recipe index.\n' +
-      '2. view:"outline" -> structure, descriptions and input_keys only. For very ' +
-      'large recipes that overflow compact.\n' +
+      '2. view:"outline" -> structure, descriptions and input_keys only, for recipes ' +
+      'that overflow compact.\n' +
       '3. step:"<as|number>" -> one step: `mappings` (classified input leaves), the ' +
       'settable `fields`, plus `available_datapills` / raw `schemas` on request via ' +
-      '[include]. steps:["a","b"] reads several against ONE snapshot.\n' +
-      '4. paths:["input.code"] -> exact values, lossless and never previewed. The way ' +
-      'back from any preview marker.\n' +
+      '[include]. steps:["a","b"] reads several against ONE snapshot. A step with no ' +
+      "schema of its own gets the adapter's static fields merged in, each tagged " +
+      'provenance static|dynamic|both, with fields_complete.\n' +
+      '4. paths:["input.code"] -> exact values, lossless. The way back from a ' +
+      'preview marker.\n' +
       '5. fields:"text" -> narrow `mappings`/`fields`/`available_datapills`.\n' +
       '6. view:"full" -> the lossless raw tree; use [out_file] when it is large.\n\n' +
-      'To find WHERE a value appears, use workato_recipe_grep. if_version:<n> ' +
-      'answers {unchanged:true, version_no} without transferring the recipe again.',
+      'Use workato_recipe_grep to find WHERE a value appears. if_version:<n> answers ' +
+      '{unchanged:true, version_no} without refetching.',
     inputSchema: {
       type: 'object',
       properties: {

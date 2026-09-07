@@ -18,9 +18,19 @@
  *     title<->uuid map per call. Callers see the label-keyed shape externally.
  */
 
+import type { ExpectedTabContext } from '../workato/session-context';
+
+export type { ExpectedTabContext };
+
 export interface TabTargetArgs {
   tabId?: number;
   windowId?: number;
+  /**
+   * Workspace/environment the caller expects the target tab to be in. Injected
+   * by the bridge from the pinned session; write handlers refuse the call when
+   * the tab resolves somewhere else.
+   */
+  expected_context?: ExpectedTabContext;
 }
 
 export type DataTableColumnType =

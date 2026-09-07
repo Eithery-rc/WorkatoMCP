@@ -33,6 +33,7 @@ import {
   WorkatoDispatchError,
   type WorkatoTabInfo,
 } from '../workato/tab-dispatch';
+import { assertExpectedContext } from '../workato/session-context';
 import {
   describeBrokenDatapills,
   findBrokenDatapills,
@@ -663,6 +664,7 @@ class WorkatoLcapPageSaveTool extends BaseBrowserToolExecutor {
       }
       const timeoutMs = clampTimeout(args.timeout_ms);
       const tab = await findWorkatoTab(args.tabId);
+      await assertExpectedContext(args, tab.tabId);
       const stored = await readPage(tab.tabId, args.page_id, timeoutMs);
 
       const outcome = await saveContent(tab, {
@@ -827,6 +829,7 @@ class WorkatoLcapWidgetPatchTool extends BaseBrowserToolExecutor {
 
       const timeoutMs = clampTimeout(args.timeout_ms);
       const tab = await findWorkatoTab(args.tabId);
+      await assertExpectedContext(args, tab.tabId);
       const stored = await readPage(tab.tabId, args.page_id, timeoutMs);
 
       // Deep clone so the stored tree stays intact for the diff guards.
@@ -919,6 +922,7 @@ class WorkatoLcapPageCreateTool extends BaseBrowserToolExecutor {
       const normalized = normalizeDatapills(content);
 
       const tab = await findWorkatoTab(args.tabId);
+      await assertExpectedContext(args, tab.tabId);
       const result = await runInWorkatoTab(
         tab.tabId,
         lcapWriteInPage,
@@ -974,6 +978,7 @@ class WorkatoLcapPageDeleteTool extends BaseBrowserToolExecutor {
       }
       const timeoutMs = clampTimeout(args.timeout_ms);
       const tab = await findWorkatoTab(args.tabId);
+      await assertExpectedContext(args, tab.tabId);
       // Read first so the response can name what was deleted.
       const stored = await readPage(tab.tabId, args.page_id, timeoutMs).catch(() => null);
 
