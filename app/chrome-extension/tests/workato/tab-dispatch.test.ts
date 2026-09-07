@@ -13,7 +13,9 @@ beforeEach(() => {
   mockTabs.length = 0;
   (globalThis as unknown as { chrome: unknown }).chrome = {
     tabs: {
-      query: vi.fn(async () => mockTabs.slice()),
+      query: vi.fn(async (info: { windowId?: number } = {}) =>
+        mockTabs.filter((t) => info.windowId === undefined || t.windowId === info.windowId),
+      ),
       get: vi.fn(async (tabId: number) => {
         const found = mockTabs.find((candidate) => candidate.id === tabId);
         if (!found) throw new Error(`No tab with id: ${tabId}`);
@@ -23,9 +25,57 @@ beforeEach(() => {
   };
 });
 
-function tab(id: number, url: string): Tab {
-  return { id, url } as Tab;
+function tab(id: number, url: string, windowId = 1): Tab {
+  return { id, url, windowId } as Tab;
 }
+
+describe('findWorkatoTab windowId', () => {
+  it('is ignored when an explicit tabId is given', async () => {
+    mockTabs.push(tab(1, 'https://app.workato.com/recipes/1', 10));
+    mockTabs.push(tab(2, 'https://app.workato.com/recipes/2', 20));
+
+    const info = await findWorkatoTab(1, { windowId: 20 });
+    expect(info.tabId).toBe(1);
+  });
+
+  it('picks the Workato app tab in the named window', async () => {
+    mockTabs.push(tab(1, 'https://app.workato.com/recipes/1', 10));
+    mockTabs.push(tab(2, 'https://app.workato.com/recipes/2', 20));
+
+    const info = await findWorkatoTab(undefined, { windowId: 20 });
+    expect(info).toEqual({
+      tabId: 2,
+      host: 'app.workato.com',
+      origin: 'https://app.workato.com',
+    });
+  });
+
+  it('does not retarget to another window when the named one has no app tab', async () => {
+    mockTabs.push(tab(1, 'https://app.workato.com/recipes/1', 10));
+    mockTabs.push(tab(2, 'https://docs.workato.com/recipes.html', 20));
+
+    await expect(findWorkatoTab(undefined, { windowId: 20 })).rejects.toMatchObject({
+      code: 'TabNotFound',
+    });
+  });
+
+  it('tolerates two Workato hosts as long as the named window holds one', async () => {
+    // The global search would refuse this with MultipleWorkatoHosts; scoping to
+    // one window is exactly how a caller resolves that.
+    mockTabs.push(tab(1, 'https://app.workato.com/recipes/1', 10));
+    mockTabs.push(tab(2, 'https://app.eu.workato.com/recipes/2', 20));
+
+    const info = await findWorkatoTab(undefined, { windowId: 20 });
+    expect(info.host).toBe('app.eu.workato.com');
+    await expect(findWorkatoTab()).rejects.toMatchObject({ code: 'MultipleWorkatoHosts' });
+  });
+
+  it('falls back to the global search when no windowId is given', async () => {
+    mockTabs.push(tab(3, 'https://app.workato.com/recipes/3', 42));
+    const info = await findWorkatoTab(undefined, {});
+    expect(info.tabId).toBe(3);
+  });
+});
 
 describe('findWorkatoTab', () => {
   it('throws TabNotFound when no tabs match', async () => {
