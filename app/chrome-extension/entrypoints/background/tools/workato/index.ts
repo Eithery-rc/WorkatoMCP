@@ -28,3 +28,4 @@ export { workatoCopyRecipeTool } from './copy-recipe';
 export { workatoDeleteRecipeTool } from './delete-recipe';
 export { workatoCreateProjectTool, workatoUpdateProjectTool } from './create-project';
 export { workatoRecipeConnectionsTool } from './recipe-connections';
+export { workatoTestRecipeTool } from './test-recipe';
