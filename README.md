@@ -19,7 +19,7 @@
 
 ## What it is
 
-WorkatoMCP is a Chrome extension plus a local MCP bridge. It exposes **66 Workato tools** — recipes, jobs, connections, folders and projects, lookup tables, data tables, and the recipe editor itself — to any MCP client (Claude Code, Claude Desktop, Cursor, and others).
+WorkatoMCP is a Chrome extension plus a local MCP bridge. It exposes **94 Workato tools** (recipes, jobs, connections, folders and projects, lookup tables, data tables, workflow app pages, and the recipe editor itself) to any MCP client (Claude Code, Claude Desktop, Cursor, and others).
 
 Instead of asking you to mint API tokens, it borrows the authenticated Workato session already open in your browser. Every request goes out from a real Workato tab, with your cookies, your CSRF token, your permissions, and your environment. Nothing is stored, and nothing leaves the machine.
 
@@ -62,16 +62,18 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full request path, tab 
 
 ## Highlights
 
-|                                  |                                                                                                                                                                                                                 |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Recipe round-trip**            | Pull the code tree in four views (`full`, `compact`, `outline`, `step`), edit it, push it back with an optimistic version lock. Large recipes stream through a file path so they never hit the model's context. |
-| **Surgical edits**               | Set a nested input path, map a datapill, replace a Python step's code, or rewrite an extended schema — without downloading the whole tree.                                                                      |
-| **Job forensics**                | Per-step traces with schema noise stripped, line ranges, error summaries, cursor-paginated job lists, and job re-runs by master job id.                                                                         |
-| **Any SaaS behind a connection** | `workato_run_query` speaks SOQL, SuiteQL, and SQL through your existing connections. `workato_call_action` invokes any connector action — behind a write-safety gate.                                           |
-| **Tables**                       | Full CRUD for both Lookup Tables (11 tools, incl. CSV bulk import) and the newer relational Data Tables (12 tools).                                                                                             |
-| **Workspace management**         | Project and folder trees, create/rename/move/delete, and recipe relocation.                                                                                                                                     |
-| **Write safety**                 | Mutating connector actions are refused unless the caller passes `allow_writes: true`. Connection secrets are stripped on every path.                                                                            |
-| **Recipe authoring skill**       | A companion [Claude Code skill](#companion-skill) documents Workato's code-tree JSON and its Ruby-allowlist formula language.                                                                                   |
+|                                  |                                                                                                                                                                                                                  |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Recipe round-trip**            | Pull the code tree in four views (`full`, `compact`, `outline`, `step`), edit it, push it back with an optimistic version lock. Large recipes stream through a file path so they never hit the model's context.  |
+| **Surgical and batch edits**     | Set one nested input path, or apply up to 50 edits including structural ones through a single guarded engine: one pull, one save, one version, with local validation and derived schemas before it writes.       |
+| **Job forensics**                | Search jobs by date range or a local match instead of walking pages, with `coverage` on every answer, projected per-step traces that keep `0` and `false`, and erased jobs reported as erased rather than empty. |
+| **Any SaaS behind a connection** | `workato_run_query` speaks SOQL, SuiteQL, and SQL through your existing connections. `workato_call_action` invokes any connector action, behind a write-safety gate.                                             |
+| **Tables**                       | Full CRUD for both Lookup Tables (12 tools, including upsert and CSV bulk import) and the newer relational Data Tables (12 tools).                                                                               |
+| **Bounded reads**                | Projection, exact paths, per-list limits with cursors, a grep that searches a recipe in the browser and returns only the matches, and an auto-file mode that spills an oversized read to disk with a summary.    |
+| **Session you can trust**        | A pinned session pins profile, tab, host, workspace and environment together; every response says where it ran, and every write verifies it before acting.                                                       |
+| **Workspace management**         | Project and folder trees, create/rename/move/delete, and recipe relocation.                                                                                                                                      |
+| **Write safety**                 | Mutating connector actions are refused unless the caller passes `allow_writes: true`. Connection secrets are stripped on every path.                                                                             |
+| **Recipe authoring skill**       | A companion [Claude Code skill](#companion-skill) documents Workato's code-tree JSON and its Ruby-allowlist formula language.                                                                                    |
 
 WorkatoMCP also inherits ~32 general browser-automation tools from its upstream project (navigation, snapshots, DOM interaction, network capture, screenshots, console). They are useful when a Workato flow needs UI driving that no endpoint covers.
 
@@ -162,22 +164,26 @@ Open Workato in Chrome, sign in, leave the tab open, and call a tool. The bridge
 
 ## Tools
 
-68 Workato tools. Full signatures, parameters, and response shapes are in **[docs/TOOLS.md](docs/TOOLS.md)**.
+94 Workato tools. Full signatures, parameters, and response shapes are in **[docs/TOOLS.md](docs/TOOLS.md)**.
 
-| Family                                                             | Count | Prefix                | What it covers                                                                  |
-| ------------------------------------------------------------------ | ----: | --------------------- | ------------------------------------------------------------------------------- |
-| [Recipes & versions](docs/TOOLS.md#recipes--versions)              |     9 | `workato_`            | Pull the code tree, rename, copy, delete, start/stop, status, version diff      |
-| [Jobs](docs/TOOLS.md#jobs)                                         |     3 | `workato_`            | List jobs, per-step traces, re-run by master job id                             |
-| [Search & connections](docs/TOOLS.md#search--connections)          |     3 | `workato_`            | Find recipes and connections, inspect a connection (secrets stripped)           |
-| [Connector execution](docs/TOOLS.md#connector-execution)           |     2 | `workato_`            | SOQL/SuiteQL/SQL queries and the gated universal action runner                  |
-| [Projects & folders](docs/TOOLS.md#projects--folders)              |     7 | `workato_`            | Folder tree, folder CRUD, move recipe, project create/update                    |
-| [Code-side recipe editing](docs/TOOLS.md#code-side-recipe-editing) |     7 | `workato_recipe_`     | Add a step, set nested inputs, map datapills, Python code, extended schemas     |
-| [Recipe editor UI](docs/TOOLS.md#recipe-editor-ui)                 |    11 | `workato_ui_`         | Drive the live editor: open, edit mode, fields, datapills, save, save code tree |
-| [Lookup tables](docs/TOOLS.md#lookup-tables)                       |    11 | `workato_lookup_`     | Table + row CRUD, search, CSV bulk import                                       |
-| [Data tables](docs/TOOLS.md#data-tables)                           |    12 | `workato_data_table_` | Table, column, and record CRUD                                                  |
-| [Session](docs/TOOLS.md#session)                                   |     3 | `workato_`            | `whoami`, list Chrome profiles, switch profile                                  |
+| Family                                                                               | Count | Prefix                | What it covers                                                                                                      |
+| ------------------------------------------------------------------------------------ | ----: | --------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| [Recipes and versions](docs/TOOLS.md#recipes-and-versions)                           |     8 | `workato_`            | Pull the code tree with projection, grep inside it, validate locally, rename, copy, delete, version diff            |
+| [Lifecycle, health, operations](docs/TOOLS.md#lifecycle-health-and-long-operations)  |     8 | `workato_`            | Start/stop with a diagnosed failure, status, connection health, callers, journalled multi-recipe saves, test runs   |
+| [Jobs](docs/TOOLS.md#jobs)                                                           |     3 | `workato_`            | Search jobs by date range or a local match, projected per-step traces, re-runs                                      |
+| [Search and connections](docs/TOOLS.md#search-and-connections)                       |     4 | `workato_`            | Find recipes, steps and connections; inspect a connection (secrets stripped)                                        |
+| [Connector execution and discovery](docs/TOOLS.md#connector-execution-and-discovery) |     7 | `workato_`            | Adapter names and field surfaces, pick lists, datapills, queries, the gated action runner, the raw API escape hatch |
+| [Projects and folders](docs/TOOLS.md#projects-and-folders)                           |     7 | `workato_`            | Folder tree, folder CRUD, move recipe, project create/update                                                        |
+| [Code-side recipe editing](docs/TOOLS.md#code-side-recipe-editing)                   |    10 | `workato_recipe_`     | One guarded engine: batch apply with structural ops, nested inputs, datapills, Python, schemas, callable contracts  |
+| [Recipe editor UI](docs/TOOLS.md#recipe-editor-ui)                                   |    11 | `workato_ui_`         | Drive the live editor: open, edit mode, fields, datapills, save, save code tree                                     |
+| [Lookup tables](docs/TOOLS.md#lookup-tables)                                         |    12 | `workato_lookup_`     | Table and row CRUD, upsert, search, CSV bulk import                                                                 |
+| [Data tables](docs/TOOLS.md#data-tables)                                             |    12 | `workato_data_table_` | Table, column, and record CRUD                                                                                      |
+| [Workflow app pages](docs/TOOLS.md#workflow-app-pages)                               |     7 | `workato_lcap_`       | List apps, read, validate, save and patch page trees, create and delete pages                                       |
+| [Session and build identity](docs/TOOLS.md#session-and-build-identity)               |     5 | `workato_`            | Which workspace a call lands in, full profile, Chrome profiles, pinning, running build                              |
 
-Plus the inherited [browser tools](docs/TOOLS.md#inherited-browser-tools) (`chrome_*`, `get_windows_and_tabs`, `performance_*`).
+Plus the inherited [browser tools](docs/TOOLS.md#inherited-browser-tools) (`chrome_*`, `get_windows_and_tabs`, `performance_*`), 126 schemas in total.
+
+**Picking a tool.** The MCP handshake carries a task-to-tool table in the server instructions, so a client with lazy tool discovery gets the routing before it fetches a single schema. The same table, with more detail, is at the top of the [recipe skill](skills/workato-recipes/SKILL.md) and in [docs/TOOLS.md](docs/TOOLS.md). `workato_bridge_info` reports the `tool_count` and `schema_revision` the running build actually serves, which is how to tell a stale install from a documentation error.
 
 ## Safety model
 
@@ -237,7 +243,7 @@ pnpm format         # prettier
 
 Adding a tool means touching two places: the schema in `packages/shared/src/tools.ts` and the handler under `app/chrome-extension/entrypoints/background/tools/`. Rebuild `shared` before the extension, then reload the unpacked extension and restart the MCP client so the new schema is picked up.
 
-**Known debt:** `pnpm typecheck` reports around 100 errors, all in code inherited from the upstream project (`record-replay-v3`, `element-marker`, `gif-recorder`). None are in the Workato tool families, and the build is unaffected. CI gates on the bridge and shared schemas and reports the extension separately — details in [docs/ROADMAP.md](docs/ROADMAP.md#known-debt).
+**Known debt:** `pnpm typecheck` reports around 107 errors, all in code inherited from the upstream project (`record-replay-v3`, `element-marker`, `gif-recorder`). None are in the Workato tool families, and the build is unaffected. CI runs both test suites (extension vitest, bridge jest) and gates on the bridge and shared typechecks, reporting the extension typecheck separately. Details in [docs/ROADMAP.md](docs/ROADMAP.md#known-debt).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and [docs/ROADMAP.md](docs/ROADMAP.md) for what's planned.
 

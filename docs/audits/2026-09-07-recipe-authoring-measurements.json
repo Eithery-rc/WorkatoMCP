@@ -1,0 +1,446 @@
+{
+  "date": "2026-09-07",
+  "profile": "bluBanyan",
+  "workspace": "Power Factors",
+  "environment": "Development",
+  "workspace_id": 7633674,
+  "folder_id": 30945905,
+  "npm_latest": "1.5.0",
+  "installed_bridge": "1.5.0",
+  "repo_commit": "716a8c0",
+  "mcp_server_info": {
+    "name": "ChromeMcpServer",
+    "version": "1.0.0"
+  },
+  "tokenizer": "o200k_base",
+  "serialization": "Python json.dumps ensure_ascii=False separators=(comma, colon); measurements exclude MCP framing and reasoning",
+  "catalog": {
+    "tool_count": 117,
+    "workato_tools": 85,
+    "browser_tools": 32,
+    "all_tokens": 38893,
+    "workato_tokens": 29707,
+    "browser_tokens": 9188
+  },
+  "read_tokens": [
+    {
+      "recipe_id": 71810482,
+      "view": "compact",
+      "chars": 4991,
+      "tokens_o200k_base": 1489
+    },
+    {
+      "recipe_id": 71810482,
+      "view": "outline",
+      "chars": 1093,
+      "tokens_o200k_base": 391
+    },
+    {
+      "recipe_id": 73671550,
+      "view": "compact",
+      "chars": 6323,
+      "tokens_o200k_base": 2043
+    },
+    {
+      "recipe_id": 73671550,
+      "view": "outline",
+      "chars": 1484,
+      "tokens_o200k_base": 533
+    },
+    {
+      "recipe_id": 73022607,
+      "view": "compact",
+      "chars": 6505,
+      "tokens_o200k_base": 1951
+    },
+    {
+      "recipe_id": 73022607,
+      "view": "outline",
+      "chars": 1259,
+      "tokens_o200k_base": 467
+    },
+    {
+      "recipe_id": 72454389,
+      "view": "compact",
+      "chars": 21110,
+      "tokens_o200k_base": 5175
+    },
+    {
+      "recipe_id": 72454389,
+      "view": "outline",
+      "chars": 2690,
+      "tokens_o200k_base": 1024
+    },
+    {
+      "recipe_id": 71911136,
+      "view": "compact",
+      "chars": 8386,
+      "tokens_o200k_base": 2479
+    },
+    {
+      "recipe_id": 71911136,
+      "view": "outline",
+      "chars": 1240,
+      "tokens_o200k_base": 460
+    },
+    {
+      "recipe_id": 72449879,
+      "view": "compact",
+      "chars": 14813,
+      "tokens_o200k_base": 4119
+    },
+    {
+      "recipe_id": 72449879,
+      "view": "outline",
+      "chars": 1374,
+      "tokens_o200k_base": 506
+    },
+    {
+      "recipe_id": 72272208,
+      "view": "compact",
+      "chars": 610,
+      "tokens_o200k_base": 197
+    },
+    {
+      "recipe_id": 72272208,
+      "view": "outline",
+      "chars": 508,
+      "tokens_o200k_base": 166
+    },
+    {
+      "recipe_id": 72449879,
+      "view": "step",
+      "query": "none",
+      "chars": 25331,
+      "tokens_o200k_base": 6833
+    },
+    {
+      "recipe_id": 72449879,
+      "view": "step",
+      "query": "external",
+      "chars": 71461,
+      "tokens_o200k_base": 17317
+    },
+    {
+      "recipe_id": 72449879,
+      "view": "step",
+      "query": "id",
+      "chars": 143170,
+      "tokens_o200k_base": 35516
+    },
+    {
+      "recipe_id": 71810482,
+      "view": "full_file_envelope_minified",
+      "chars": 603650,
+      "tokens_o200k_base": 150357
+    },
+    {
+      "recipe_id": 73671550,
+      "view": "full_file_envelope_minified",
+      "chars": 17676,
+      "tokens_o200k_base": 4793
+    },
+    {
+      "recipe_id": 73022607,
+      "view": "full_file_envelope_minified",
+      "chars": 92683,
+      "tokens_o200k_base": 22376
+    },
+    {
+      "recipe_id": 72454389,
+      "view": "full_file_envelope_minified",
+      "chars": 240712,
+      "tokens_o200k_base": 60856
+    },
+    {
+      "recipe_id": 71911136,
+      "view": "full_file_envelope_minified",
+      "chars": 785156,
+      "tokens_o200k_base": 188688
+    },
+    {
+      "recipe_id": 72449879,
+      "view": "full_file_envelope_minified",
+      "chars": 511686,
+      "tokens_o200k_base": 122776
+    },
+    {
+      "recipe_id": 72272208,
+      "view": "full_file_envelope_minified",
+      "chars": 37546,
+      "tokens_o200k_base": 9553
+    }
+  ],
+  "live_measurements": {
+    "read": [
+      {
+        "recipe_id": 71810482,
+        "view": "out_file",
+        "ms": 1476,
+        "chars": 887,
+        "error": false
+      },
+      {
+        "recipe_id": 73671550,
+        "view": "out_file",
+        "ms": 911,
+        "chars": 963,
+        "error": false
+      },
+      {
+        "recipe_id": 73022607,
+        "view": "out_file",
+        "ms": 969,
+        "chars": 914,
+        "error": false
+      },
+      {
+        "recipe_id": 72454389,
+        "view": "out_file",
+        "ms": 1145,
+        "chars": 1527,
+        "error": false
+      },
+      {
+        "recipe_id": 71911136,
+        "view": "out_file",
+        "ms": 1461,
+        "chars": 898,
+        "error": false
+      },
+      {
+        "recipe_id": 72449879,
+        "view": "out_file",
+        "ms": 1388,
+        "chars": 965,
+        "error": false
+      },
+      {
+        "recipe_id": 72272208,
+        "view": "out_file",
+        "ms": 940,
+        "chars": 609,
+        "error": false
+      },
+      {
+        "recipe_id": 71810482,
+        "view": "compact",
+        "ms": 1332,
+        "chars": 4991,
+        "error": false
+      },
+      {
+        "recipe_id": 71810482,
+        "view": "outline",
+        "ms": 1103,
+        "chars": 1093,
+        "error": false
+      },
+      {
+        "recipe_id": 73671550,
+        "view": "compact",
+        "ms": 837,
+        "chars": 6323,
+        "error": false
+      },
+      {
+        "recipe_id": 73671550,
+        "view": "outline",
+        "ms": 1114,
+        "chars": 1484,
+        "error": false
+      },
+      {
+        "recipe_id": 73022607,
+        "view": "compact",
+        "ms": 870,
+        "chars": 6505,
+        "error": false
+      },
+      {
+        "recipe_id": 73022607,
+        "view": "outline",
+        "ms": 936,
+        "chars": 1259,
+        "error": false
+      },
+      {
+        "recipe_id": 72454389,
+        "view": "compact",
+        "ms": 882,
+        "chars": 21110,
+        "error": false
+      },
+      {
+        "recipe_id": 72454389,
+        "view": "outline",
+        "ms": 1040,
+        "chars": 2690,
+        "error": false
+      },
+      {
+        "recipe_id": 71911136,
+        "view": "compact",
+        "ms": 1249,
+        "chars": 8386,
+        "error": false
+      },
+      {
+        "recipe_id": 71911136,
+        "view": "outline",
+        "ms": 1275,
+        "chars": 1240,
+        "error": false
+      },
+      {
+        "recipe_id": 72449879,
+        "view": "compact",
+        "ms": 1282,
+        "chars": 14813,
+        "error": false
+      },
+      {
+        "recipe_id": 72449879,
+        "view": "outline",
+        "ms": 1115,
+        "chars": 1374,
+        "error": false
+      },
+      {
+        "recipe_id": 72272208,
+        "view": "compact",
+        "ms": 869,
+        "chars": 610,
+        "error": false
+      },
+      {
+        "recipe_id": 72272208,
+        "view": "outline",
+        "ms": 782,
+        "chars": 508,
+        "error": false
+      },
+      {
+        "recipe_id": 72449879,
+        "step": "3a2912e0",
+        "view": "step",
+        "ms": 1207,
+        "chars": 25331,
+        "error": false,
+        "mapping_chars": 7538,
+        "mappings": 69,
+        "fields": 60,
+        "total_fields": 2414,
+        "datapills": 60,
+        "total_datapills": 66,
+        "has_version": false
+      },
+      {
+        "recipe_id": 72449879,
+        "step": "3a2912e0",
+        "field_query": "external",
+        "view": "step",
+        "ms": 1235,
+        "chars": 71461,
+        "error": false,
+        "mapping_chars": 7538,
+        "mappings": 69,
+        "fields": 348,
+        "total_fields": 348,
+        "datapills": 0,
+        "total_datapills": 0,
+        "has_version": false
+      },
+      {
+        "recipe_id": 72449879,
+        "step": "3a2912e0",
+        "field_query": "id",
+        "view": "step",
+        "ms": 1234,
+        "chars": 143170,
+        "error": false,
+        "mapping_chars": 7538,
+        "mappings": 69,
+        "fields": 755,
+        "total_fields": 755,
+        "datapills": 14,
+        "total_datapills": 14,
+        "has_version": false
+      },
+      {
+        "recipe_id": 73671550,
+        "step": "ddc516e1",
+        "view": "step",
+        "ms": 942,
+        "chars": 7312,
+        "error": false,
+        "mapping_chars": 3629,
+        "mappings": 31,
+        "fields": 0,
+        "total_fields": 0,
+        "datapills": 30,
+        "total_datapills": 30,
+        "has_version": false
+      },
+      {
+        "recipe_id": 72454389,
+        "step": "e4d1f5a7",
+        "view": "step",
+        "ms": 1123,
+        "chars": 7465,
+        "error": false,
+        "mapping_chars": 187,
+        "mappings": 2,
+        "fields": 1,
+        "total_fields": 1,
+        "datapills": 60,
+        "total_datapills": 71,
+        "has_version": false
+      }
+    ],
+    "write": [
+      {
+        "label": "sequential_1",
+        "ms": 2973,
+        "chars": 326,
+        "error": false
+      },
+      {
+        "label": "sequential_2",
+        "ms": 3668,
+        "chars": 326,
+        "error": false
+      },
+      {
+        "label": "sequential_3",
+        "ms": 2886,
+        "chars": 326,
+        "error": false
+      },
+      {
+        "label": "batch_save",
+        "ms": 2415,
+        "chars": 291,
+        "error": false
+      }
+    ]
+  },
+  "scratch": {
+    "recipe_id": 82145141,
+    "final_version": 10,
+    "running": false,
+    "jobs": 0,
+    "code_restored_exactly": true,
+    "config_restored_exactly": true
+  },
+  "tokenizer_library_version": "0.14.0",
+  "original_versions_verified_unchanged": {
+    "71810482": 16,
+    "73671550": 10,
+    "73022607": 12,
+    "72454389": 54,
+    "71911136": 30,
+    "72449879": 68,
+    "72272208": 4
+  }
+}

@@ -16,7 +16,11 @@ Four questions, in order. Each one narrows the next.
 | What values does this field accept, in THIS workspace?              | `workato_pick_list`                              |
 | What does a working call look like here?                            | `workato_recipe_step_search`                     |
 
-Then write the step with `workato_recipe_add_step`, which mints the `as` anchor and `uuid`, renumbers the block and deduplicates `config` for you.
+Then write the step with `workato_recipe_add_step`. It now runs through the same guarded mutation engine as every other native write: it pulls once, applies the insert to a clone, mints the `as` anchor and the `uuid`, renumbers the **whole tree** (not just the block, which is what used to give a nested step and a top-level step the same number), validates locally, and **merges** the pulled `config` rather than rebuilding it, so existing `account_id` and `skip_validation` values survive and only a provider new to the recipe is appended. A new provider gets its `account_id` when you pass `connection_id`; without one the response reports `connection_binding: missing` rather than leaving a recipe that cannot start. Use `anchor` (`after` / `before` / `into` with `first` / `last`) to insert inside a `foreach`, `if` or `try` block, and `dry_run: true` to see the summary without saving.
+
+For more than one insert, or an insert plus the mappings that go with it, use `workato_recipe_apply` instead: the same engine, up to 50 operations, one version.
+
+**On a step that already exists, the field surface comes back with the step.** `workato_pull_recipe(recipe_id, step: "<as>")` merges the adapter's own input fields into `fields` whenever the step's `extended_input_schema` is empty or absent, each entry tagged `provenance: "static" | "dynamic" | "both"`, plus `fields_complete` on the view. So the ladder above is for a connector with no example in the recipe; for one already in it, read the step first and only fall back to `workato_adapter_meta` when `fields_complete` is false.
 
 ## Step 1 — find the technical adapter name
 
@@ -44,6 +48,10 @@ Check in this order:
 1. **`connection_required: false`** on the adapter (`workato_adapter_meta`, or the `builtin` entries in `workato_apps_list`). Then no connection exists or is needed, and there is nothing to ask for. This covers `email`, `logger`, `py_eval`, `clock`, `workato_variable`, `lookup_table` and the rest of Workato's own tools.
 2. **A `connection` entry in `workato_apps_list`** with `authorization_status: "success"`. Use its `id` as the `account_id` in the recipe `config`.
 3. **Anything else** is a blocker. Either there is no connection at all, or there is one whose status is not `success` (`connection_lost` is the common case, and it reads as working right up until the recipe runs).
+
+**On an existing recipe, run `workato_recipe_connections` instead of re-deriving this.** It reads the recipe's `config` bindings, then each bound connection, then `/integrations/meta` for the providers that carry no `account_id`, and returns one entry per binding with `status` of `ok`, `lost`, `missing`, `not_required`, `unused` or `unknown`, plus a `{healthy, blocking, actions}` verdict. `unused` means the `config` entry survives but no step uses that provider any more: left-over binding, reported and never blocking. `actions` is already phrased the way this section asks: a broken connection is named by id to re-authorize, never replaced by a request for a new one. Run it **before** stopping a chain you will have to restart, and whenever a start does not take: `workato_start_recipe` otherwise reports only that the state did not flip, because `POST start.json` answers 202 either way. `healthy` is false on `unknown` as well as on a real break, because a diagnostic gap is not evidence of health.
+
+A deliberately stopped recipe stays editable even with a broken connection. Connection health blocks a restart, not a repair.
 
 Ask before writing the step, not after. A step needs its provider's `account_id` in `config`, and that id does not exist until the connection does, so the recipe cannot be completed either way. Write the request so it can be acted on without coming back for details:
 
