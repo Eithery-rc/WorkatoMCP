@@ -74,6 +74,7 @@ export const TOOL_NAMES = {
     RUN_QUERY: 'workato_run_query',
     CALL_ACTION: 'workato_call_action',
     LIST_PROFILES: 'workato_list_profiles',
+    BRIDGE_INFO: 'workato_bridge_info',
     SWITCH_PROFILE: 'workato_switch_profile',
     LIST_FOLDERS: 'workato_list_folders',
     CREATE_FOLDER: 'workato_create_folder',
@@ -1651,7 +1652,7 @@ export const TOOL_SCHEMAS: Tool[] = [
             'Absolute path to write the complete recipe to as a JSON file (envelope: ' +
             '{recipe_id, name, version_no, code, config}). When set, the full code tree ' +
             'is saved to disk and the response returns only a compact summary plus a ' +
-            'step list — the raw tree never enters the agent context. Forces full view; ' +
+            'step list: the raw tree never enters the agent context. Forces full view; ' +
             'the projection params ([view], [step], [steps], [paths], [fields], ' +
             '[include], [max_items], [budget_chars], [cursor], [if_version]) are ' +
             'ignored. Edit the file, then push it back with ' +
@@ -1662,7 +1663,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         timeout_ms: {
           type: 'number',
           description:
-            'In-page fetch timeout in milliseconds. Default 30000, clamped 10000–110000. ' +
+            'In-page fetch timeout in milliseconds. Default 30000, clamped 10000-110000. ' +
             'Raise for very large recipes (300 KB+ code trees) that time out at the default.',
           minimum: 10000,
           maximum: 110000,
@@ -1808,7 +1809,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Set the comment on a specific Workato recipe version by PUTting /recipes/<id>/versions/<version>.json with {comment}. ' +
       'Use it to annotate a version in the recipe Versions tab (e.g. what changed and why). Pass an empty string to clear the comment. ' +
       'TIP: when the comment belongs to a save you are about to make, pass comment: directly to ' +
-      'workato_ui_save_recipe_code instead — one call, one timeout window. ' +
+      'workato_ui_save_recipe_code instead: one call, one timeout window. ' +
       'If this request times out, the tool verifies whether the comment landed before reporting failure ' +
       '(succeeded_after_timeout:true in the response). ' +
       'Returns the recipe id, version, and comment. Requires an open Workato tab (*.workato.com or *.workato.is) using the same session as the recipe account.',
@@ -1869,7 +1870,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         wait_timeout_ms: {
           type: 'number',
-          description: 'Max polling window for wait:true. Default 20000, clamped 1000–60000.',
+          description: 'Max polling window for wait:true. Default 20000, clamped 1000-60000.',
         },
         tabId: {
           type: 'number',
@@ -1914,7 +1915,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         wait_timeout_ms: {
           type: 'number',
-          description: 'Max polling window for wait:true. Default 20000, clamped 1000–60000.',
+          description: 'Max polling window for wait:true. Default 20000, clamped 1000-60000.',
         },
         tabId: {
           type: 'number',
@@ -1954,7 +1955,7 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO.ADAPTER_META,
     description:
-      "Look up a connector's REAL config surface from /integrations/meta — the endpoint the " +
+      "Look up a connector's REAL config surface from /integrations/meta, the endpoint the " +
       'recipe editor itself calls. THE answer to "what is this field actually called?". ' +
       'Workato silently DROPS input keys it does not recognise, so a guessed key name saves ' +
       'cleanly and then does nothing; one call here replaces the guess/save/pull/check loop. ' +
@@ -1962,11 +1963,11 @@ export const TOOL_SCHEMAS: Tool[] = [
       'control_type, label, optional, extends_schema), help text, and the behaviour flags ' +
       'extends_input_schema / extends_output_schema / depends_on / deprecated / batch / realtime. ' +
       'Each field also carries what decides whether a written step WORKS: `options` for a static ' +
-      'select (the VALUE to write, not the label the UI shows — Workato takes a wrong value ' +
+      'select (the VALUE to write, not the label the UI shows; Workato takes a wrong value ' +
       'silently), `default`, `properties` for the item fields of an object/array, and ' +
       '`toggle_field` for the alternative form of a field that accepts either shape. ' +
       'Per adapter it returns title / aliases / categories, which confirm a GUESSED name is the ' +
-      'right app, and connection_required — false means the connector needs no connection at all ' +
+      'right app, and connection_required, where false means the connector needs no connection at all ' +
       '(Email by Workato, logger, py_eval) and its step carries no account_id. ' +
       'Resolves any standard adapter whether or not this workspace has a connection to it, and ' +
       'the array form reports unknown names under not_found, which makes it the way to test a ' +
@@ -1985,7 +1986,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Adapter name or names, e.g. "workato_recipe_function", "salesforce", ' +
             '["workato_recipe_function","workato_workflow_task"]. A custom connector uses its ' +
-            'generated name (e.g. "netsuite_rest_connector_5105163_1745592003") — read it off ' +
+            'generated name (e.g. "netsuite_rest_connector_5105163_1745592003"): read it off ' +
             "a recipe step's `provider` field.",
         },
         operation: {
@@ -2008,7 +2009,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         raw: {
           type: 'boolean',
           description:
-            'Return the raw meta document instead of the slim view. Capped at 20k chars — ' +
+            'Return the raw meta document instead of the slim view. Capped at 20k chars; ' +
             'use out_file for the whole thing.',
         },
         out_file: {
@@ -2034,16 +2035,14 @@ export const TOOL_SCHEMAS: Tool[] = [
     name: TOOL_NAMES.WORKATO.APPS_LIST,
     description:
       'List the apps this workspace can build recipe steps with, and their TECHNICAL adapter ' +
-      'names. This is the step BEFORE workato_adapter_meta: that tool describes one connector ' +
-      'in full but only once its name is known, and the name is exactly what cannot be guessed ' +
-      'for a custom connector ("netsuite_rest_connector_5105163_1745592003"). Merges five ' +
-      'read-only sources by adapter name and marks each app with where it came from: ' +
-      '"connection" (a real connection exists here, so a step can authenticate today, with the ' +
-      'connection ids and authorization status), "recipes" (already used by a recipe here, so ' +
-      'workato_recipe_step_search will find live examples), "builtin" (one of Workato\'s own ' +
-      'connectors, always available), "custom" (this workspace\'s own SDK connector), ' +
-      '"certified" (Workato certified catalogue, not installed here). Sorted so the ' +
-      'immediately usable apps come first. ' +
+      'names. The step BEFORE workato_adapter_meta, which describes one connector in full but ' +
+      'only once its name is known, and the name is what cannot be guessed for a custom ' +
+      'connector ("netsuite_rest_connector_5105163_1745592003"). Merges five read-only sources ' +
+      'by adapter name and marks each app with where it came from: "connection" (a real ' +
+      'connection exists here, with its ids and authorization status), "recipes" (already used ' +
+      'by a recipe here, so workato_recipe_step_search finds live examples), "builtin" ' +
+      '(Workato\'s own, always available), "custom" (this workspace\'s SDK connector), ' +
+      '"certified" (catalogue, not installed here). Usable apps sort first. ' +
       'NO CONNECTION MEANS STOP AND ASK THE USER: these tools cannot create one, and a step ' +
       'needs its provider account_id in the recipe config, which does not exist until the ' +
       'connection does. An app listed WITHOUT a "connection" source, or with one whose ' +
@@ -2053,14 +2052,12 @@ export const TOOL_SCHEMAS: Tool[] = [
       "WORKATO'S OWN CONNECTORS ARE NAMED NOTHING LIKE THEY ARE CALLED: HTTP is `rest`, Workato " +
       'Event Streams is `workato_pub_sub`, Scheduler is `clock`, Python snippets is `py_eval`, ' +
       'Workflow apps is `workato_workflow_task`. Guessing from the display name returns an EMPTY ' +
-      'meta document, indistinguishable from "no such app". Their titles and aliases are read ' +
-      'live, so searching "event stream", "pub/sub" or "approval" lands on the right adapter. ' +
-      'KNOWN LIMIT, also stated in the response: Workato serves NO catalogue of its ~1000 ' +
-      'standard connectors — the recipe editor compiles that list into its own bundle and makes ' +
-      'no request for it. An app missing from this list is therefore not proof it does not ' +
-      'exist; resolve a standard app by passing the guessed name(s) to workato_adapter_meta, ' +
-      'which takes an array and reports the misses under not_found. ' +
-      'Read-only. Requires an open Workato tab.',
+      'meta document, indistinguishable from "no such app"; titles and aliases are read live, ' +
+      'so searching "event stream" or "approval" lands on the right adapter. ' +
+      'KNOWN LIMIT, also in the response: Workato serves NO catalogue of its ~1000 standard ' +
+      'connectors, so an app missing here is not proof it does not exist; pass the guessed ' +
+      'name(s) to workato_adapter_meta, which takes an array and reports misses under ' +
+      'not_found. Read-only. Requires an open Workato tab.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2176,7 +2173,7 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'Find how a connector is ACTUALLY used in this workspace: returns real steps from real ' +
       'recipes as templates. workato_adapter_meta says what a field is called and what it ' +
-      'accepts; it cannot say what a working value looks like — which datapill shape the team ' +
+      'accepts; it cannot say what a working value looks like: which datapill shape the team ' +
       'uses, which optional fields they always set, how they format an internal id. That only ' +
       'exists in the recipes already running here, and this replaces the manual ' +
       'search_recipes -> pull_recipe -> scroll loop. ' +
@@ -2371,7 +2368,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Workato refuses to stop a callable while a recipe that calls it is running ' +
       '(active_dependent_recipes_count), and refuses a code save on a running recipe, so every ' +
       'edit to a shared callable is stop-caller-A, stop-caller-B, save, start-A, start-B. This ' +
-      'does that in one call and RESTORES each dependent to the state it was in — a caller that ' +
+      'does that in one call and RESTORES each dependent to the state it was in, so a caller that ' +
       'was already stopped stays stopped. ' +
       'DEPENDENT DISCOVERY: pass dependent_recipe_ids (the callers you already know), or a scan ' +
       'scope (scan_folder_id, scan_folder_ids, scan_project_id or scan_scope:"workspace"), ' +
@@ -2403,7 +2400,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'array',
           items: { type: 'number' },
           description:
-            'Recipe ids that call this one. The fast, exact path — used verbatim, no discovery.',
+            'Recipe ids that call this one. The fast, exact path: used verbatim, no discovery.',
         },
         scan_folder_id: {
           type: 'number',
@@ -2442,7 +2439,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'string',
           description:
             'Version comment. CLIENT-VISIBLE in the recipe version history (these recipes get ' +
-            'promoted to the client production environment), so keep it neutral and boring — ' +
+            'promoted to the client production environment), so keep it neutral and boring: ' +
             '"schema refresh", "config update". Never a narrative of what was changed or of ' +
             'what an agent did. Defaults to "schema refresh".',
         },
@@ -2481,7 +2478,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Input fields the callable accepts. Each {name, type, control_type?, label?, ' +
             'optional?, properties?}. Only `name` is required; the rest are filled in the way ' +
-            'the schema designer would. At runtime these arrive under `parameters` — the ' +
+            'the schema designer would. At runtime these arrive under `parameters`: the ' +
             'trigger pill path is ["parameters","<Name>"].',
           items: { type: 'object' },
         },
@@ -2499,14 +2496,14 @@ export const TOOL_SCHEMAS: Tool[] = [
         restart_if_running: {
           type: 'boolean',
           description:
-            'Stop, save, restart when the recipe is running. Does NOT stop dependent callers — ' +
+            'Stop, save, restart when the recipe is running. Does NOT stop dependent callers; ' +
             'use workato_recipe_save_with_dependents when the callable has running callers.',
         },
         ensure_running: { type: 'boolean', description: 'Start the recipe after saving.' },
         comment: {
           type: 'string',
           description:
-            'Version comment. CLIENT-VISIBLE in the recipe version history — keep it neutral ' +
+            'Version comment. CLIENT-VISIBLE in the recipe version history: keep it neutral ' +
             '("schema refresh", "schema update"), never a description of the work done. ' +
             'Defaults to "schema refresh".',
         },
@@ -2527,7 +2524,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       "writes the caller step's extended_output_schema (job_id, job_url, and the callee's " +
       '`result` object node) plus its extended_input_schema (the `parameters` node), and rewrites ' +
       'every datapill in the caller that reads a result field straight off that step so its path ' +
-      'starts with "result". Run workato_callable_schema_set on the callee FIRST — a callee with ' +
+      'starts with "result". Run workato_callable_schema_set on the callee FIRST: a callee with ' +
       'no result_schema_json is refused here, because binding to it would produce result:null.',
     inputSchema: {
       type: 'object',
@@ -2540,7 +2537,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description:
             'The callable being called. Optional when the caller has exactly one call_recipe ' +
-            "step — it is read from that step's flow_id.",
+            "step: it is read from that step's flow_id.",
         },
         step: {
           type: 'string',
@@ -2553,7 +2550,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         comment: {
           type: 'string',
           description:
-            'Version comment. CLIENT-VISIBLE — keep it neutral ("schema refresh"). Defaults to ' +
+            'Version comment. CLIENT-VISIBLE: keep it neutral ("schema refresh"). Defaults to ' +
             '"schema refresh".',
         },
         tabId: {
@@ -2570,13 +2567,13 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'Build a datapill reference string exactly, instead of assembling one by hand. Workato ' +
       "matches the _dp('<json>') literal BYTE-FOR-BYTE: one inserted space, or a line wrap, " +
-      'and the pill saves fine and then silently resolves to nothing. THREE dialects — recipe ' +
+      'and the pill saves fine and then silently resolves to nothing. THREE dialects: recipe ' +
       'step output ({pill_type, provider, line, path}), Workflow App widget ({source:"widget", ' +
-      'id, path}), and Workflow App page variable ({source:"page-variable", id, path}) — and ' +
+      'id, path}), and Workflow App page variable ({source:"page-variable", id, path}), plus ' +
       'two modes: "interpolated" (#{_dp(...)}, for a normal string field) and ' +
       '"formula" (bare _dp(...), valid only inside a value whose first character is "="). ' +
       'Path shorthand: "rows[]" is the element under iteration (current_item), "rows#size" is the ' +
-      'collection length. Pure string assembly — no browser, no Workato call.',
+      'collection length. Pure string assembly: no browser, no Workato call.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2620,7 +2617,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'string',
           description:
             'Page-variable dialect: the variable 8-hex id from the page content. Emits ' +
-            'source:"page-variable" — the shape the builder itself writes when a page variable ' +
+            'source:"page-variable", the shape the builder itself writes when a page variable ' +
             'is dropped into a field.',
         },
         path: {
@@ -2662,13 +2659,13 @@ export const TOOL_SCHEMAS: Tool[] = [
         value_excerpt_chars: {
           type: 'number',
           description:
-            'Max characters per old/new value excerpt in field changes. Default 200, clamped 40–2000.',
+            'Max characters per old/new value excerpt in field changes. Default 200, clamped 40-2000.',
         },
         timeout_ms: {
           type: 'number',
           description:
             'In-page fetch timeout in milliseconds (two full code trees are fetched). ' +
-            'Default 40000, clamped 10000–110000.',
+            'Default 40000, clamped 10000-110000.',
           minimum: 10000,
           maximum: 110000,
         },
@@ -2689,7 +2686,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       'parent_id (create/move folder) or folder_id (move recipe), and `project_id` is the owning ' +
       "project's id. Each node reports flow_count/active_flow_count (recipes) plus non-zero asset " +
       'counts under `counts`, and nested `children`. Slim by default; totals holds account-wide ' +
-      'asset counters. THE tool to call before creating/moving folders or recipes — it is the ' +
+      'asset counters. THE tool to call before creating/moving folders or recipes: it is the ' +
       'source of folder ids. Read-only. Requires an open Workato tab.',
     inputSchema: {
       type: 'object',
@@ -2718,7 +2715,7 @@ export const TOOL_SCHEMAS: Tool[] = [
     name: TOOL_NAMES.WORKATO.CREATE_FOLDER,
     description:
       'Create a folder by POSTing /folders with {name, parent_id}. parent_id is a folder id from ' +
-      "workato_list_folders — use a project's root folder id to create at the top of a project, " +
+      "workato_list_folders: use a project's root folder id to create at the top of a project, " +
       'or another folder id to nest. Returns the new folder_id (use it as parent_id/folder_id in ' +
       'later calls). If the request times out, the tool re-reads the folder tree to check whether ' +
       'the folder actually got created before reporting failure (succeeded_after_timeout:true). ' +
@@ -2779,7 +2776,7 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO.DELETE_FOLDER,
     description:
-      'Delete a folder by DELETEing /folders/<id>. DANGER: Workato CASCADES this delete — a ' +
+      'Delete a folder by DELETEing /folders/<id>. DANGER: Workato CASCADES this delete: a ' +
       'non-empty folder is deleted together with everything inside it (recipes, subfolders, ' +
       'connections...), verified live. This tool therefore pre-checks the folder tree and refuses ' +
       'when the folder is not empty unless force:true; it also refuses project root folders ' +
@@ -2795,7 +2792,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         force: {
           type: 'boolean',
           description:
-            'Delete even when the folder is not empty — CASCADES to all contents. Requires ' +
+            'Delete even when the folder is not empty, CASCADES to all contents. Requires ' +
             'explicit user confirmation.',
           default: false,
         },
@@ -2813,7 +2810,7 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'Move a recipe into another folder by PUTting /recipes/<id>/update_folder.json with ' +
       '{folder_id}. Get the target folder id from workato_list_folders (project root folder ids ' +
-      'work — that puts the recipe at the top level of the project). Moving across projects ' +
+      'work, which puts the recipe at the top level of the project). Moving across projects ' +
       'changes which project owns the recipe. If the request times out, the tool re-reads the ' +
       "recipe's folder_id to verify the move landed before reporting failure " +
       '(succeeded_after_timeout:true). Requires an open Workato tab.',
@@ -2898,11 +2895,11 @@ export const TOOL_SCHEMAS: Tool[] = [
     name: TOOL_NAMES.WORKATO.CREATE_PROJECT,
     description:
       'Create a new Workato project by POSTing /web_api/projects.json with {name}. Returns ' +
-      "{project_id, name, folder_id, project_type} — folder_id is the project's root folder, the " +
+      "{project_id, name, folder_id, project_type}, where folder_id is the project's root folder, the " +
       'parent_id to use for workato_create_folder and the folder_id for placing recipes in the ' +
       'new project. If the request times out, the tool re-reads the folder tree to check whether ' +
       'the project got created before reporting failure (succeeded_after_timeout:true). ' +
-      'NOTE: there is no delete-project tool — creating a project is easy to do but manual to ' +
+      'NOTE: there is no delete-project tool, and creating a project is easy to do but manual to ' +
       'undo, so only create when the user asked for it. Requires an open Workato tab.',
     inputSchema: {
       type: 'object',
@@ -2925,7 +2922,7 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'Rename a project and/or change its color/icon by PUTting /web_api/projects/f<folder_id>.json ' +
       "with {name?, color?, icon?}. Takes the project's ROOT FOLDER id (top-level `id` from " +
-      'workato_list_folders, or folder_id from workato_create_project) — NOT the project_id. ' +
+      'workato_list_folders, or folder_id from workato_create_project), NOT the project_id. ' +
       'Omitted fields keep their current value. If the request times out, the tool re-reads the ' +
       'folder tree to verify the change landed before reporting failure ' +
       '(succeeded_after_timeout:true). Requires an open Workato tab.',
@@ -2968,7 +2965,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       'like output_schema/extended_*_schema is stripped from summaries). ' +
       'For long recipes, narrow with lines:[104,118] (exact set) or line_range:[91,123] ' +
       "(inclusive). THE PER-STEP UNTRUNCATED READ IS detail:'full' PLUS lines:[N] (or " +
-      'line_range) — there is no `step` parameter, and passing one does nothing, so a trace ' +
+      'line_range): there is no `step` parameter, and passing one does nothing, so a trace ' +
       'that still looks truncated means the line selection was missing. That pair is the ' +
       'way to answer "what exactly did step 118 receive ' +
       'in this job". Narrow the payload further with paths (nested projection over each step\'s ' +
@@ -3009,7 +3006,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           enum: ['summary', 'full'],
           description:
             "'summary' (default): truncated summaries. 'full': exact untruncated input/output " +
-            '(schema-stripped) for the selected steps — requires lines/line_range matching ≤20 steps.',
+            '(schema-stripped) for the selected steps; requires lines/line_range matching ≤20 steps.',
         },
         paths: {
           type: 'array',
@@ -3054,7 +3051,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         timeout_ms: {
           type: 'number',
           description:
-            'In-page fetch timeout in milliseconds. Default 30000, clamped 10000–110000. ' +
+            'In-page fetch timeout in milliseconds. Default 30000, clamped 10000-110000. ' +
             'Raise for very large job traces.',
           minimum: 10000,
           maximum: 110000,
@@ -3171,11 +3168,11 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'Search Workato connections by name. Same paginated endpoint as ' +
       'workato_search_recipes but filters to connections. Note: text= ' +
-      'matches connection NAMES, not the provider field — to find "the ' +
+      'matches connection NAMES, not the provider field. To find "the ' +
       'salesforce connection" pass provider:"salesforce" instead (the tool ' +
       'walks up to 5 pages and filters client-side). Alternative pattern: ' +
       "read the connection id straight from the recipe's config " +
-      '(pull_recipe version.config account_id entries) — often the better ' +
+      '(pull_recipe version.config account_id entries), often the better ' +
       'source when you already have the recipe. Slim response includes ' +
       '`count` for pagination decisions. Pass full=true for the raw 18-key ' +
       'per-item Workato shape. Requires an open Workato tab (*.workato.com ' +
@@ -3230,7 +3227,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       'dates) plus a config object containing per-provider settings ' +
       'with secret-shaped keys/values stripped (auth tokens, passwords, ' +
       'API keys, JWTs, long opaque tokens). The strip applies even with ' +
-      'full=true — there is no escape hatch for secrets. Requires an ' +
+      'full=true: there is no escape hatch for secrets. Requires an ' +
       'open Workato tab.',
     inputSchema: {
       type: 'object',
@@ -3324,7 +3321,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         status: {
           type: 'string',
           description:
-            "Server-side status filter. Use 'failed', 'succeeded', 'pending', etc. SINGULAR — statuses[] is silently ignored.",
+            "Server-side status filter. Use 'failed', 'succeeded', 'pending', etc. SINGULAR; statuses[] is silently ignored.",
         },
         query: {
           type: 'string',
@@ -3436,7 +3433,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         timeout_ms: {
           type: 'number',
           description:
-            'Overall timeout in milliseconds. Default 30000, clamped 10000–110000. The internal ' +
+            'Overall timeout in milliseconds. Default 30000, clamped 10000-110000. The internal ' +
             'page-walk budget is timeout_ms minus ~8s headroom, so raising this lets one call scan ' +
             'deeper before returning partial results.',
           minimum: 10000,
@@ -3454,12 +3451,12 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO.REPEAT_JOB,
     description:
-      'Repeat (re-run) one or more Workato jobs by master job id. WRITE operation — ' +
+      'Repeat (re-run) one or more Workato jobs by master job id. WRITE operation: ' +
       "each repeated job re-executes the recipe against that job's original trigger " +
       'data. job_ids are the string master job ids as returned by workato_list_jobs / ' +
       "workato_job_trace (e.g. 'j-Aaxc9bm4-egoMDh-CD'). Returns a per-job ok flag " +
       'from Workato. Not auto-retried on timeout (a blind retry could double-run ' +
-      'jobs) — re-check with workato_list_jobs before retrying. Requires an open ' +
+      'jobs), so re-check with workato_list_jobs before retrying. Requires an open ' +
       'Workato tab.',
     inputSchema: {
       type: 'object',
@@ -3561,7 +3558,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       'WHERE clause for more. SOQL queries: any trailing LIMIT clause is ' +
       'stripped before sending (Workato auto-appends LIMIT 100, so a ' +
       'user-supplied LIMIT would collide). connection_id is shared_account_id ' +
-      'from search_connections or recipe.version.config. Read-only — never ' +
+      'from search_connections or recipe.version.config. Read-only, never ' +
       'treat as a write API. Requires an open Workato tab (*.workato.com or ' +
       '*.workato.is).',
     inputSchema: {
@@ -3596,7 +3593,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description:
             'Max time to wait for the query before aborting, in milliseconds. Default 90000 ' +
-            '(90s). Clamped to 5000–110000. Raise this for slow connectors (e.g. NetSuite ' +
+            '(90s). Clamped to 5000-110000. Raise this for slow connectors (e.g. NetSuite ' +
             'SuiteQL or large scans) that return "timed out after Ns and was aborted".',
           minimum: 5000,
           maximum: 110000,
@@ -3615,13 +3612,13 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'Invoke any named connector action with arbitrary input via the same ' +
       "endpoint Workato's recipe editor uses for the Test button. " +
-      '\n\n**MOST POWERFUL TOOL IN THE KIT — CAN MUTATE SAAS DATA.** ' +
+      '\n\n**MOST POWERFUL TOOL IN THE KIT: CAN MUTATE SAAS DATA.** ' +
       'Defaults to a read-only safety gate: action_name must start with ' +
       'search_/get_/list_/query_/find_/describe_/read_/fetch_, OR be exactly ' +
       "'execute_suiteql', OR be '__adhoc_http_action' with verb get/head/options. " +
       'Anything else (add_record, upsert_record, delete_*, POST/PUT/DELETE HTTP ' +
       'verbs, etc.) is rejected with WorkatoUnsafeAction unless caller passes ' +
-      'allow_writes:true. Use that flag deliberately — it can create, modify, or ' +
+      'allow_writes:true. Use that flag deliberately: it can create, modify, or ' +
       'delete real records in production SaaS. ' +
       '\n\nAction names come from inspecting recipe steps: every step in a ' +
       "recipe's code tree has a 'name' field that is a valid action_name. " +
@@ -3629,12 +3626,12 @@ export const TOOL_SCHEMAS: Tool[] = [
       'step structure to learn what actions exist on a connector. Common ' +
       "names: '__adhoc_http_action' (any HTTP connector), 'execute_suiteql' " +
       "(NetSuite), 'search_sobjects_soql_v2' (Salesforce), 'add_record'/" +
-      "'upsert_record'/'delete_record' (NetSuite — writes)." +
-      '\n\nAD-HOC SOQL (the killer use case — query Salesforce through the ' +
+      "'upsert_record'/'delete_record' (NetSuite, writes)." +
+      '\n\nAD-HOC SOQL (the killer use case: query Salesforce through the ' +
       "recipe's own connection, no SFDC UI access needed): action_name " +
       "'search_sobjects_soql_v2' with minimal input {query:'SELECT Id FROM " +
       'Asset WHERE ...\', limit:100, output_schema:\'[{"name":"Id"}]\'}. ' +
-      'output_schema is REQUIRED but need not match the selected fields — a ' +
+      'output_schema is REQUIRED but need not match the selected fields; a ' +
       'one-field dummy schema works; all selected fields come back anyway. ' +
       'Omitting output_schema/limit makes Workato introspect the full object ' +
       'schema and the call usually times out (which looks like a wrong input ' +
@@ -3659,7 +3656,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         input: {
           type: 'object',
           description:
-            "The action's input parameters as a JSON object. Shape is action-specific. For __adhoc_http_action: {mnemonic:'Custom action', verb, path, response_type:'json', inspect:true, request_headers?} — both `mnemonic` and `inspect:true` are REQUIRED; Workato rejects with \"'Action name' must be present\" if either is omitted. For execute_suiteql: {query}. For SOQL search: {query, output_schema, ...}.",
+            "The action's input parameters as a JSON object. Shape is action-specific. For __adhoc_http_action: {mnemonic:'Custom action', verb, path, response_type:'json', inspect:true, request_headers?}; both `mnemonic` and `inspect:true` are REQUIRED; Workato rejects with \"'Action name' must be present\" if either is omitted. For execute_suiteql: {query}. For SOQL search: {query, output_schema, ...}.",
         },
         allow_writes: {
           type: 'boolean',
@@ -3975,7 +3972,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       'does not change within 300ms, falls back to formula injection (=_dp(...)) by fetching the recipe code and ' +
       "reading the source step's line id + provider. " +
       'Prerequisite: caller must have focused the relevant step first via workato_ui_focus_step. ' +
-      'NOTE: HTML5 synthetic drag is unreliable across Chrome versions — formula fallback is the production path.',
+      'NOTE: HTML5 synthetic drag is unreliable across Chrome versions; formula fallback is the production path.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -4056,7 +4053,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       "POST /web_api/projects.json and then create the recipe in that project's folder. " +
       'Returns the new recipe id and edit URL. Prerequisite: the active tab must be a logged-in Workato page ' +
       '(needed to read the CSRF token and reuse the session cookie). The recipe is created in trigger-only ' +
-      'state — open it in edit mode (workato_ui_open_recipe with mode="edit") to configure the trigger.',
+      'state; open it in edit mode (workato_ui_open_recipe with mode="edit") to configure the trigger.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -4090,11 +4087,11 @@ export const TOOL_SCHEMAS: Tool[] = [
     name: TOOL_NAMES.WORKATO_UI.SAVE_RECIPE_CODE,
     description:
       'Save a complete recipe code tree directly via the Workato REST API (PUT /recipes/<id>.json). ' +
-      'Bypasses the UI entirely — no need to enter edit mode, focus steps, or drive the editor. ' +
+      'Bypasses the UI entirely: no need to enter edit mode, focus steps, or drive the editor. ' +
       'Pair with workato_pull_recipe to fetch the current code, mutate it client-side, then save. ' +
       'For large recipes use the file round-trip: workato_pull_recipe(out_file:...) then save with ' +
       '[code_path] so the recipe tree never has to be passed inline. ' +
-      'RUNNING RECIPES: Workato rejects code saves on running recipes — pass restart_if_running:true ' +
+      'RUNNING RECIPES: Workato rejects code saves on running recipes, so pass restart_if_running:true ' +
       'to have the tool stop → save → verify → restart atomically (response reports stopped_at + restarted). ' +
       'SAFETY: pass expected_base_version_no (the version_no you pulled) to refuse saving over someone ' +
       "else's concurrent edit; pass comment to annotate the new version in the same call. " +
@@ -4105,7 +4102,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       'VERIFIED WRITES: every save is read back and compared against what was sent. Workato silently ' +
       'drops dynamic input keys (py_eval code_input.data, call_recipe parameters, custom_fields, ' +
       'data-table columns, declare_variable variables) on steps that lack a matching ' +
-      'extended_input_schema — it answers 200 with empty code_errors and stores nothing. When that ' +
+      'extended_input_schema: it answers 200 with empty code_errors and stores nothing. When that ' +
       'happens the tool FAILS with save_status:"persisted_incomplete" and names the dropped paths. ' +
       'Datapill payloads are also re-serialized compactly before saving, because Workato matches ' +
       "#{_dp('<json>')} byte-for-byte and a pill with json.dumps spacing resolves to an empty value. " +
@@ -4129,7 +4126,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Absolute path to a recipe JSON file as written by workato_pull_recipe(out_file:...). ' +
             'When set, code/config/recipe_id are read from the file and [code]/[config] are ' +
-            'ignored — the recipe tree never has to be passed inline. The agent-friendly push path.',
+            'ignored, so the recipe tree never has to be passed inline. The agent-friendly push path.',
         },
         config: {
           description:
@@ -4146,10 +4143,10 @@ export const TOOL_SCHEMAS: Tool[] = [
         restart_if_running: {
           type: 'boolean',
           description:
-            'When the recipe is running: stop it, save, then start it again — one atomic call ' +
+            'When the recipe is running: stop it, save, then start it again: one atomic call ' +
             'with the smallest possible trigger downtime. Response includes stopped_at and restarted. ' +
             'Without this flag, saving a running recipe fails fast with a clear error. ' +
-            'This flag only restores what the save stopped — a recipe that was ALREADY stopped stays ' +
+            'This flag only restores what the save stopped: a recipe that was ALREADY stopped stays ' +
             'stopped (the response says so via was_running:false). Use ensure_running to start it.',
           default: false,
         },
@@ -4190,7 +4187,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'boolean',
           description:
             'Read the saved tree back and compare it against what was sent (default true). This is ' +
-            'the silent-strip guard — turn it off only to push past a verification you have ' +
+            'the silent-strip guard; turn it off only to push past a verification you have ' +
             'established is a false positive.',
           default: true,
         },
@@ -4305,7 +4302,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       '(pull, apply to a clone, validate, merge config, save, read back), so the existing config ' +
       'and its account_id bindings survive the save and the stored tree is verified afterwards. ' +
       'NESTED PATHS SUPPORTED: field accepts dotted paths like ' +
-      '"parameters.sysid_param.asset_id" or "filters[0].value" — no file round-trip needed for ' +
+      '"parameters.sysid_param.asset_id" or "filters[0].value", with no file round-trip needed for ' +
       'one-field fixes deep in a step. Steps anywhere in the tree are reachable: step_number ' +
       'accepts the numeric step number (0 = trigger) OR the step `as` anchor string, and nested ' +
       'blocks (if / foreach / try) are searched recursively. Preserves all other fields. ' +
@@ -4440,7 +4437,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       'dotted string such as `records.item.items[0].amount` or an array of string/number segments. ' +
       'Creates missing intermediate objects/arrays, refuses unsafe path segments and ' +
       'non-container parents, and preserves all unrelated code-tree fields. Supports literal values, ' +
-      'formula strings, interpolated strings, and datapill specs — datapill shorthand ' +
+      'formula strings, interpolated strings, and datapill specs; datapill shorthand ' +
       '`datapill(provider.line.list_items[].AssetId)` expresses current-item (foreach) pills. ' +
       'THE preferred tool for one-field fixes deep inside a step (no file round-trip needed). ' +
       'Accepts restart_if_running/ensure_running/comment/expected_base_version_no, forwarded to the ' +
@@ -4475,7 +4472,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         restart_if_running: {
           type: 'boolean',
           description:
-            'Forwarded to the underlying save: stop a running recipe, save, restart — one atomic call. ' +
+            'Forwarded to the underlying save: stop a running recipe, save, restart: one atomic call. ' +
             'A recipe that was already stopped stays stopped; use ensure_running to start it.',
           default: false,
         },
@@ -4933,7 +4930,7 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'List all Workato lookup tables visible to the signed-in user (GET /lookup_tables.json). ' +
       'Returns a slim shape: [{id, name, entry_count, updated_at}]. ' +
-      'Requires an open logged-in Workato tab (uses the session pinned tab or first Workato app tab — never whatever tab is focused).',
+      'Requires an open logged-in Workato tab (uses the session pinned tab or first Workato app tab, never whatever tab is focused).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -4979,7 +4976,7 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'Create a new lookup table (POST /lookup_tables.json), then optionally rename and apply a column schema. ' +
       'If `name` is provided, a PUT /lookup_tables/<id>.json sets the name. ' +
-      'If `columns` is provided (1–10 user-facing labels), a PUT /lookup_tables/<id>/update_schema.json applies them, ' +
+      'If `columns` is provided (1-10 user-facing labels), a PUT /lookup_tables/<id>/update_schema.json applies them, ' +
       'padding the remaining slots with placeholders. Returns {table_id, name, columns}. ' +
       'Lookup tables always have exactly 10 column slots internally. ' +
       'Prerequisite: the active tab must be a logged-in Workato page.',
@@ -4994,7 +4991,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'array',
           items: { type: 'string' },
           description:
-            'Optional initial column labels (1–10). Each becomes the user-facing name for col1..colN; remaining slots are padded with placeholders.',
+            'Optional initial column labels (1-10). Each becomes the user-facing name for col1..colN; remaining slots are padded with placeholders.',
         },
         tabId: {
           type: 'number',
@@ -5029,7 +5026,7 @@ export const TOOL_SCHEMAS: Tool[] = [
     name: TOOL_NAMES.WORKATO_LOOKUP.TABLE_SET_COLUMNS,
     description:
       "Replace a lookup table's column schema (PUT /lookup_tables/<id>/update_schema.json). " +
-      'Accepts 1–10 user-facing column labels; internally builds the full 10-slot schema by padding with ' +
+      'Accepts 1-10 user-facing column labels; internally builds the full 10-slot schema by padding with ' +
       '"Untitled column N" placeholders (sticky=false). Returns {table_id, columns}. ' +
       'Lookup tables have a fixed 10-column limit. ' +
       'Prerequisite: the active tab must be a logged-in Workato page.',
@@ -5041,7 +5038,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'array',
           items: { type: 'string' },
           description:
-            '1–10 user-facing column labels. The first N slots are named; the rest are padded with placeholders.',
+            '1-10 user-facing column labels. The first N slots are named; the rest are padded with placeholders.',
         },
         tabId: {
           type: 'number',
@@ -5156,7 +5153,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Create-or-update one lookup-table row, keyed by a column value. The tool for ' +
       'per-environment config: lookup tables do not carry across dev/test/prod, so the same ' +
       'keyed rows get re-applied on every deploy, and doing that with row_create plus a manual ' +
-      'search is how duplicate keys appear. A duplicate is not harmless — the `lookup()` formula ' +
+      'search is how duplicate keys appear. A duplicate is not harmless: the `lookup()` formula ' +
       'returns the FIRST match, so a stale row silently wins. ' +
       'Searches the whole table (all pages) for rows whose key_column equals key_value: none ' +
       'creates, exactly one updates (merging, so columns you do not name keep their values), ' +
@@ -5173,7 +5170,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         key_value: {
           type: ['string', 'number', 'boolean'],
           description:
-            'Value to match in key_column. Compared exactly, as a string — lookup tables are ' +
+            'Value to match in key_column. Compared exactly, as a string; lookup tables are ' +
             'case-sensitive.',
         },
         values: {
@@ -5220,9 +5217,9 @@ export const TOOL_SCHEMAS: Tool[] = [
     name: TOOL_NAMES.WORKATO_LOOKUP.IMPORT_CSV,
     description:
       'Bulk-import rows into a Workato Lookup Table from a CSV file (PUT /lookup_tables/<id>/upload.json, multipart). ' +
-      'TWO WAYS to provide the CSV — **prefer `csv_path` for files on disk** so the file content stays out of agent context: ' +
-      '(1) `csv_path` — absolute path on the bridge host; the bridge reads the file via GET /file and streams it. ' +
-      '(2) `csv_content` — inline CSV string for ad-hoc small imports. ' +
+      'TWO WAYS to provide the CSV, **prefer `csv_path` for files on disk** so the file content stays out of agent context: ' +
+      '(1) `csv_path`: absolute path on the bridge host; the bridge reads the file via GET /file and streams it. ' +
+      '(2) `csv_content`: inline CSV string for ad-hoc small imports. ' +
       'Two modes: ' +
       '`mode="append"` (DEFAULT, safe) preserves existing rows and adds the CSV rows after them. ' +
       '`mode="replace"` wipes all existing rows first, then inserts. ' +
@@ -5238,23 +5235,23 @@ export const TOOL_SCHEMAS: Tool[] = [
         csv_path: {
           type: 'string',
           description:
-            'Absolute file path on the BRIDGE HOST (the machine running the native-server). The bridge reads the file via GET /file and streams content — agent never materializes it in context. Mutually exclusive with csv_content.',
+            'Absolute file path on the BRIDGE HOST (the machine running the native-server). The bridge reads the file via GET /file and streams content, so the agent never materializes it in context. Mutually exclusive with csv_content.',
         },
         csv_content: {
           type: 'string',
           description:
-            'Inline CSV string (alternative to csv_path). Use only for small ad-hoc imports — large files will bloat agent context. Cells with commas/quotes must be RFC-4180-quoted.',
+            'Inline CSV string (alternative to csv_path). Use only for small ad-hoc imports; large files will bloat agent context. Cells with commas/quotes must be RFC-4180-quoted.',
         },
         mode: {
           type: 'string',
           enum: ['append', 'replace'],
           description:
-            'Import mode. `append` (default) preserves existing rows; `replace` wipes them first. Use replace deliberately — it is destructive.',
+            'Import mode. `append` (default) preserves existing rows; `replace` wipes them first. Use replace deliberately: it is destructive.',
         },
         skip_first_row: {
           type: 'boolean',
           description:
-            'When true, skips the first row of the CSV (treats it as a header). Default false — every row is imported. Set to true when your CSV starts with column names like "name,color".',
+            'When true, skips the first row of the CSV (treats it as a header). Default false, so every row is imported. Set to true when your CSV starts with column names like "name,color".',
         },
         filename: {
           type: 'string',
@@ -5285,7 +5282,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         folder_id: {
           type: 'number',
           description:
-            'Numeric folder id to list data tables under. Optional — falls back to the folder in the current URL when possible.',
+            'Numeric folder id to list data tables under. Optional; falls back to the folder in the current URL when possible.',
         },
         page: { type: 'number', description: 'Page number (1-based). Optional.' },
         tabId: {
@@ -5549,7 +5546,7 @@ export const TOOL_SCHEMAS: Tool[] = [
     description:
       'Update a row in a Data Table (PUT /web_api/workato_db/tables/<id>/records/<record_id>.json). ' +
       'Accepts a partial label-keyed `row`; only provided fields are sent (UUID-keyed). ' +
-      'Returns {table_id, record_id, row}. NOTE: endpoint is inferred — verify on smoke test.',
+      'Returns {table_id, record_id, row}. NOTE: endpoint is inferred; verify on smoke test.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -5600,7 +5597,7 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO_SESSION.WHOAMI,
     description:
-      'Returns who/where the active Workato tab is connected — workspace, user, role, ' +
+      'Returns who/where the active Workato tab is connected: workspace, user, role, ' +
       'available environments, teams, timezone, membership tier. Fetches /web_api/auth_user.json ' +
       'and slims it down to an agent-friendly JSON shape. ' +
       "Use this FIRST when you don't know which Workato workspace/account/environment " +
@@ -5657,6 +5654,28 @@ export const TOOL_SCHEMAS: Tool[] = [
       'and see which one is selected for this MCP session, if any. Also returns session_context: ' +
       'the profile, tab, host, workspace and environment this session is pinned to (null when ' +
       'nothing is pinned, in which case calls follow the bridge default profile).',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.BRIDGE_INFO,
+    description:
+      'What build is actually answering these calls. Runs entirely in the local bridge: no ' +
+      'browser tab, no Workato request, safe to call when everything else is failing. ' +
+      'Returns bridge_version and shared_version (the two published packages), tool_count and ' +
+      'schema_revision (a stable sha256 prefix of the served tool catalogue, so two sessions ' +
+      'can be compared without diffing schemas), connected_profiles, session_context, ' +
+      'node_version and platform. ' +
+      'CALL THIS FIRST when a tool is missing, a parameter is rejected as unknown, or a ' +
+      'response does not match its documented shape: those are deployment drift, and the ' +
+      'usual cause is a bridge or an unpacked extension that was not reloaded after an ' +
+      'upgrade. A schema_revision that differs from the one a working session reported, or a ' +
+      'bridge_version behind the released one, names the problem instead of guessing at it. ' +
+      'versions_read reports where each version came from, so an "unknown" is visible as a ' +
+      'failed read rather than a missing package. Read-only.',
     inputSchema: {
       type: 'object',
       properties: {},

@@ -13,6 +13,7 @@ import { TOOL_SCHEMAS } from 'workatomcp-shared';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { withProfileRoutingToolSchemas } from './register-tools';
+import { SERVER_INSTRUCTIONS, SERVER_NAME, serverVersion } from './server-identity';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -37,8 +38,8 @@ export const getStdioMcpServer = () => {
   }
   stdioMcpServer = new Server(
     {
-      name: 'StdioChromeMcpServer',
-      version: '1.0.0',
+      name: SERVER_NAME,
+      version: serverVersion(),
     },
     {
       capabilities: {
@@ -46,6 +47,7 @@ export const getStdioMcpServer = () => {
         resources: {},
         prompts: {},
       },
+      instructions: SERVER_INSTRUCTIONS,
     },
   );
 

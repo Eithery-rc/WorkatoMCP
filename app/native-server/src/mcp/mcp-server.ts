@@ -1,5 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { setupTools } from './register-tools';
+import { SERVER_INSTRUCTIONS, SERVER_NAME, serverVersion } from './server-identity';
 
 /**
  * Build a fresh MCP Server per transport/session.
@@ -14,13 +15,14 @@ import { setupTools } from './register-tools';
 export const createMcpServer = (): Server => {
   const server = new Server(
     {
-      name: 'ChromeMcpServer',
-      version: '1.0.0',
+      name: SERVER_NAME,
+      version: serverVersion(),
     },
     {
       capabilities: {
         tools: {},
       },
+      instructions: SERVER_INSTRUCTIONS,
     },
   );
 
