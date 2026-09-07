@@ -67,6 +67,7 @@ export const TOOL_NAMES = {
     SEARCH_RECIPES: 'workato_search_recipes',
     SEARCH_CONNECTIONS: 'workato_search_connections',
     GET_CONNECTION: 'workato_get_connection',
+    RECIPE_CONNECTIONS: 'workato_recipe_connections',
     LIST_JOBS: 'workato_list_jobs',
     RUN_QUERY: 'workato_run_query',
     CALL_ACTION: 'workato_call_action',
@@ -1657,6 +1658,13 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Returns the enqueue status; pass wait:true to poll until the recipe actually reports running. ' +
       'If the request times out, the tool verifies actual recipe state before reporting failure ' +
       '(status "succeeded_after_timeout" means the start landed despite the timeout). ' +
+      'Every response carries outcome: "state_reached" (the recipe reports running), "accepted" ' +
+      '(Workato took the request and the end state is NOT verified) or "failed". Workato answers ' +
+      '202 even when a recipe cannot start, so when wait:true ends without the state flipping the ' +
+      'tool reads the activation record and, if Workato refused, returns an ERROR with start_error ' +
+      '{state, code_errors, config_errors [{line_number, field, value, message}], param_errors, ' +
+      'requirements_errors, message} naming the offending line and field; a config error about ' +
+      'account_id also attaches a connections summary (see workato_recipe_connections). ' +
       'Requires an open Workato tab (*.workato.com or *.workato.is) using the same session as the recipe account.',
     inputSchema: {
       type: 'object',
@@ -1693,6 +1701,9 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Returns the enqueue status; pass wait:true to poll until the recipe actually reports stopped. ' +
       'If the request times out, the tool verifies actual recipe state before reporting failure ' +
       '(status "succeeded_after_timeout" means the stop landed despite the timeout). ' +
+      'Every response carries outcome: "state_reached" (the recipe reports stopped) or "accepted" ' +
+      '(Workato took the request and the end state is NOT verified). Treat "accepted" as unverified, ' +
+      'not as done. ' +
       'NOTE: to edit a running recipe, prefer workato_ui_save_recipe_code(restart_if_running:true) over a manual stop→save→start. ' +
       'Requires an open Workato tab (*.workato.com or *.workato.is) using the same session as the recipe account.',
     inputSchema: {
@@ -1733,7 +1744,10 @@ export const TOOL_SCHEMAS: Tool[] = [
       "Cheap read of a recipe's live state: {running, state, version_no, last_run_at, stopped_at, " +
       'stop_reason, stopped_for_error, job_succeeded_count, job_failed_count}. ~4 KB fetch, no code tree. ' +
       'THE post-write verification tool: call after start/stop/save to confirm the change took effect, ' +
-      'instead of re-running search_recipes or pulling the recipe. Requires an open Workato tab.',
+      'instead of re-running search_recipes or pulling the recipe. Also returns activation ' +
+      '{state, error_message?, config_errors?}: the last activation attempt as Workato recorded it, ' +
+      'which is the only place a refused start says why (no error there means no failed attempt on ' +
+      'record, NOT that the recipe can start). Requires an open Workato tab.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2810,6 +2824,39 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['connection_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.RECIPE_CONNECTIONS,
+    description:
+      'Connection health for ONE recipe: which connections its steps are bound to, and ' +
+      'whether they can still authenticate. Workato has no per-recipe connection endpoint, ' +
+      "so this reads the recipe's config bindings, then each bound connection, then " +
+      '/integrations/meta for the providers that carry no account_id. Returns one entry per ' +
+      'binding {provider, connection_id, connection_name, authorization_status, authorized_at, ' +
+      'connection_lost_at, connection_lost_reason, authorization_error, warning, ' +
+      'running_recipe_count, status} where status is ok | lost | missing | not_required | ' +
+      'unknown, plus a recipe verdict {healthy, blocking[], actions[]} phrased as what to ask ' +
+      'the user for (a lost connection is named by id to re-authorize, never replaced by a ' +
+      'request for a new one). Use it BEFORE stopping a chain you will have to restart, and ' +
+      'whenever a start does not take: a disconnected connector otherwise shows up only as ' +
+      '"state did not flip". Credentials and the provider input bag are never returned. ' +
+      'Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description: 'Numeric Workato recipe id.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['recipe_id'],
     },
   },
   {

@@ -6,6 +6,21 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+### Added
+
+- **`workato_recipe_connections`**: the connections one recipe is bound to, and whether they can still authenticate. Workato publishes no per-recipe connection endpoint, so the tool reads the recipe's `config` bindings, then each bound connection, then `/integrations/meta` for the providers that carry no `account_id`, and returns one entry per binding with `status` of `ok`, `lost`, `missing`, `not_required` or `unknown`, plus a verdict `{healthy, blocking, actions}`. The actions are phrased the way the skill asks for them: a broken connection is named by id to re-authorize, never replaced by a request for a new one, and a provider whose adapter needs no connection is reported as `not_required` rather than as a hole. Credentials and the provider input bag never leave the tool: the response passes through `stripConnectionSecrets` and then a field whitelist.
+- **A failed start now says why.** `POST start.json` answers `202 {"status":"enqueued"}` whether or not the recipe can start, and `/recipes/<id>.json` afterwards records nothing: no `stop_reason`, no `last_actionable_error`, no `requirements_errors`. The reason lives only in `/web_api/recipes/<id>/state.json`, which the editor polls right after the Start click. `workato_start_recipe` now reads it when a `wait:true` window ends without the state flipping, and returns an ERROR carrying `start_error` `{state, code_errors, config_errors, param_errors, requirements_errors, message}` that names the offending line and field. `config_errors` is normalized to `[{line_number, field, value, message}]` from either serialization Workato uses (positional arrays on later reads, objects on the read right after activation), and a config error about `account_id` also attaches a compact connection summary, so a disconnected connector is diagnosed in the same call instead of a browser hunt.
+- `workato_recipe_status` returns `activation` `{state, error_message?, config_errors?}`: the last activation attempt as Workato recorded it. No error there means no failed attempt on record, which is not the same as "this recipe can start"; there is no pre-start validation endpoint (`validate.json` and `ready.json` are both 404).
+
+### Changed
+
+- **`workato_start_recipe` and `workato_stop_recipe` report how far the call got.** Every response carries `outcome`: `state_reached` when the recipe reports the state that was asked for, `accepted` when Workato took the request and the end state is NOT verified, `failed` when Workato refused to activate the recipe. A start that never reached running used to come back as a success with `state_flipped: false` buried in the JSON, which reads as restored to anything checking `isError` alone.
+
+### Fixed
+
+- **`workato_call_action` no longer auto-retries a write.** The dispatcher retries once on a timeout, which is right for a read and doubles anything else: a timed-out `create_record` could be applied twice. The tool now passes `retryOnTimeout: false` whenever its own gate does not classify the action as read-only.
+- **`workato_search_connections(full: true)` strips secrets.** The slim shape whitelists fields, but the raw list items were returned as Workato sent them, the one path out of the connection tools that had no strip. It now runs `stripConnectionSecrets` like the single-connection read.
+
 ## bridge 1.5.0 · shared 1.2.0 (2026-08-26)
 
 ### Added

@@ -3,8 +3,34 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
 import { fetchRecipeStatus, type RecipeStatusSlim } from './recipe-status';
+import {
+  describeStartError,
+  fetchRecipeActivationState,
+  mentionsAccountId,
+  normalizeStartError,
+  type RecipeStartError,
+} from './recipe-state';
+import {
+  fetchRecipeConnections,
+  summarizeRecipeConnections,
+  type RecipeConnectionsSummary,
+} from './recipe-connections';
 
 type RecipeLifecycleAction = 'start' | 'stop';
+
+/**
+ * How far the call actually got.
+ *
+ * - `state_reached`: the recipe reports the state that was asked for.
+ * - `accepted`: Workato took the request (start/stop only ever enqueue) and the
+ *   end state is NOT verified — either wait was not requested, or the wait
+ *   window expired with no recorded activation error.
+ * - `failed`: Workato refused to activate the recipe; `start_error` says why.
+ *
+ * An accepted request is not a restarted recipe. Callers that restore state
+ * (workato_recipe_save_with_dependents) must read this field, not isError alone.
+ */
+export type RecipeLifecycleOutcome = 'state_reached' | 'accepted' | 'failed';
 
 interface RecipeLifecycleArgs {
   recipe_id: number;
@@ -238,11 +264,43 @@ abstract class WorkatoRecipeLifecycleTool extends BaseBrowserToolExecutor {
       }
 
       const flipped = finalState ? statusMatchesAction(finalState, this.action) : undefined;
+
+      // A start that did not flip is where Workato hides the reason: the POST
+      // answers 202 regardless, and /recipes/<id>.json records nothing. Only
+      // /web_api/recipes/<id>/state.json carries the activation error.
+      let outcome: RecipeLifecycleOutcome = flipped === true ? 'state_reached' : 'accepted';
+      let startError: RecipeStartError | null = null;
+      let diagnosisError: string | undefined;
+      let connections: RecipeConnectionsSummary | undefined;
+
+      if (flipped === false && this.action === 'start') {
+        try {
+          startError = normalizeStartError(
+            await fetchRecipeActivationState(tab.tabId, args.recipe_id),
+          );
+        } catch (err) {
+          diagnosisError = err instanceof Error ? err.message : String(err);
+        }
+        if (startError) {
+          outcome = 'failed';
+          if (mentionsAccountId(startError)) {
+            try {
+              connections = summarizeRecipeConnections(
+                await fetchRecipeConnections(tab.tabId, args.recipe_id),
+              );
+            } catch (err) {
+              diagnosisError = err instanceof Error ? err.message : String(err);
+            }
+          }
+        }
+      }
+
       const payload: Record<string, unknown> = {
         recipe_id: args.recipe_id,
         action: this.action,
         status: enqueueStatus,
         force,
+        outcome,
       };
       if (succeededAfterTimeout) payload.succeeded_after_timeout = true;
       if (finalState) {
@@ -251,6 +309,32 @@ abstract class WorkatoRecipeLifecycleTool extends BaseBrowserToolExecutor {
         payload.waited_ms = waitedMs;
         payload.state_flipped = flipped;
       }
+      if (startError) payload.start_error = startError;
+      if (connections) payload.connections = connections;
+      if (diagnosisError !== undefined) payload.diagnosis_error = diagnosisError;
+
+      if (outcome === 'failed' && startError) {
+        return createErrorResponse(
+          `${this.action} recipe ${args.recipe_id} FAILED: Workato refused to activate it ` +
+            `(state=${startError.state}). ${describeStartError(startError)}` +
+            (connections && connections.actions.length > 0
+              ? `\n${connections.actions.join('\n')}`
+              : '') +
+            '\n(retriable: false, fix the reported error before starting again)' +
+            `\n${JSON.stringify(payload)}`,
+        );
+      }
+
+      const notVerified =
+        flipped === false
+          ? ', did NOT flip within wait window; outcome=accepted, the end state is NOT verified' +
+            (diagnosisError !== undefined
+              ? ` (the activation-state read failed: ${diagnosisError})`
+              : this.action === 'start'
+                ? ' (Workato recorded no activation error, so the start may still be in progress)'
+                : '')
+          : '';
+
       return {
         content: [
           {
@@ -258,10 +342,8 @@ abstract class WorkatoRecipeLifecycleTool extends BaseBrowserToolExecutor {
             text:
               `${this.action} recipe ${args.recipe_id}: ${enqueueStatus}` +
               (finalState
-                ? ` (state=${finalState.state}, running=${finalState.running}${
-                    flipped === false ? ' — did NOT flip within wait window' : ''
-                  })`
-                : '') +
+                ? ` (state=${finalState.state}, running=${finalState.running}${notVerified})`
+                : ' (outcome=accepted, state not verified: pass wait:true to poll)') +
               `\n${JSON.stringify(payload)}`,
           },
         ],
