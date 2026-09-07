@@ -56,6 +56,7 @@ export const TOOL_NAMES = {
   },
   WORKATO: {
     PULL_RECIPE: 'workato_pull_recipe',
+    RECIPE_GREP: 'workato_recipe_grep',
     RENAME_RECIPE: 'workato_rename_recipe',
     SET_VERSION_COMMENT: 'workato_set_version_comment',
     START_RECIPE: 'workato_start_recipe',
@@ -1510,22 +1511,24 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Requires an open Workato tab (*.workato.com or *.workato.is) using the same ' +
       "session as the recipe's account.\n\n" +
       'By default returns a COMPACT view: the full step tree with bulky UI-metadata ' +
-      'sections (extended_input_schema, extended_output_schema, visible_config_fields, ' +
-      "dynamicPickListSelection) stripped and each step's configured input kept with " +
-      'its verbose _dp(...) datapills shortened to a readable datapill(...) form. The ' +
-      'cheap whole-recipe index — scan it to understand a recipe.\n\n' +
+      'sections stripped, _dp(...) datapills shortened to a readable datapill(...) ' +
+      'form, loop semantics kept (source, repeat_mode, clear_scope, batch_size), and ' +
+      'any value over 240 chars replaced by a "<<preview ... path=...>>" marker that ' +
+      'names the exact read-back call. Every view carries version_no; every list has ' +
+      'a limit, a total and a cursor, and a filter never removes the limit.\n\n' +
       'Usage pipeline:\n' +
-      '1. pull_recipe(recipe_id) — compact tree, see the whole recipe.\n' +
-      '2. pull_recipe(recipe_id, view:"outline") — lightest view: step tree and ' +
-      'descriptions only, no input. Use for very large recipes that overflow compact.\n' +
-      '3. pull_recipe(recipe_id, step:"<as|number>") — drill into one step: its ' +
-      'input distilled into a classified `mappings` list (datapill / formula / ' +
-      'interpolated / literal / code), the settable input `fields`, and the ' +
-      '`available_datapills` produced by upstream steps it can reference.\n' +
-      '4. pull_recipe(recipe_id, step:"...", field_query:"text") — filter that ' +
-      "step's `fields` and `available_datapills` by name, label, or ref.\n" +
-      '5. pull_recipe(recipe_id, view:"full") — the lossless raw tree (exact ' +
-      '_dp(...) references), only for wholesale tree rewrites.',
+      '1. pull_recipe(recipe_id) -> compact tree, the cheap whole-recipe index.\n' +
+      '2. view:"outline" -> structure, descriptions and input_keys only. For very ' +
+      'large recipes that overflow compact.\n' +
+      '3. step:"<as|number>" -> one step: `mappings` (classified input leaves), the ' +
+      'settable `fields`, plus `available_datapills` / raw `schemas` on request via ' +
+      '[include]. steps:["a","b"] reads several against ONE snapshot.\n' +
+      '4. paths:["input.code"] -> exact values, lossless and never previewed. The way ' +
+      'back from any preview marker.\n' +
+      '5. fields:"text" -> narrow `mappings`/`fields`/`available_datapills`.\n' +
+      '6. view:"full" -> the lossless raw tree; use [out_file] when it is large.\n\n' +
+      'To find WHERE a value appears, use workato_recipe_grep. if_version:<n> ' +
+      'answers {unchanged:true, version_no} without transferring the recipe again.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1539,26 +1542,89 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'string',
           enum: ['compact', 'outline', 'full'],
           description:
-            "Whole-recipe read mode. 'compact' (default) strips UI metadata and " +
-            "shortens datapills; 'outline' additionally drops every step's input " +
-            "(lightest, for very large recipes); 'full' returns the lossless raw " +
-            'code tree. With [step], view:"full" returns the raw step node.',
+            "Whole-recipe read mode. 'compact' (default) strips UI metadata, shortens " +
+            "datapills and previews long values; 'outline' replaces every step's input " +
+            "with its top-level input_keys (lightest, for very large recipes); 'full' " +
+            'returns the lossless raw code tree. With [step], view:"full" returns the ' +
+            'raw step node.',
         },
         step: {
           type: 'string',
           description:
             "Drill into a single step. Accepts the step's 'as' anchor or its " +
-            'numeric step number. Returns the step header, its `mappings` ' +
-            '(classified input leaves — the wiring and logic), the settable ' +
-            '`fields`, and `available_datapills` from upstream steps. Pass ' +
-            'view:"full" with step to return the raw step node, including schemas.',
+            'numeric step number. Returns the step header (loop source included), its ' +
+            '`mappings` (classified input leaves, the wiring and logic) and the ' +
+            'settable `fields`. Pass view:"full" with step to return the raw step node, ' +
+            'including schemas.',
+        },
+        steps: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Several step refs ("as" anchors or numbers) inspected against ONE ' +
+            'snapshot, in the order given. Cheaper than one call per step. Refs that do ' +
+            'not exist come back in `not_found`. Mutually exclusive with [step].',
+        },
+        include: {
+          type: 'array',
+          items: { type: 'string', enum: ['mappings', 'fields', 'datapills', 'schemas', 'code'] },
+          description:
+            'Sections of a step view to return. Default ["mappings","fields"]. ' +
+            '"datapills" adds the upstream pills this step can reference (loop items ' +
+            'included), "schemas" adds the raw extended_input_schema / ' +
+            'extended_output_schema entries, "code" returns `code` and `query` bodies ' +
+            'whole instead of previewed.',
+        },
+        paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Exact paths returned LOSSLESSLY: no datapill shortening, no preview, no ' +
+            'budget cut. Dot/bracket syntax resolved against the step node when [step] ' +
+            'is set, else against the recipe root, e.g. "input.code", ' +
+            '"input.conditions[0].lhs". This is the read-back for a preview marker.',
+        },
+        fields: {
+          type: 'string',
+          description:
+            'Case-insensitive substring filter for [step] mode. Matched against a ' +
+            'mapping path, a field name or label, and a datapill ref or label. It ' +
+            'narrows the lists; it does NOT lift [max_items]. Alias: field_query.',
         },
         field_query: {
           type: 'string',
+          description: 'Older name for [fields]. Same behaviour.',
+        },
+        max_items: {
+          type: 'number',
           description:
-            "Case-insensitive substring filter for [step] mode's `fields` and " +
-            '`available_datapills`, matched against name, label, and ref. ' +
-            'Lifts the 60-item cap on both. Requires [step].',
+            'Items returned per list (mappings, fields, datapills, schema entries, and ' +
+            'steps in compact/outline). Default 60, hard maximum 500. Each list reports ' +
+            'its total, and a truncated response carries next_cursor.',
+          minimum: 1,
+          maximum: 500,
+        },
+        budget_chars: {
+          type: 'number',
+          description:
+            'Character budget for the response. Default 12000 for step views, 60000 ' +
+            'for compact/outline. Lists are cut at item boundaries; the response then ' +
+            'carries truncated:true and next_cursor. Exact [paths] reads are exempt.',
+          minimum: 500,
+          maximum: 400000,
+        },
+        cursor: {
+          type: 'string',
+          description:
+            'Opaque continuation token from a previous truncated response. Repeat the ' +
+            'same call with it to get the next items without repeats.',
+        },
+        if_version: {
+          type: 'number',
+          description:
+            'Answer {unchanged:true, version_no} when the recipe is still at this ' +
+            'version, without transferring the code. Use the version_no from a previous ' +
+            'read to re-check cheaply.',
         },
         out_file: {
           type: 'string',
@@ -1567,8 +1633,10 @@ export const TOOL_SCHEMAS: Tool[] = [
             '{recipe_id, name, version_no, code, config}). When set, the full code tree ' +
             'is saved to disk and the response returns only a compact summary plus a ' +
             'step list — the raw tree never enters the agent context. Forces full view; ' +
-            '[view]/[step]/[field_query] are ignored. Edit the file, then push it back ' +
-            'with workato_ui_save_recipe_code(code_path).',
+            'the projection params ([view], [step], [steps], [paths], [fields], ' +
+            '[include], [max_items], [budget_chars], [cursor], [if_version]) are ' +
+            'ignored. Edit the file, then push it back with ' +
+            'workato_ui_save_recipe_code(code_path).',
         },
         timeout_ms: {
           type: 'number',
@@ -1585,6 +1653,104 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['recipe_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.RECIPE_GREP,
+    description:
+      'Find a string INSIDE one Workato recipe without pulling the recipe into ' +
+      'context. Read-only. Requires an open Workato tab (*.workato.com or ' +
+      "*.workato.is) using the same session as the recipe's account.\n\n" +
+      'The recipe tree is searched locally and only the MATCHES come back: each ' +
+      'one carries the step it belongs to ({number, as, keyword, provider, name, ' +
+      'title}), the exact path, a bounded snippet, and the full length of the ' +
+      'value. Answers "which step sets this field", "where is this account id ' +
+      'hard-coded", "which step mentions this table" for the price of the matches ' +
+      'instead of the price of the recipe.\n\n' +
+      'The reported path is the one workato_pull_recipe(step, paths:[...]) reads ' +
+      'back losslessly, so a hit turns straight into an exact read, and ' +
+      'workato_recipe_set_input_path takes the same path minus the "input." ' +
+      'prefix. Datapills are matched in their raw _dp(...) form, so a step line id ' +
+      '(e.g. "e4f443bd") finds every reference to that step.\n\n' +
+      'Use workato_pull_recipe when the step is already known, and ' +
+      'workato_recipe_step_search to find steps across MANY recipes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description:
+            'Numeric Workato recipe id, e.g. 72449879. Found in the recipe URL: ' +
+            'app.workato.com/recipes/<recipe_id>-<slug>.',
+        },
+        query: {
+          type: 'string',
+          description:
+            'What to look for. Interpreted according to [match]; case-insensitive in ' +
+            'every mode.',
+        },
+        match: {
+          type: 'string',
+          enum: ['substring', 'word', 'regex'],
+          description:
+            "How [query] is interpreted. 'substring' (default) is a plain contiguous " +
+            "match; 'word' matches whole words only; 'regex' is a JavaScript regular " +
+            'expression, limited to 200 characters, refused when a quantifier is ' +
+            'applied to a group that already contains one (e.g. "(a+)+"), and run ' +
+            'against the first 20000 characters of each value.',
+        },
+        scope: {
+          type: 'string',
+          enum: ['input', 'all'],
+          description:
+            "Where to look. 'all' (default) covers step input (conditions included), " +
+            'titles, descriptions, comments, the foreach source and the extended ' +
+            "schemas. 'input' searches only the configured input, which is the fastest " +
+            'way to find a mapping.',
+        },
+        max_matches: {
+          type: 'number',
+          description:
+            'Matches returned per call. Default 50, maximum 500. total_matches always ' +
+            'reports how many exist; a truncated response carries next_cursor.',
+          minimum: 1,
+          maximum: 500,
+        },
+        cursor: {
+          type: 'string',
+          description:
+            'Opaque continuation token from a previous truncated response. Repeat the ' +
+            'same call with it to get the next matches without repeats.',
+        },
+        snippet_chars: {
+          type: 'number',
+          description:
+            'Characters of context returned around each match. Default 160, clamped ' +
+            '20-2000. A value shorter than this comes back whole.',
+          minimum: 20,
+          maximum: 2000,
+        },
+        timeout_ms: {
+          type: 'number',
+          description:
+            'In-page fetch timeout in milliseconds. Default 30000, clamped ' +
+            '10000-110000. Raise for very large recipes.',
+          minimum: 10000,
+          maximum: 110000,
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+        windowId: {
+          type: 'number',
+          description:
+            'Accepted for call-shape symmetry with the browser tools and otherwise ' +
+            'ignored: this tool resolves its tab from [tabId] or the session pinned tab.',
+        },
+      },
+      required: ['recipe_id', 'query'],
     },
   },
   {
