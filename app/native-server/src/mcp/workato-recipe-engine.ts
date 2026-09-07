@@ -16,6 +16,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import { describePyEvalFailure, lintPyEvalSource, type PyLintIssue } from './workato-pyeval-lint';
+import { applyDerivedSchemas, type DerivedSchemaEntry } from './workato-recipe-schema';
 
 export type PathSegment = string | number;
 export type JsonObject = Record<string, unknown>;
@@ -49,13 +50,18 @@ export interface MutationSummary {
   detail?: JsonObject;
 }
 
-/** The four surgical mutators plus the batch tool and the three legacy names. */
+/**
+ * The four surgical mutators, the batch tool, the three legacy names, and the
+ * read-only validator. They share one branch in the router because they all
+ * need the engine and Node's filesystem; only the validator never saves.
+ */
 export const WORKATO_RECIPE_MUTATOR_TOOLS = {
   SET_INPUT_PATH: 'workato_recipe_set_input_path',
   DELETE_INPUT_PATH: 'workato_recipe_delete_input_path',
   SET_PY_EVAL_CODE: 'workato_recipe_set_py_eval_code',
   SET_EXTENDED_SCHEMA: 'workato_recipe_set_extended_schema',
   APPLY: 'workato_recipe_apply',
+  VALIDATE: 'workato_recipe_validate',
   ADD_STEP: 'workato_recipe_add_step',
   SET_STEP_INPUT: 'workato_recipe_set_step_input',
   MAP_DATAPILL: 'workato_recipe_map_datapill',
@@ -1010,6 +1016,8 @@ export interface MutatorSummaryInput {
   validation_warnings?: string[];
   notices?: string[];
   config_notes?: JsonObject;
+  /** Extended schemas the engine derived from the tree's own declarations. */
+  derived_schemas?: DerivedSchemaEntry[];
   /** No save was attempted; the summary describes what a save would do. */
   dry_run?: boolean;
   would_save_version?: unknown;
@@ -1053,6 +1061,9 @@ export function buildMutatorSummary(toolName: string, input: MutatorSummaryInput
       payload.would_save_version = input.would_save_version;
   }
   if (input.changed_paths) payload.changed_paths = input.changed_paths;
+  if (input.derived_schemas && input.derived_schemas.length > 0) {
+    payload.derived_schemas = input.derived_schemas;
+  }
   if (input.validation_warnings && input.validation_warnings.length > 0) {
     payload.validation_warnings = input.validation_warnings;
   }
@@ -1252,6 +1263,35 @@ export async function runRecipeMutation(
 
   if (renumber) renumberTree(code);
 
+  // A save rewrites the WHOLE tree, so a Variables or clock step whose
+  // structured input has no matching extended schema loses that input on this
+  // save whether or not this call edited it. The schemas are restatements of a
+  // declaration the step already carries, so they are derived rather than
+  // copied by hand from another recipe. Derived nodes are deliberately NOT
+  // marked as touched: filling in a schema must not turn an unrelated
+  // pre-existing quirk elsewhere on that node into a refusal.
+  let derivedSchemas: DerivedSchemaEntry[] = [];
+  if (args.auto_schema !== false) {
+    const derived = applyDerivedSchemas(code);
+    derivedSchemas = derived.applied;
+    for (const entry of derivedSchemas) {
+      for (const key of entry.schemas) {
+        if (!changedPaths.includes(`${entry.step}:${key}`))
+          changedPaths.push(`${entry.step}:${key}`);
+      }
+    }
+    if (derivedSchemas.length > 0) {
+      const kinds = [...new Set(derivedSchemas.map((entry) => entry.kind))].join(', ');
+      notices.push(
+        `derived ${derivedSchemas.length} extended schema(s) from the recipe's own declarations ` +
+          `(${kinds}) so Workato does not drop the structured input; pass auto_schema:false to skip`,
+      );
+    }
+    for (const skip of derived.skipped) {
+      notices.push(`schema NOT derived for ${skip.step}: ${skip.reason}`);
+    }
+  }
+
   const validation = validateRecipeTree(code, touched, created);
   if (validation.errors.length > 0) {
     throw new RecipeMutationError(
@@ -1287,6 +1327,7 @@ export async function runRecipeMutation(
       validation_warnings: validation.warnings,
       notices,
       config_notes: configNotes,
+      derived_schemas: derivedSchemas,
       dry_run: true,
       would_save_version: baseVersion === undefined ? undefined : baseVersion + 1,
       verify_readback: args.verify_readback,
@@ -1328,6 +1369,7 @@ export async function runRecipeMutation(
     validation_warnings: validation.warnings,
     notices,
     config_notes: configNotes,
+    derived_schemas: derivedSchemas,
     verify_readback: args.verify_readback,
   });
 }

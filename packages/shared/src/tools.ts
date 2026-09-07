@@ -117,6 +117,7 @@ export const TOOL_NAMES = {
     SET_PY_EVAL_CODE: 'workato_recipe_set_py_eval_code',
     SET_EXTENDED_SCHEMA: 'workato_recipe_set_extended_schema',
     APPLY: 'workato_recipe_apply',
+    VALIDATE: 'workato_recipe_validate',
   },
   WORKATO_LCAP: {
     APPS_LIST: 'workato_lcap_apps_list',
@@ -4288,6 +4289,12 @@ export const TOOL_SCHEMAS: Tool[] = [
           description: 'Validate and report what would change without saving anything.',
           default: false,
         },
+        auto_schema: {
+          type: 'boolean',
+          description:
+            "Derive the extended schemas the recipe's own declarations imply (Variables steps, clock trigger) so a structured input is not silently dropped on save. Default true.",
+          default: true,
+        },
         tabId: {
           type: 'number',
           description:
@@ -4348,6 +4355,12 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'boolean',
           description: 'Validate and report what would change without saving anything.',
           default: false,
+        },
+        auto_schema: {
+          type: 'boolean',
+          description:
+            "Derive the extended schemas the recipe's own declarations imply (Variables steps, clock trigger) so a structured input is not silently dropped on save. Default true.",
+          default: true,
         },
         tabId: {
           type: 'number',
@@ -4696,7 +4709,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       'version instead of one version per field. THE tool for more than a single edit, and the ' +
       'only one with structural operations. Ops: set_input, delete_input, set_extended_schema, ' +
       'set_py_eval_code, map_datapill, insert_step, remove_step, move_step, set_loop_source, ' +
-      'bind_connection. Steps are addressed by number, `as` anchor, or uuid; a duplicated number ' +
+      'bind_connection, derive_schema. Steps are addressed by number, `as` anchor, or uuid; a duplicated number ' +
       'in a corrupted tree is refused rather than guessed. Changes are applied to a clone and ' +
       'validated locally first (numbering globally sequential including nested blocks, unique ' +
       '8-hex `as`, uuid on new nodes, else/elsif last inside if.block, catch last inside ' +
@@ -4737,6 +4750,7 @@ export const TOOL_SCHEMAS: Tool[] = [
                   'move_step',
                   'set_loop_source',
                   'bind_connection',
+                  'derive_schema',
                 ],
                 description: 'Which operation this entry performs.',
               },
@@ -4922,10 +4936,61 @@ export const TOOL_SCHEMAS: Tool[] = [
             'Forwarded to the underlying save: read the stored tree back and fail when Workato silently dropped input keys (default true).',
           default: true,
         },
+        auto_schema: {
+          type: 'boolean',
+          description:
+            "Derive the extended schemas the recipe's own declarations imply (Variables steps, clock trigger) so a structured input is not silently dropped on save. Default true.",
+          default: true,
+        },
         tabId: { type: 'number', description: 'Target tab ID for the pull and save (optional).' },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
       required: ['recipe_id', 'changes'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_RECIPE.VALIDATE,
+    description:
+      'Check a recipe locally WITHOUT saving. Workato has no validate-without-save endpoint, so ' +
+      'the only way to learn a tree was wrong was to save it and read code_errors, at the cost of ' +
+      'a version. Checks: structure (globally sequential numbering, unique 8-hex `as`, uuid ' +
+      'present, else/elsif last in an if block, catch last in try, while_condition first in ' +
+      'repeat, foreach source at the node root); bindings (every connection-backed provider has a ' +
+      'config entry with an account_id, the gap Workato reports only at start time as ' +
+      '"account_id cannot be blank"); datapills (every _dp reference and Variables `<uuid>:<as>` ' +
+      'composite points at a step that exists and runs earlier, reported with the step and the ' +
+      'exact path); schemas (structured input with no extended_input_schema, a datapill target ' +
+      'with no extended_output_schema) plus a preview of the schemas auto_schema would derive. ' +
+      'NOT covered: formulas are Ruby and are not parsed, and nothing is executed, so a valid ' +
+      'result is not proof the recipe runs. Source: recipe_id pulls the saved recipe, code_path ' +
+      'reads a pulled file, code validates a tree before you save it. Never writes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description:
+            'Recipe to pull and validate. With code or code_path it is metadata only and nothing is pulled.',
+        },
+        code_path: {
+          type: 'string',
+          description:
+            'Local recipe file from workato_pull_recipe(out_file), or a bare code tree. Its config is used when config is not given.',
+        },
+        code: {
+          type: 'object',
+          description:
+            'Recipe code tree (the trigger object with its nested block) to validate as is.',
+        },
+        config: {
+          type: 'array',
+          items: { type: 'object', additionalProperties: true },
+          description:
+            'Recipe config array for the binding check. Defaults to the pulled or file config; without one, bindings are reported as unchecked.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID for the pull (optional).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
     },
   },
   {
