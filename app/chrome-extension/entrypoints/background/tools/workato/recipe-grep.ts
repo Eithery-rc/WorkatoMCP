@@ -221,6 +221,19 @@ export function searchableValues(
       out.push({ path: 'comment', value: node.comment });
     }
     if (node.source !== undefined) collectStrings(node.source, 'source', out);
+    // The callee of a call_recipe step is an id in `input.flow_id`; its NAME
+    // exists only here, so "which step calls <recipe name>" needs this key.
+    if (node.dynamicPickListSelection !== undefined) {
+      collectStrings(node.dynamicPickListSelection, 'dynamicPickListSelection', out);
+    }
+    // Job report columns live on the trigger node: the labels in
+    // job_report_schema and the values (often datapills) in job_report_config.
+    if (node.job_report_schema !== undefined) {
+      collectStrings(node.job_report_schema, 'job_report_schema', out);
+    }
+    if (node.job_report_config !== undefined) {
+      collectStrings(node.job_report_config, 'job_report_config', out);
+    }
   }
   // `input` carries the mappings and, for if/elsif, the conditions.
   if (node.input !== undefined) collectStrings(node.input, 'input', out);
