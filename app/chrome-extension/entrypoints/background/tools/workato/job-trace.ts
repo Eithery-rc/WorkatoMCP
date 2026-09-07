@@ -4,7 +4,9 @@ import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
 import {
   applyTraceProjection,
+  buildErasedTrace,
   buildSlimTrace,
+  isErasedJob,
   pickStepFields,
   stripSchemaNoise,
   STEP_FIELDS,
@@ -222,6 +224,19 @@ class WorkatoJobTraceTool extends BaseBrowserToolExecutor {
         max_items: maxItems,
         ...(stepFields ? { fields: stepFields } : {}),
       };
+
+      // An erased job answers `line_details: []`. Projecting that produces a
+      // trace with zero steps, which reads as "the job ran nothing". Say the
+      // data is gone instead, and say why. `full:true` stays a raw passthrough
+      // (the caller asked for the untouched documents, and `erased` is on the
+      // job header there already).
+      if (!full && isErasedJob(result.meta ?? {})) {
+        const erased = buildErasedTrace(jobId, result.meta ?? {});
+        return {
+          content: [{ type: 'text', text: JSON.stringify(erased) }],
+          isError: false,
+        };
+      }
 
       let payload: unknown;
       if (full) {
