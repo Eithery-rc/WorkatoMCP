@@ -6,6 +6,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+### Added
+
+- **`workato_test_recipe`**: run a recipe's Test, with trigger input, from the tool layer. Until now the only way to feed an event into a recipe was to build a throwaway recipe and click Test in the browser. The mode is read from the trigger rather than promised for everything: a `workato_recipe_function` trigger takes `trigger_input` (sent as `trigger_event.parameters`, checked against the trigger's declared parameters first, so a typo is refused instead of arriving as an empty pill), a `clock` trigger runs immediately and accepts no input, a webhook or `workato_pub_sub` trigger arms a test that waits for a real event (`action:'stop'` ends it), and any other trigger is refused before a request is sent. Workato's response carries no job id, so the tool records the test jobs that already exist, sends the PUT, and polls the test-job list; a wait that runs out returns status `pending` with the elapsed time and the job as it actually stands, never a guessed outcome. The recipe is not started and stays stopped afterwards with `stop_reason: test_run_stop`.
+- **Testing is execution, so it is gated like one.** A test runs the recipe's real steps, so `allow_writes: true` is required whenever the recipe binds a connection-backed provider (a `config` entry carrying `account_id`, or a step provider the config does not describe at all). The refusal names the providers and happens before any HTTP. A recipe whose providers are all connectionless (logger, Variables, Event Streams, Scheduler, Python) runs without the flag, which is what makes a probe recipe cheap to run.
+- **Publishing to an Event Streams topic has no API, and the tools now say so.** The topics UI has no publish action and `POST /web_api/pub_sub/topics/<id>/messages.json` is a 404, so no `workato_publish_message` tool was added. The supported path, documented on `workato_test_recipe`, is to test-run a recipe with a `workato_pub_sub`/`publish_to_topic` step whose input is `{topic_id, message}` plus a matching `extended_input_schema`. `workato_call_action` now states the matching limit: its endpoint needs a real connection id, an adapter name is rejected, so a connectionless step can only be executed inside a recipe test.
+
 ## bridge 1.5.0 · shared 1.2.0 (2026-08-26)
 
 ### Added
