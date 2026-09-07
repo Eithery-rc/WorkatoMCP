@@ -2,6 +2,7 @@ import { describe, expect, test, afterAll, beforeAll, jest } from '@jest/globals
 import supertest from 'supertest';
 import Server from './index';
 import { profileRegistry } from './profile-registry';
+import { SERVER_NAME } from '../mcp/server-identity';
 
 describe('server tests', () => {
   beforeAll(async () => {
@@ -53,7 +54,7 @@ describe('server tests', () => {
           tools: {},
         },
         serverInfo: {
-          name: 'ChromeMcpServer',
+          name: SERVER_NAME,
         },
       },
     });

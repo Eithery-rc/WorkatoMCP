@@ -36,6 +36,7 @@ import {
 } from './workato-save-dependents';
 import { handleWorkatoDatapillCall, isWorkatoDatapillTool } from './workato-datapill';
 import { handleWorkatoOperationCall, isWorkatoOperationTool } from './workato-operation-status';
+import { handleWorkatoBridgeInfoCall, isWorkatoBridgeInfoTool } from './workato-bridge-info';
 import {
   applyAutoFile,
   prepareAutoFileCall,
@@ -722,6 +723,15 @@ export function createToolRouter(): ToolRouter {
       // `workato_datapill` is pure string assembly — no browser round trip.
       if (isWorkatoDatapillTool(name)) {
         return handleWorkatoDatapillCall(name, effectiveArgs || {});
+      }
+
+      // `workato_bridge_info` reports this build's own identity, locally.
+      if (isWorkatoBridgeInfoTool(name)) {
+        return handleWorkatoBridgeInfoCall({
+          connected_profiles: profileRegistry.getConnectedProfiles(),
+          session_context: sessionSummary(),
+          default_profile: profileRegistry.getActiveProfile(),
+        });
       }
 
       // Native orchestrators: they drive several extension tools in sequence
