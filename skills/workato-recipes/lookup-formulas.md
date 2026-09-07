@@ -1,8 +1,8 @@
 # Lookup formulas
 
-Formulas that query external data sources from inside a recipe — distinct from the per-datapill transformations in the other files. All three are **case-sensitive AND datatype-sensitive** on both the column name and the lookup value, and return `nil` on miss (no exception).
+Formulas that query external data sources from inside a recipe , distinct from the per-datapill transformations in the other files. All three are **case-sensitive AND datatype-sensitive** on both the column name and the lookup value, and return `nil` on miss (no exception).
 
-## `data_table_lookup` — query a Workato Data Table
+## `data_table_lookup`: query a Workato Data Table
 
 Newer Data Tables feature (UUID-keyed columns, relational schema). Project-scoped.
 
@@ -30,13 +30,14 @@ data_table_lookup('Project name', 'Table name', 'Match column': 'Match value')['
 
 ### Gotchas
 
+- **Folder path**: If the data table resides in a folder within the project, prefix the table name with the folder path using `/` as a separator (e.g. `'Folder/Table name'`).
 - **Integer-typed datapill → string-typed column**: cast first with `.to_s`. The lookup compares both type and value.
   - `data_table_lookup('Proj', 'Tbl', 'SKU': _dp("step.id").to_s)['Name']`
 - **Whitespace counts.** `'Angela '` (trailing space) ≠ `'Angela'`. Use `.strip` on the lookup value if data may have padding.
 - **First match wins.** If multiple rows match, you get the first. Use a row-list MCP tool (`workato_data_table_row_list`) for full-result needs.
-- **Use [[workato_data_tables_list]] / [[workato_data_table_get]] MCP tools** to verify project/table/column names exactly before pasting them into the formula — typos return `nil` silently.
+- **Use [[workato_data_tables_list]] / [[workato_data_table_get]] MCP tools** to verify project/table/column names exactly before pasting them into the formula: typos return `nil` silently.
 
-## `lookup` — query a Workato Lookup Table
+## `lookup`: query a Workato Lookup Table
 
 Older Lookup Tables feature (positional `col1..col10` schema, but lookups use the **column header**, not `colN`). Workspace-scoped (no project arg).
 
@@ -57,13 +58,13 @@ lookup('Lookup table name OR id', 'Match column': 'Match value')['Return column'
 
 ### Gotchas
 
-- **Table identifier may be the table name OR its numeric ID as a string** (`'6'`, not `6`). Names with rename history may break — IDs are stable.
+- **Table identifier may be the table name OR its numeric ID as a string** (`'6'`, not `6`). Names with rename history may break: IDs are stable.
 - **Lookup-table column headers are user-defined labels**, not the underlying `col1..col10` positional names. Use the header.
 - **Use [[workato_lookup_tables_list]] / [[workato_lookup_table_get]] MCP tools** to confirm the exact header strings before authoring the formula.
 
-## `lookup_table` — inline static map
+## `lookup_table`: inline static map
 
-A hash literal used as a quick switch/lookup. No external data — the values are embedded directly in the formula.
+A hash literal used as a quick switch/lookup. No external data: the values are embedded directly in the formula.
 
 ### Examples
 
@@ -76,7 +77,7 @@ A hash literal used as a quick switch/lookup. No external data — the values ar
 
 | You need                                             | Use                                     |
 | ---------------------------------------------------- | --------------------------------------- |
-| 3–20 hard-coded mappings, never change               | `lookup_table` (inline hash)            |
+| 3-20 hard-coded mappings, never change               | `lookup_table` (inline hash)            |
 | Mappings edited by ops in a UI, no schema            | `lookup` (older Lookup Tables)          |
 | Multi-column relational data, types, project scoping | `data_table_lookup` (newer Data Tables) |
 

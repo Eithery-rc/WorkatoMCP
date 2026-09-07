@@ -49,14 +49,14 @@ Inverse of `include?`. `"Partner account".exclude?("partner")` → `true`.
 
 True if regex matches anywhere in the string. `"Jean Marie".match?(/Marie/)` → `true`. Regex literal with forward slashes; case-sensitive unless `/i` modifier used.
 
-### Dynamic regex patterns — `#{...}` interpolation inside `/.../`
+### Dynamic regex patterns: `#{...}` interpolation inside `/.../`
 
 Even though `#{...}` interpolation is banned in plain string literals, it **is** allowed inside regex literals. This is the cleanest way to build a pattern that depends on a datapill.
 
-- `_dp("payload").to_s.scan(/^.*#{_dp("notice_id")}.*$/).first` — first line in a multi-line payload containing a dynamic id (verified on AdPay Load MVP recipe 72436887).
-- `text.match?(/^#{_dp("prefix")}/)` — startswith check on a dynamic prefix.
+- `_dp("payload").to_s.scan(/^.*#{_dp("notice_id")}.*$/).first` (first line in a multi-line payload containing a dynamic id, verified on AdPay Load MVP recipe 72436887).
+- `text.match?(/^#{_dp("prefix")}/)` (startswith check on a dynamic prefix).
 - Works with regex modifiers: `/.../i`, `/.../m`.
-- Also documented/expected to work on `.match`, `.gsub(/regex/, ...)`, `.sub(/regex/, ...)`, `.split(/regex/)` — verify empirically when relying on a specific combination.
+- Also documented/expected to work on `.match`, `.gsub(/regex/, ...)`, `.sub(/regex/, ...)`, `.split(/regex/)` (verify empirically when relying on a specific combination).
 - **Gotcha**: interpolated content is **not** automatically regex-escaped. If the datapill could contain `. ( ) [ ] | + * ? \\`, those will be interpreted as regex metacharacters. There is no `Regexp.escape` in the formula allowlist; if you need literal matching, fall back to `.include?(...)` instead.
 
 ### `.starts_with?(prefix)` / `.ends_with?(suffix)`
@@ -67,7 +67,7 @@ Case-sensitive prefix/suffix. `"Jean Marie".starts_with?("Jean")` → `true`. `"
 
 ### `.lstrip` / `.rstrip` / `.strip`
 
-Trim whitespace from left / right / both ends. `" Test ".strip` → `"Test"`. Does not collapse interior whitespace — use `.gsub(/\s+/, " ")` for that.
+Trim whitespace from left / right / both ends. `" Test ".strip` → `"Test"`. Does not collapse interior whitespace. Use `.gsub(/\s+/, " ")` for that.
 
 ### `.parameterize`
 
@@ -80,6 +80,17 @@ ASCII approximation of unicode characters. `"Chloé".transliterate` → `"Chloe"
 ### `.scrub(replacement)`
 
 Replaces invalid byte sequences in the string. `"abcあ\x81".scrub("*")` → `"abcあ*"`.
+
+### `.unicode_normalize(form=:nfc)`
+
+Returns a normalized form of the string, using Unicode normalizations `:nfc`, `:nfd`, `:nfkc`, or `:nfkd`. Default is `:nfc`.
+
+- **Operand types**: string
+- **Returns**: string
+- `"a\u0300".unicode_normalize` -> `"\u00e0"`
+- `"a\u0300".unicode_normalize(:nfd)` -> `"a\u0300"`
+
+[Docs](https://docs.workato.com/formulas/string-formulas.html#unicode-normalize)
 
 ### `.strip_tags`
 
@@ -143,11 +154,23 @@ Re-encodes the string. `"Jean Marie".encode("Windows-1252")` → `"Jean Marie"`.
 
 ### `.bytes` / `.bytesize` / `.byteslice(start, len)`
 
-Byte-level access — useful for multi-byte (CJK) strings.
+Byte-level access, useful for multi-byte (CJK) strings.
 
 - `"Hello".bytes` → `[72, 101, 108, 108, 111]`
 - `"Hello".bytesize` → `5`
 - `"abc漢字".byteslice(0, 4)` → `"abc漢"`
+
+### `.unpack(format)`
+
+Decodes a string (which may contain binary data) according to format directives, returning an array of extracted values.
+
+- **Operand types**: string
+- **Returns**: array
+- **Params**: `format` (directive string such as `"C*"` for bytes or `"H*"` for hex string)
+- `"ABC".unpack("C*")` -> `[65, 66, 67]`
+- `"foo".unpack("H*")` -> `["666f6f"]`
+
+[Docs](https://docs.workato.com/formulas/string-formulas.html#unpack)
 
 ## Case transformation
 
