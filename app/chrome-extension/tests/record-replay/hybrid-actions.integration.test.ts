@@ -114,8 +114,16 @@ function setupDefaultTabsMessageMock(): void {
 function setupDefaultToolMock(): void {
   mocks.handleCallTool.mockImplementation(async (req: { name: string }) => {
     if (req.name === TOOL_NAMES.BROWSER.SCREENSHOT) {
+      // The capture comes back as an MCP image block; the text block alongside
+      // it carries metadata only (see buildScreenshotContent).
       return {
-        content: [{ type: 'text', text: JSON.stringify({ base64Data: 'dGVzdGRhdGE=' }) }],
+        content: [
+          { type: 'image', data: 'dGVzdGRhdGE=', mimeType: 'image/jpeg' },
+          {
+            type: 'text',
+            text: JSON.stringify({ success: true, name: 'workflow', image_returned: true }),
+          },
+        ],
       };
     }
     return {};

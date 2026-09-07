@@ -152,12 +152,12 @@ export async function canvasToDataURL(
  * @param {number} [options.scale=1.0] - The scaling factor for dimensions (e.g., 0.7 for 70%).
  * @param {number} [options.quality=0.8] - The quality for lossy formats like JPEG (0.0 to 1.0).
  * @param {string} [options.format='image/jpeg'] - The target image format.
- * @returns {Promise<{dataUrl: string, mimeType: string}>} A promise that resolves to the compressed image data URL and its MIME type.
+ * @returns {Promise<{dataUrl: string, mimeType: string, width: number, height: number}>} A promise that resolves to the compressed image data URL, its MIME type and its pixel dimensions.
  */
 export async function compressImage(
   imageDataUrl: string,
   options: { scale?: number; quality?: number; format?: 'image/jpeg' | 'image/webp' },
-): Promise<{ dataUrl: string; mimeType: string }> {
+): Promise<{ dataUrl: string; mimeType: string; width: number; height: number }> {
   const { scale = 1.0, quality = 0.8, format = 'image/jpeg' } = options;
 
   // 1. Create an ImageBitmap from the original data URL for efficient drawing.
@@ -190,5 +190,7 @@ export async function compressImage(
     reader.readAsDataURL(compressedDataUrl);
   });
 
-  return { dataUrl, mimeType: format };
+  // The dimensions travel with the image: callers that return it to a client
+  // need the coordinate space the client will actually see.
+  return { dataUrl, mimeType: format, width: newWidth, height: newHeight };
 }

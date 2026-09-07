@@ -102,6 +102,69 @@ function assertValidPageDetails(details: unknown): ScreenshotPageDetails {
   return candidate as ScreenshotPageDetails;
 }
 
+/** Everything the response needs to describe one capture. */
+export interface ScreenshotContentInput {
+  name: string;
+  tabId?: number;
+  url?: string;
+  width?: number;
+  height?: number;
+  /** Base64 image payload with no `data:` prefix. Absent when storeBase64 was false. */
+  base64?: string;
+  mimeType?: string;
+  fileSaved?: boolean;
+  filename?: string;
+  fullPath?: string;
+  downloadId?: number;
+  saveError?: string;
+}
+
+/** Decoded byte count of a base64 string, without decoding it. */
+export function base64ByteLength(data: string): number {
+  const clean = data.replace(/[^A-Za-z0-9+/]/g, '');
+  return Math.floor((clean.length * 3) / 4);
+}
+
+/**
+ * Build the content blocks for a capture: the image as a real MCP image block
+ * so the client can display it, plus a small JSON metadata block.
+ *
+ * The base64 payload is never put in the text block. Serialized into JSON it
+ * costs the caller a large amount of context for something no client renders.
+ */
+export function buildScreenshotContent(input: ScreenshotContentInput): ToolResult['content'] {
+  const content: ToolResult['content'] = [];
+  const hasImage = typeof input.base64 === 'string' && input.base64.length > 0;
+  const mimeType = input.mimeType || 'image/jpeg';
+
+  if (hasImage) {
+    content.push({ type: 'image', data: input.base64 as string, mimeType });
+  }
+
+  const metadata: Record<string, unknown> = {
+    success: true,
+    message: `Screenshot [${input.name}] captured successfully`,
+    tabId: input.tabId,
+    url: input.url,
+    name: input.name,
+    width: input.width,
+    height: input.height,
+    image_returned: hasImage,
+  };
+  if (hasImage) {
+    metadata.mimeType = mimeType;
+    metadata.bytes = base64ByteLength(input.base64 as string);
+  }
+  metadata.fileSaved = input.fileSaved === true;
+  if (input.filename !== undefined) metadata.filename = input.filename;
+  if (input.fullPath !== undefined) metadata.fullPath = input.fullPath;
+  if (input.downloadId !== undefined) metadata.downloadId = input.downloadId;
+  if (input.saveError !== undefined) metadata.saveError = input.saveError;
+
+  content.push({ type: 'text', text: JSON.stringify(metadata) });
+  return content;
+}
+
 /**
  * Tool for capturing screenshots of web pages
  */
@@ -141,7 +204,11 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
     let finalImageDataUrl: string | undefined;
     let finalImageWidthCss: number | undefined;
     let finalImageHeightCss: number | undefined;
-    const results: any = { base64: null, fileSaved: false };
+    const results: any = { fileSaved: false };
+    let imageBase64: string | undefined;
+    let imageMimeType: string | undefined;
+    let imageWidth: number | undefined;
+    let imageHeight: number | undefined;
     let originalScroll: { x: number; y: number } | null = null;
     let didPreparePage = false;
     let pageDetails: ScreenshotPageDetails | undefined;
@@ -258,8 +325,11 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
 
       // 2. Process output
       // Update screenshot context for coordinate scaling by tools like chrome_computer
-      try {
-        if (typeof finalImageWidthCss === 'number' && typeof finalImageHeightCss === 'number') {
+      const setScreenshotContext = (shotWidth: number, shotHeight: number) => {
+        try {
+          if (typeof finalImageWidthCss !== 'number' || typeof finalImageHeightCss !== 'number') {
+            return;
+          }
           let hostname = '';
           try {
             hostname = tab.url ? new URL(tab.url).hostname : '';
@@ -270,17 +340,19 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
           const viewportWidth = pageDetails?.viewportWidth ?? finalImageWidthCss;
           const viewportHeight = pageDetails?.viewportHeight ?? finalImageHeightCss;
           screenshotContextManager.setContext(tab.id!, {
-            screenshotWidth: finalImageWidthCss,
-            screenshotHeight: finalImageHeightCss,
+            screenshotWidth: shotWidth,
+            screenshotHeight: shotHeight,
             viewportWidth,
             viewportHeight,
             devicePixelRatio: pageDetails?.devicePixelRatio,
             hostname,
           });
+        } catch (e) {
+          console.warn('Failed to set screenshot context:', e);
         }
-      } catch (e) {
-        console.warn('Failed to set screenshot context:', e);
-      }
+      };
+      setScreenshotContext(finalImageWidthCss as number, finalImageHeightCss as number);
+
       if (storeBase64 === true) {
         // Compress image for base64 output to reduce size
         const compressed = await compressImage(finalImageDataUrl, {
@@ -289,18 +361,17 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
           format: 'image/jpeg', // JPEG for better compression
         });
 
-        // Include base64 data in response (without prefix)
-        const base64Data = compressed.dataUrl.replace(/^data:image\/[^;]+;base64,/, '');
-        results.base64 = base64Data;
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({ base64Data, mimeType: compressed.mimeType }),
-            },
-          ],
-          isError: false,
-        };
+        // Keep the payload (without the data: prefix) for the image block built
+        // at the end. storeBase64 and savePng are independent: no early return,
+        // so a caller can ask for the image and a file in one call.
+        imageBase64 = compressed.dataUrl.replace(/^data:image\/[^;]+;base64,/, '');
+        imageMimeType = compressed.mimeType;
+        imageWidth = compressed.width;
+        imageHeight = compressed.height;
+        // The client sees the compressed image, so coordinates it reads off that
+        // image are in ITS pixel space. Re-pin the context to those dimensions
+        // or chrome_computer scales clicks from a space nobody looked at.
+        setScreenshotContext(compressed.width, compressed.height);
       }
 
       if (savePng === true) {
@@ -368,19 +439,20 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
     this.logInfo('Screenshot completed!');
 
     return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            success: true,
-            message: `Screenshot [${name}] captured successfully`,
-            tabId: tab.id,
-            url: tab.url,
-            name: name,
-            ...results,
-          }),
-        },
-      ],
+      content: buildScreenshotContent({
+        name,
+        tabId: tab.id,
+        url: tab.url,
+        width: imageWidth ?? finalImageWidthCss,
+        height: imageHeight ?? finalImageHeightCss,
+        base64: imageBase64,
+        mimeType: imageMimeType,
+        fileSaved: results.fileSaved === true,
+        filename: results.filename,
+        fullPath: results.fullPath,
+        downloadId: results.downloadId,
+        saveError: results.saveError,
+      }),
       isError: false,
     };
   }
