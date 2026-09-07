@@ -30,6 +30,12 @@ import {
   isWorkatoSaveWithDependentsTool,
 } from './workato-save-dependents';
 import { handleWorkatoDatapillCall, isWorkatoDatapillTool } from './workato-datapill';
+import {
+  applyAutoFile,
+  prepareAutoFileCall,
+  withOutFileToolSchemas,
+  type AutoFilePlan,
+} from './workato-auto-file';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { profileRegistry } from '../server/profile-registry';
 
@@ -371,6 +377,16 @@ export function createToolRouter(): ToolRouter {
         lcapOutFile = prepared.outFile;
       }
 
+      // Generic out_file / auto-file for every other read tool and for
+      // chrome_screenshot: strip the file params here, spill the result on the
+      // way back out. See workato-auto-file.ts.
+      let autoFilePlan: AutoFilePlan | undefined;
+      {
+        const prepared = prepareAutoFileCall(name, effectiveArgs || {});
+        effectiveArgs = prepared.args;
+        autoFilePlan = prepared.plan;
+      }
+
       // `workato_datapill` is pure string assembly — no browser round trip.
       if (isWorkatoDatapillTool(name)) {
         return handleWorkatoDatapillCall(name, effectiveArgs || {});
@@ -437,7 +453,7 @@ export function createToolRouter(): ToolRouter {
       if (response.status === 'success') {
         if (pullOutFile) return writePulledRecipe(pullOutFile, response.data);
         if (lcapOutFile) return writeLcapOutFile(lcapOutFile, response.data);
-        return response.data;
+        return applyAutoFile(name, autoFilePlan, response.data);
       } else {
         return {
           content: [
@@ -464,7 +480,11 @@ export function createToolRouter(): ToolRouter {
 
   const listTools = async () => {
     const dynamicTools = await listDynamicFlowTools(sessionProfile);
-    return { tools: withProfileRoutingToolSchemas([...TOOL_SCHEMAS, ...dynamicTools]) };
+    return {
+      tools: withOutFileToolSchemas(
+        withProfileRoutingToolSchemas([...TOOL_SCHEMAS, ...dynamicTools]),
+      ),
+    };
   };
 
   return { listTools, handleToolCall };
