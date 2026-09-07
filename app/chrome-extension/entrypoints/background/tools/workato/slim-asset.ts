@@ -87,6 +87,45 @@ export function buildSlimRecipe(item: RecipeListItem): SlimRecipe {
   };
 }
 
+export interface RecipeMatchHighlights {
+  name?: string;
+  description?: string;
+  actions?: string[];
+  applications?: string[];
+}
+
+/**
+ * Workato marks what a full-text query matched by wrapping it in
+ * `<span class="text-highlight">`. The markup is noise in a tool response; the
+ * sentence around it is the answer to "why did this recipe come back".
+ */
+export function cleanHighlightMarkup(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value
+    .replace(/<[^>]*>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** The cleaned highlight blocks of one list item, or null when it has none. */
+export function extractHighlights(item: RecipeListItem): RecipeMatchHighlights | null {
+  const raw = item.highlights;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const out: RecipeMatchHighlights = {};
+  const name = cleanHighlightMarkup(record.name);
+  if (name) out.name = name;
+  const description = cleanHighlightMarkup(record.description);
+  if (description) out.description = description;
+  for (const key of ['actions', 'applications'] as const) {
+    const list = record[key];
+    if (!Array.isArray(list)) continue;
+    const cleaned = list.map(cleanHighlightMarkup).filter((entry) => entry !== '');
+    if (cleaned.length > 0) out[key] = cleaned;
+  }
+  return Object.keys(out).length === 0 ? null : out;
+}
+
 export function buildSlimConnection(item: ConnectionListItem): SlimConnection {
   return {
     id: Number(item.id ?? 0),

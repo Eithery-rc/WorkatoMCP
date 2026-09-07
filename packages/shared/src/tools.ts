@@ -1999,9 +1999,12 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Scans the recipe list (every item already carries trigger_application and ' +
       'action_applications, so candidates are found without opening them), reads the code of the ' +
       'matches, and walks the tree at any depth so steps nested inside if / repeat_each / try ' +
-      'blocks are found too. Returns per hit: recipe_id, recipe_name, step_number, keyword, ' +
-      'name, `as` anchor, description and the full `input` block. Connection secrets are ' +
-      'stripped. ' +
+      'blocks are found too. Scope it with folder_ids (a list scan per folder, not recursive) or ' +
+      'skip the listing with recipe_ids; input_query keeps only steps whose serialized input ' +
+      'matches. Returns per hit: recipe_id, recipe_name, step_number, keyword, name, `as` anchor, ' +
+      'description and the `input` block, or input_preview + input_chars past preview_chars. ' +
+      'Connection secrets are stripped. `coverage` says whether the scan finished: a failed page, ' +
+      'max_pages, max_recipes or a filled limit each leave it incomplete. ' +
       'The returned input is a TEMPLATE, not a value to copy blindly: its datapills are bound to ' +
       "that recipe's own steps and must be repointed. Zero results is a normal answer meaning " +
       'this connector was never used here, not an error. Read-only. Requires an open Workato tab.',
@@ -2022,6 +2025,39 @@ export const TOOL_SCHEMAS: Tool[] = [
             'step.name, e.g. "send_mail". Omit to see every step for this provider, which is ' +
             'also how you learn which of its operations are used here at all.',
         },
+        folder_ids: {
+          type: 'array',
+          items: { type: 'number' },
+          description:
+            'Folders to scan, each non-recursive (Workato folder_id is exact). Omit to scan the ' +
+            'workspace list. Cannot be combined with recipe_ids.',
+        },
+        recipe_ids: {
+          type: 'array',
+          items: { type: 'number' },
+          description:
+            'Read exactly these recipes and skip the list scan entirely. At most 25. Use it when ' +
+            'the candidates are already known, e.g. from workato_search_recipes.',
+        },
+        input_query: {
+          type: 'string',
+          description:
+            "Keep only steps whose serialized input matches, e.g. 'internalId' or a datapill " +
+            'path. Matched against the input AFTER secrets are stripped.',
+        },
+        input_match: {
+          type: 'string',
+          enum: ['substring', 'regex'],
+          description: "How input_query is compared. Default 'substring' (case-insensitive).",
+          default: 'substring',
+        },
+        preview_chars: {
+          type: 'number',
+          description:
+            'Serialized input longer than this comes back as input_preview + input_truncated + ' +
+            'input_chars instead of the whole block. Default 2000; 0 returns it unbounded.',
+          default: 2000,
+        },
         limit: {
           type: 'number',
           description: 'Max matching steps returned. Default 5, clamped 1-25.',
@@ -2033,8 +2069,8 @@ export const TOOL_SCHEMAS: Tool[] = [
         max_pages: {
           type: 'number',
           description:
-            'Pages of the recipe list to scan, 20 recipes per page. Default 5, clamped 1-25. ' +
-            'Raise it for a workspace with more recipes than that.',
+            'Pages of the recipe list to scan per scope, 20 recipes per page. Default 5, clamped ' +
+            '1-25. Raise it for a workspace with more recipes than that.',
         },
         timeout_ms: {
           type: 'number',
@@ -2751,9 +2787,14 @@ export const TOOL_SCHEMAS: Tool[] = [
       'line_range) — there is no `step` parameter, and passing one does nothing, so a trace ' +
       'that still looks truncated means the line selection was missing. That pair is the ' +
       'way to answer "what exactly did step 118 receive ' +
-      'in this job". Pass full=true to get raw responses for both the job metadata and ' +
-      'line details endpoints. Requires an open Workato tab. Both recipe_id and job_id ' +
-      'are required — Workato job trace endpoints are recipe-scoped.',
+      'in this job". Narrow the payload further with paths (nested projection over each step\'s ' +
+      "input/output, dot/bracket with [] for every array element), empty:'drop' (removes " +
+      "undefined/null/''/{}/[] only: 0 and false always survive, and arrays are never filtered " +
+      'so indices stay stable), max_items (long arrays come back as ' +
+      '{_array_preview,total,shown,items}, default 20) and fields (keys kept per step). ' +
+      'Pass full=true to get raw responses for both the job metadata and ' +
+      'line details endpoints, unprojected. Requires an open Workato tab. Both recipe_id and ' +
+      'job_id are required: Workato job trace endpoints are recipe-scoped.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2786,6 +2827,41 @@ export const TOOL_SCHEMAS: Tool[] = [
             "'summary' (default): truncated summaries. 'full': exact untruncated input/output " +
             '(schema-stripped) for the selected steps — requires lines/line_range matching ≤20 steps.',
         },
+        paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            "Keep only these nested paths inside each step's input and output, e.g. " +
+            "['body.items[].id','headers.status','rows[0].amount']. Dots for keys, [N] for one " +
+            "index, [] for every element, ['a.b'] for a key containing a dot. Array indices " +
+            'are preserved, so a projected element keeps its position. Applied in summary and ' +
+            "detail:'full' alike, before truncation.",
+        },
+        empty: {
+          type: 'string',
+          enum: ['keep', 'drop'],
+          description:
+            "Default 'keep'. 'drop' removes undefined, null, '', {} and [] from objects, and " +
+            'nothing else: 0 and false are data and always survive. Arrays are mapped, never ' +
+            'filtered, so indices never shift; an object that becomes empty is dropped from its ' +
+            'parent.',
+          default: 'keep',
+        },
+        max_items: {
+          type: 'number',
+          description:
+            'Preview arrays longer than this as {_array_preview:true, total, shown, items}. ' +
+            'Default 20; 0 disables previewing and returns every element.',
+          default: 20,
+        },
+        fields: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Keys kept on each returned step. Allowed: recipe_line_number, adapter_name, ' +
+            'adapter_operation, input, output, input_summary, output_summary. ' +
+            'recipe_line_number is always kept.',
+        },
         full: {
           type: 'boolean',
           description: 'If true, return raw responses instead of the slim shape. Default false.',
@@ -2811,35 +2887,86 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO.SEARCH_RECIPES,
     description:
-      'Search Workato recipes by name. Returns a paginated list of recipes ' +
-      '(20 per page, server-capped). Optional folder_id scopes the search. ' +
-      'Optional text does a name substring match across the workspace. ' +
-      'Slim response includes `count` (total matches across all pages) so ' +
-      'you can decide whether to advance `page=`. Pass full=true for the ' +
-      'raw 24-key Workato response shape. Requires an open Workato tab ' +
-      '(*.workato.com or *.workato.is).',
+      'Search Workato recipes. `text` is NOT a name substring: Workato runs a FULL-TEXT search ' +
+      "over the recipe name, its description AND its trigger/action titles, which is why 'ECO' " +
+      "answers with recipes whose steps say 'New/updated records'. In that default mode each hit " +
+      'carries `matched` (the highlighted name/description/action, markup removed) so it is ' +
+      'visible WHY it came back. For a name-only search pass match: name_substring / name_word / ' +
+      'name_exact / name_regex, which walk pages and filter client-side, so bound them with ' +
+      'folder_id, app or max_pages. Filters: app (adapter technical name; one name uses the ' +
+      "server's adapters= filter, several are ANDed client-side), running (client-side; Workato " +
+      'ignores the server param), folder_id (exact folder, not recursive). Walks up to max_pages ' +
+      '(default 5, max 50) of 20 and returns `coverage` {pages_scanned, recipes_scanned, matched, ' +
+      'complete, next_page}: an incomplete scan says so instead of implying nothing else exists. ' +
+      '`limit` caps the recipes returned (default 20). full=true returns the raw items. Requires ' +
+      'an open Workato tab (*.workato.com or *.workato.is).',
     inputSchema: {
       type: 'object',
       properties: {
         text: {
           type: 'string',
-          description: 'Name substring search. Omit or empty for all recipes.',
+          description:
+            'What to search for. In the default fulltext mode this is matched by Workato over ' +
+            'name, description and action/trigger titles. In a name_* mode it is matched ' +
+            'client-side against the recipe name only. Omit for all recipes.',
+        },
+        match: {
+          type: 'string',
+          enum: ['fulltext', 'name_substring', 'name_word', 'name_exact', 'name_regex'],
+          description:
+            "Default 'fulltext' (server-side, the only mode that returns `matched` highlights). " +
+            'The name_* modes are applied client-side over walked pages and do not send `text` ' +
+            'upstream, because the two searches do not agree.',
+          default: 'fulltext',
+        },
+        app: {
+          type: ['string', 'array'],
+          items: { type: 'string' },
+          description:
+            "Adapter TECHNICAL name(s), e.g. 'salesforce', 'workato_recipe_function'. One name " +
+            'is filtered server-side (adapters=); several are ANDed client-side, meaning the ' +
+            'recipe uses all of them as its trigger or an action app. Find names with ' +
+            'workato_apps_list.',
+        },
+        running: {
+          type: 'boolean',
+          description:
+            'Keep only running (true) or only stopped (false) recipes. Client-side: Workato ' +
+            'silently ignores running/state parameters on this endpoint.',
         },
         folder_id: {
           type: 'number',
-          description: 'Numeric folder id to scope the search.',
+          description: 'Numeric folder id to scope the search. Exact folder, not recursive.',
         },
         page: {
           type: 'number',
           description:
-            '1-based page number. Default 1. Workato returns 20 items per page (server-capped).',
+            '1-based page number the walk STARTS at. Default 1. 20 items per page (server-capped).',
           default: 1,
+        },
+        max_pages: {
+          type: 'number',
+          description:
+            'Pages walked from `page`. Default 5, clamped 1-50. Coverage reports how many were ' +
+            'actually read and whether the list ended.',
+          default: 5,
+        },
+        limit: {
+          type: 'number',
+          description: 'Max recipes returned after filtering. Default 20, clamped 1-100.',
+          default: 20,
         },
         sort: {
           type: 'string',
-          enum: ['latest_activity', 'name', 'updated_at', 'created_at'],
-          description: 'Sort order. Default latest_activity.',
+          enum: ['latest_activity', 'name', 'updated_at', 'created_at', 'relevance'],
+          description:
+            "Sort order. Default latest_activity. 'relevance' is what the assets page uses with " +
+            'a text search.',
           default: 'latest_activity',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 45000, clamped 10000-110000.',
         },
         full: {
           type: 'boolean',
@@ -2979,18 +3106,22 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO.LIST_JOBS,
     description:
-      "List jobs for a Workato recipe. Tool auto-walks Workato's cursor " +
-      'pagination under the hood up to `limit` (default 25, max 100). When ' +
-      '`cursor` is supplied, auto-walk begins from that job id (useful for ' +
-      'resuming a previous fetch). Supports server-side filters: status ' +
-      '(singular), query, started_at window, group_by_master_job. ' +
-      'query is full-text: it matches the job title, error message, AND the ' +
-      'custom job-report columns — so searching a record id (e.g. an asset ' +
-      'or transaction id shown in the job report) finds its job directly. ' +
-      'If the walk runs out of time mid-pagination the tool returns what it ' +
-      'scanned with partial:true, scanned_through (timestamp) and next_cursor ' +
-      'to resume — partial results are never discarded. Pass full=true for ' +
-      'raw page responses instead of the slim shape. Requires an open Workato tab.',
+      "List and SEARCH jobs for a Workato recipe. Auto-walks Workato's cursor pagination. " +
+      'Two searches, combinable: `query` is the SERVER one and matches a contiguous, ' +
+      'case-insensitive substring of the job id or of a custom job-report column value ONLY ' +
+      '(not the error text, not column labels, and never an erased job); `match` is a LOCAL scan ' +
+      'of every job the walk sees, over id / title / error / report columns, as exact, substring ' +
+      'or regex. Date range: started_from / started_to (ISO, or YYYY-MM-DD widened to the whole ' +
+      'day) in `timezone` (default UTC); started_at takes only the fixed presets. Two budgets: ' +
+      '`limit` caps matches RETURNED, `scan_budget` caps jobs SCANNED. Every response carries ' +
+      '`coverage` (scanned, matched, erased_seen, window, complete, next_cursor, ' +
+      'retention_boundary_reached) and a `summary` sentence: zero matches from an incomplete scan ' +
+      'is NOT evidence of none, so resume with cursor=next_cursor. ERASED jobs (retention swept) ' +
+      'stay listed with erased:true, title/report null and no error: unavailable, not empty. The ' +
+      'walk stops after 3 consecutive erased jobs because that boundary is workspace-wide and ' +
+      'everything older is erased too (stop_on_erased:false to keep going). Report columns come ' +
+      'back with their configured labels, all of them, plus report_columns. `fields` projects the ' +
+      'slim job. Requires an open Workato tab.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3013,12 +3144,95 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         query: {
           type: 'string',
-          description: 'Full-text search against job title and error message.',
+          description:
+            'Server-side search: a contiguous case-insensitive SUBSTRING of the job id or of a ' +
+            'custom job-report column value. Does NOT match the error message, logger output or ' +
+            'column labels, and never matches an erased job. Use [match] for those.',
+        },
+        match: {
+          type: 'object',
+          description:
+            'Local scan applied to every job the walk sees, inside the page walk. Use it for ' +
+            'what `query` cannot search: error text, a whole-word or regex match.',
+          properties: {
+            mode: {
+              type: 'string',
+              enum: ['exact', 'substring', 'regex'],
+              description:
+                "Default 'substring'. exact and substring are case-insensitive; regex is " +
+                'compiled case-insensitive.',
+            },
+            fields: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                "Fields to look at: 'id', 'title', 'error' (message + inner_message + type), " +
+                "'report' (every column), or 'report.<column label>' / 'report.<custom_column_N>'. " +
+                'Default: id, title, error, report.',
+            },
+            value: { type: 'string', description: 'The string or pattern to look for.' },
+          },
+          required: ['value'],
+        },
+        scan_budget: {
+          type: 'number',
+          description:
+            'Jobs SCANNED before the walk gives up, separate from `limit` (matches returned). ' +
+            'Default 500, max 5000. Raised to `limit` when it would be smaller.',
+          default: 500,
+        },
+        stop_on_erased: {
+          type: 'boolean',
+          description:
+            'Stop after 3 consecutive erased jobs. Default true: the retention sweep is ' +
+            'workspace-wide, so everything older than the boundary is erased too and scanning on ' +
+            'spends pages for nothing. Set false to walk past it anyway.',
+          default: true,
+        },
+        fields: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            "Project each job down to these fields, e.g. ['id','started_at','status'," +
+            "'report.Marker code']. Allowed: id, status, started_at, completed_at, duration_ms, " +
+            'error_summary, error_line_number, title, report, erased, zero_retention, is_test, ' +
+            'calling_recipe_id, calling_job_id, or report.<label> / report.<custom_column_N>. ' +
+            'Unavailable data (an erased job) comes back null with erased:true, never as empty.',
+        },
+        report_labels: {
+          type: 'boolean',
+          description:
+            "Label report columns from the recipe's job_report_schema (one extra recipe read, " +
+            'cached per recipe and version). Default true; false keeps custom_column_N keys.',
+          default: true,
         },
         started_at: {
           type: 'string',
-          enum: ['7.days', '30.days', 'all'],
-          description: 'Time window for job start time. Default behavior is server-defined.',
+          enum: ['1.hour', '24.hours', '7.days', '30.days', 'all'],
+          description:
+            'Preset window. These five are the ONLY values Workato honours; any other is ' +
+            'silently ignored server-side, so this tool rejects it rather than returning an ' +
+            'unfiltered scope. Use started_from/started_to for a custom range.',
+        },
+        started_from: {
+          type: 'string',
+          description:
+            'Oldest job start to include. ISO-8601 with an offset or Z, YYYY-MM-DD (widened to ' +
+            '00:00:00) or YYYY-MM-DDTHH:MM(:SS). Sent as started_at_from; filters server-side.',
+        },
+        started_to: {
+          type: 'string',
+          description:
+            'Newest job start to include. Same formats; a bare YYYY-MM-DD is widened to ' +
+            '23:59:59, so started_from=started_to=a date selects that whole day. Sent as ' +
+            'started_at_to.',
+        },
+        timezone: {
+          type: 'string',
+          description:
+            "Zone applied to started_from/started_to when they carry no offset. Default 'UTC'. " +
+            "Accepts an offset ('-07:00') or an IANA name ('America/Los_Angeles').",
+          default: 'UTC',
         },
         group_by_master_job: {
           type: 'boolean',
