@@ -1,7 +1,26 @@
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
-import { findWorkatoTab, runInWorkatoTabDetailed, WorkatoDispatchError } from './tab-dispatch';
+import {
+  findWorkatoTab,
+  runInWorkatoTab,
+  runInWorkatoTabDetailed,
+  WorkatoDispatchError,
+} from './tab-dispatch';
+import {
+  buildCoverageSummary,
+  normalizeMatchSpec,
+  normalizeStartedBound,
+  projectJobFields,
+  shapeSlimJob,
+  validateJobFields,
+  type JobScanCoverage,
+  type MatchSpec,
+  type ReportColumn,
+} from './job-projection';
+
+/** started_at values Workato honours. Anything else is silently ignored server-side. */
+const STARTED_AT_VALUES = ['1.hour', '24.hours', '7.days', '30.days', 'all'] as const;
 
 interface ListJobsArgs {
   recipe_id: number;
@@ -9,6 +28,22 @@ interface ListJobsArgs {
   status?: string;
   query?: string;
   started_at?: string;
+  /** ISO-8601, YYYY-MM-DD or YYYY-MM-DDTHH:MM(:SS). Forwarded as started_at_from. */
+  started_from?: string;
+  /** Same shape as started_from. Forwarded as started_at_to. */
+  started_to?: string;
+  /** Zone applied to started_from/started_to when they carry no offset. Default UTC. */
+  timezone?: string;
+  /** Local scan predicate, applied to every scanned job in the page walk. */
+  match?: { mode?: 'exact' | 'substring' | 'regex'; fields?: string[]; value: string };
+  /** Jobs SCANNED before the walk gives up. Default 500, max 5000. Separate from limit. */
+  scan_budget?: number;
+  /** Stop after 3 consecutive erased jobs. Default true. */
+  stop_on_erased?: boolean;
+  /** Project the slim job down to these fields, e.g. ['id','started_at','report.Marker code']. */
+  fields?: string[];
+  /** Read the recipe's job_report_schema to label report columns. Default true. */
+  report_labels?: boolean;
   group_by_master_job?: boolean;
   cursor?: string;
   full?: boolean;
@@ -27,18 +62,46 @@ interface RawJobsPage {
   jobs?: Array<Record<string, unknown>>;
 }
 
-interface InPageResult {
+/** Single JSON-serializable argument for the in-page walk. */
+export interface ListJobsWalkOptions {
+  recipeId: number;
+  limit: number;
+  status: string | null;
+  query: string | null;
+  startedAt: string | null;
+  startedFrom: string | null;
+  startedTo: string | null;
+  groupByMaster: boolean;
+  cursor: string | null;
+  budgetMs: number;
+  scanBudget: number;
+  stopOnErased: boolean;
+  match: MatchSpec | null;
+  columns: ReportColumn[];
+}
+
+export interface ListJobsWalkResult {
   ok: boolean;
-  pages?: RawJobsPage[];
-  /**
-   * True when the in-page time budget ran out mid-walk. `pages` holds
-   * everything scanned so far; resume with the returned cursor.
-   */
-  partial?: boolean;
-  /** started_at of the last job scanned (partial walks only). */
-  scanned_through?: string;
+  /** Matching jobs, capped at `limit`. In backend mode every scanned job matches. */
+  jobs?: Array<Record<string, unknown>>;
+  meta?: {
+    job_count: number;
+    job_scope_count: number;
+    job_succeeded_count: number;
+    job_failed_count: number;
+  };
+  scanned?: number;
+  matched?: number;
+  erased_seen?: number;
+  from_started_at?: string;
+  through_started_at?: string;
+  /** Last job the walk LOOKED at, match or not. The resume cursor. */
+  last_scanned_id?: string;
+  complete?: boolean;
+  retention_boundary_reached?: boolean;
+  stopped_reason?: string;
   failure?: {
-    stage: 'meta' | 'page' | 'shape';
+    stage: 'meta' | 'page' | 'shape' | 'match';
     status?: number;
     body_excerpt?: string;
     message: string;
@@ -47,29 +110,53 @@ interface InPageResult {
 
 /**
  * In-page function. Plain function returning a Promise chain — DO NOT add
- * async/await. Recurses via .then() to walk pages until limit reached.
+ * async/await. Recurses via .then() to walk pages.
  *
  * CRITICAL: This function is serialized via Function.prototype.toString()
  * by chrome.scripting.executeScript. Module-scope constants referenced
  * inside the function body do NOT survive serialization — they become
- * undefined in the page context. All constants must be declared INSIDE
- * the function (same class of pitfall as v1's `_pullInPage` issue).
+ * undefined in the page context. All constants and helpers must be declared
+ * INSIDE the function (same class of pitfall as v1's `_pullInPage` issue).
+ *
+ * The local match runs HERE, per page, so a 5000-job scan crosses the page
+ * boundary as a handful of matches instead of 5000 raw jobs.
  */
-function listJobsInPage(
-  recipeId: number,
-  limit: number,
-  status: string | null,
-  query: string | null,
-  startedAt: string | null,
-  groupByMaster: boolean,
-  startCursor: string | null,
-  budgetMs: number,
-): Promise<InPageResult> {
+export function listJobsInPage(opts: ListJobsWalkOptions): Promise<ListJobsWalkResult> {
   const PER_PAGE = 25;
-  const HARD_CAP = 100;
-  // Stop walking pages once the budget expires and return what was scanned,
-  // instead of letting the outer 30s script timeout discard everything.
-  const deadline = Date.now() + (typeof budgetMs === 'number' && budgetMs > 0 ? budgetMs : 22000);
+  const ERASED_RUN_STOP = 3;
+  const recipeId = opts.recipeId;
+  const limit = opts.limit;
+  const scanBudget = opts.scanBudget;
+  const stopOnErased = opts.stopOnErased !== false;
+  const match = opts.match || null;
+  const deadline =
+    Date.now() + (typeof opts.budgetMs === 'number' && opts.budgetMs > 0 ? opts.budgetMs : 22000);
+
+  let matchRegex: RegExp | null = null;
+  if (match && match.mode === 'regex') {
+    try {
+      matchRegex = new RegExp(match.value, 'i');
+    } catch (e) {
+      return Promise.resolve({
+        ok: false,
+        failure: {
+          stage: 'match' as const,
+          message: `match.value is not a valid regular expression: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        },
+      });
+    }
+  }
+
+  const labelToColumn: Record<string, string> = {};
+  const columns = Array.isArray(opts.columns) ? opts.columns : [];
+  for (let i = 0; i < columns.length; i++) {
+    const column = columns[i];
+    if (column && typeof column.name === 'string' && column.label) {
+      labelToColumn[String(column.label).toLowerCase()] = column.name;
+    }
+  }
 
   function buildUrl(cursor: string | null): string {
     const params = new URLSearchParams();
@@ -78,10 +165,12 @@ function listJobsInPage(
       params.set('offset_job_id', cursor);
       params.set('prev', 'false');
     }
-    if (status) params.set('status', status);
-    if (query) params.set('query', query);
-    if (startedAt) params.set('started_at', startedAt);
-    if (groupByMaster) params.set('group_by_master_job', 'true');
+    if (opts.status) params.set('status', opts.status);
+    if (opts.query) params.set('query', opts.query);
+    if (opts.startedAt) params.set('started_at', opts.startedAt);
+    if (opts.startedFrom) params.set('started_at_from', opts.startedFrom);
+    if (opts.startedTo) params.set('started_at_to', opts.startedTo);
+    if (opts.groupByMaster) params.set('group_by_master_job', 'true');
     return `/web_api/recipes/${recipeId}/jobs.json?${params.toString()}`;
   }
 
@@ -92,7 +181,9 @@ function listJobsInPage(
 
   function fetchPage(
     cursor: string | null,
-  ): Promise<{ ok: true; page: RawJobsPage } | { ok: false; failure: InPageResult['failure'] }> {
+  ): Promise<
+    { ok: true; page: RawJobsPage } | { ok: false; failure: ListJobsWalkResult['failure'] }
+  > {
     const url = buildUrl(cursor);
     return fetch(url, fetchOpts).then((r) =>
       r.text().then((bodyText) => {
@@ -135,77 +226,280 @@ function listJobsInPage(
     );
   }
 
-  function loop(cursor: string | null, pagesAcc: RawJobsPage[]): Promise<InPageResult> {
+  /** Every string a match field can look at on one job. */
+  function valuesForField(job: Record<string, unknown>, field: string): string[] {
+    const out: string[] = [];
+    if (field === 'id') {
+      if (job.id != null) out.push(String(job.id));
+      return out;
+    }
+    if (field === 'title') {
+      if (job.title != null) out.push(String(job.title));
+      return out;
+    }
+    if (field === 'error') {
+      const err = job.error;
+      if (err && typeof err === 'object') {
+        const record = err as Record<string, unknown>;
+        if (record.message != null) out.push(String(record.message));
+        if (record.inner_message != null) out.push(String(record.inner_message));
+        if (record.error_type != null) out.push(String(record.error_type));
+      }
+      return out;
+    }
+    const report = job.report && typeof job.report === 'object' ? job.report : null;
+    if (!report) return out;
+    const record = report as Record<string, unknown>;
+    if (field === 'report') {
+      for (const key in record) {
+        if (key.indexOf('custom_column_') === 0 && record[key] != null) {
+          out.push(String(record[key]));
+        }
+      }
+      return out;
+    }
+    if (field.indexOf('report.') === 0) {
+      const wanted = field.slice(7);
+      const name =
+        wanted.indexOf('custom_column_') === 0 ? wanted : labelToColumn[wanted.toLowerCase()];
+      if (name && record[name] != null) out.push(String(record[name]));
+      return out;
+    }
+    return out;
+  }
+
+  function matchesJob(job: Record<string, unknown>): boolean {
+    if (!match) return true;
+    const fields =
+      match.fields && match.fields.length ? match.fields : ['id', 'title', 'error', 'report'];
+    const needle = String(match.value).toLowerCase();
+    for (let i = 0; i < fields.length; i++) {
+      const values = valuesForField(job, fields[i]);
+      for (let j = 0; j < values.length; j++) {
+        const value = values[j];
+        if (match.mode === 'regex') {
+          if (matchRegex && matchRegex.test(value)) return true;
+        } else if (match.mode === 'exact') {
+          if (value.toLowerCase() === needle) return true;
+        } else if (value.toLowerCase().indexOf(needle) >= 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  const state = {
+    matched: [] as Array<Record<string, unknown>>,
+    scanned: 0,
+    matchedCount: 0,
+    erasedSeen: 0,
+    consecutiveErased: 0,
+    fromStartedAt: '',
+    throughStartedAt: '',
+    lastScannedId: '',
+    retentionBoundary: false,
+    stoppedReason: 'end_of_list',
+    lastPage: null as RawJobsPage | null,
+  };
+
+  /** Walk one page's jobs. Returns true when the walk must stop. */
+  function consume(jobs: Array<Record<string, unknown>>): boolean {
+    for (let i = 0; i < jobs.length; i++) {
+      if (state.scanned >= scanBudget) {
+        state.stoppedReason = 'scan_budget';
+        return true;
+      }
+      const job = jobs[i] || {};
+      state.scanned++;
+      if (typeof job.id === 'string') state.lastScannedId = job.id;
+      if (job.started_at != null) {
+        const startedAt = String(job.started_at);
+        if (!state.fromStartedAt) state.fromStartedAt = startedAt;
+        state.throughStartedAt = startedAt;
+      }
+      if (job.erased === true) {
+        state.erasedSeen++;
+        state.consecutiveErased++;
+      } else {
+        state.consecutiveErased = 0;
+      }
+      if (matchesJob(job)) {
+        state.matchedCount++;
+        if (state.matched.length < limit) state.matched.push(job);
+      }
+      if (state.matched.length >= limit) {
+        state.stoppedReason = 'limit';
+        return true;
+      }
+      if (stopOnErased && state.consecutiveErased >= ERASED_RUN_STOP) {
+        state.retentionBoundary = true;
+        state.stoppedReason = 'erased_boundary';
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function finish(complete: boolean): ListJobsWalkResult {
+    const page = state.lastPage || {};
+    return {
+      ok: true,
+      jobs: state.matched,
+      meta: {
+        job_count: Number(page.job_count || 0),
+        job_scope_count: Number(page.job_scope_count || 0),
+        job_succeeded_count: Number(page.job_succeeded_count || 0),
+        job_failed_count: Number(page.job_failed_count || 0),
+      },
+      scanned: state.scanned,
+      matched: state.matchedCount,
+      erased_seen: state.erasedSeen,
+      from_started_at: state.fromStartedAt || undefined,
+      through_started_at: state.throughStartedAt || undefined,
+      last_scanned_id: state.lastScannedId || undefined,
+      // The retention boundary is the end of what can be searched at all, so it
+      // counts as covered ground rather than a truncated scan.
+      complete: complete || state.retentionBoundary,
+      retention_boundary_reached: state.retentionBoundary,
+      stopped_reason: state.stoppedReason,
+    };
+  }
+
+  function loop(cursor: string | null): Promise<ListJobsWalkResult> {
     return fetchPage(cursor).then((res) => {
       if (!res.ok) {
-        // First-page failure is 'meta' stage (no pages collected yet).
         const failure = res.failure!;
-        if (pagesAcc.length === 0 && failure.stage === 'page') {
-          failure.stage = 'meta';
-        }
+        if (state.scanned === 0 && failure.stage === 'page') failure.stage = 'meta';
         return { ok: false, failure };
       }
-      const pages = pagesAcc.concat(res.page);
-      const collected = pages.reduce((n, p) => n + (p.jobs?.length ?? 0), 0);
-      const reachedLimit = collected >= limit;
-      const lastPage = (res.page.jobs?.length ?? 0) < PER_PAGE;
-      const reachedCap = collected >= HARD_CAP;
-      if (reachedLimit || lastPage || reachedCap) {
-        return { ok: true, pages };
+      state.lastPage = res.page;
+      const jobs = res.page.jobs || [];
+      if (consume(jobs)) return finish(false);
+      if (jobs.length < PER_PAGE) {
+        state.stoppedReason = 'end_of_list';
+        return finish(true);
       }
-      const lastJob = res.page.jobs![res.page.jobs!.length - 1];
+      const lastJob = jobs[jobs.length - 1];
       const nextCursor = lastJob && typeof lastJob.id === 'string' ? lastJob.id : null;
-      if (!nextCursor) return { ok: true, pages };
-      if (Date.now() >= deadline) {
-        return {
-          ok: true,
-          pages,
-          partial: true,
-          scanned_through: lastJob && lastJob.started_at ? String(lastJob.started_at) : undefined,
-        };
+      if (!nextCursor) {
+        state.stoppedReason = 'end_of_list';
+        return finish(true);
       }
-      return loop(nextCursor, pages);
+      if (Date.now() >= deadline) {
+        state.stoppedReason = 'time_budget';
+        return finish(false);
+      }
+      return loop(nextCursor);
     });
   }
 
-  return loop(startCursor, []);
+  return loop(opts.cursor);
 }
 
-interface SlimJob {
-  id: string;
-  status: string;
-  started_at: string;
-  completed_at: string;
-  duration_ms: number;
-  error_summary?: string;
-  error_line_number?: number;
-  title: string;
-  report: { col_0: string; col_1: string; col_2: string };
+export interface ReportColumnsResult {
+  ok: boolean;
+  version_no?: number | null;
+  columns?: ReportColumn[];
+  message?: string;
 }
 
-function shapeSlimJob(raw: Record<string, unknown>): SlimJob {
-  const started = String(raw.started_at ?? '');
-  const completed = String(raw.completed_at ?? '');
-  const rawDuration =
-    started && completed ? new Date(completed).getTime() - new Date(started).getTime() : 0;
-  const duration_ms = Number.isFinite(rawDuration) ? rawDuration : 0;
-  const err = raw.error as Record<string, unknown> | undefined;
-  const report = (raw.report as Record<string, unknown> | undefined) ?? {};
-  return {
-    id: String(raw.id ?? ''),
-    status: String(raw.status ?? 'unknown'),
-    started_at: started,
-    completed_at: completed,
-    duration_ms,
-    error_summary: err?.message ? String(err.message) : undefined,
-    error_line_number: typeof err?.line_number === 'number' ? err.line_number : undefined,
-    title: String(raw.title ?? ''),
-    report: {
-      col_0: String(report.custom_column_0 ?? ''),
-      col_1: String(report.custom_column_1 ?? ''),
-      col_2: String(report.custom_column_2 ?? ''),
-    },
+/**
+ * In-page function. Reads the recipe's job-report column labels.
+ *
+ * The labels are not on the job: they live on the recipe code tree's trigger
+ * node as job_report_schema [{name: 'custom_column_N', label}]. The version is
+ * read from the cheap /recipes/<id>.json metadata so the background cache can
+ * key on it. Plain function, .then() chains only: see listJobsInPage.
+ */
+export function fetchReportColumnsInPage(recipeId: number): Promise<ReportColumnsResult> {
+  const fetchOpts: RequestInit = {
+    credentials: 'include',
+    headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' },
   };
+
+  function readVersion(): Promise<number | null> {
+    return fetch(`/recipes/${recipeId}.json`, fetchOpts).then(
+      (r) =>
+        r.text().then((body) => {
+          if (r.status < 200 || r.status >= 300) return null;
+          try {
+            const json = JSON.parse(body) as {
+              result?: { recipe_data?: { flow?: { version_no?: unknown } } };
+            };
+            const version = json.result?.recipe_data?.flow?.version_no;
+            return version == null ? null : Number(version);
+          } catch {
+            return null;
+          }
+        }),
+      () => null,
+    );
+  }
+
+  function readColumns(): Promise<{ ok: boolean; columns?: ReportColumn[]; message?: string }> {
+    const url = `/recipes/${recipeId}/code.json?mode=view`;
+    return fetch(url, fetchOpts).then((r) =>
+      r.text().then((body) => {
+        if (r.status < 200 || r.status >= 300) {
+          return { ok: false, message: `GET ${url} returned HTTP ${r.status}` };
+        }
+        let tree: unknown;
+        try {
+          const json = JSON.parse(body) as { result?: unknown };
+          tree = typeof json.result === 'string' ? JSON.parse(json.result) : json.result;
+        } catch (e) {
+          return {
+            ok: false,
+            message: `GET ${url}: JSON.parse failed: ${e instanceof Error ? e.message : String(e)}`,
+          };
+        }
+        const schema =
+          tree && typeof tree === 'object'
+            ? (tree as Record<string, unknown>).job_report_schema
+            : null;
+        const columns: ReportColumn[] = [];
+        if (Array.isArray(schema)) {
+          for (let i = 0; i < schema.length; i++) {
+            const entry = schema[i];
+            if (!entry || typeof entry !== 'object') continue;
+            const record = entry as Record<string, unknown>;
+            const name = typeof record.name === 'string' ? record.name : '';
+            if (name.indexOf('custom_column_') !== 0) continue;
+            const label =
+              typeof record.label === 'string' && record.label !== '' ? record.label : null;
+            columns.push({ name: name, label: label });
+          }
+        }
+        return { ok: true, columns: columns };
+      }),
+    );
+  }
+
+  return readVersion().then((version) =>
+    readColumns().then((res) => {
+      if (!res.ok) return { ok: false, message: res.message };
+      return { ok: true, version_no: version, columns: res.columns };
+    }),
+  );
+}
+
+interface ReportColumnsCacheEntry {
+  version_no: number | null;
+  columns: ReportColumn[];
+  at: number;
+}
+
+/**
+ * Report-column labels, cached per recipe id and version for the life of the
+ * service worker. A recipe save that changes the labels bumps version_no, and
+ * the TTL bounds how long a stale entry can survive an unnoticed change.
+ */
+const reportColumnsCache = new Map<number, ReportColumnsCacheEntry>();
+const REPORT_COLUMNS_TTL_MS = 10 * 60_000;
+
+export function clearReportColumnsCache(): void {
+  reportColumnsCache.clear();
 }
 
 class WorkatoListJobsTool extends BaseBrowserToolExecutor {
@@ -224,9 +518,37 @@ class WorkatoListJobsTool extends BaseBrowserToolExecutor {
       const query = typeof args?.query === 'string' && args.query ? args.query : null;
       const startedAt =
         typeof args?.started_at === 'string' && args.started_at ? args.started_at : null;
+      if (startedAt !== null && !(STARTED_AT_VALUES as readonly string[]).includes(startedAt)) {
+        return createErrorResponse(
+          `Param [started_at] must be one of ${STARTED_AT_VALUES.join(', ')}. Workato silently ` +
+            'ignores every other value and returns the unfiltered scope, so an arbitrary window ' +
+            'would read as "no such jobs". Use started_from / started_to for a custom range.',
+        );
+      }
+      const from = normalizeStartedBound(args?.started_from, args?.timezone, 'from');
+      if (!from.ok) return createErrorResponse(from.error!);
+      const to = normalizeStartedBound(args?.started_to, args?.timezone, 'to');
+      if (!to.ok) return createErrorResponse(to.error!);
+
+      const matchCheck = normalizeMatchSpec(args?.match);
+      if (!matchCheck.ok) return createErrorResponse(matchCheck.error!);
+      const match = matchCheck.match ?? null;
+
+      const fieldCheck = validateJobFields(args?.fields);
+      if (!fieldCheck.ok) return createErrorResponse(fieldCheck.error!);
+      const fields = fieldCheck.fields;
+
+      const scanBudgetArg =
+        typeof args?.scan_budget === 'number' && Number.isFinite(args.scan_budget)
+          ? Math.min(Math.max(Math.floor(args.scan_budget), 1), 5000)
+          : 500;
+      // A scan budget below the limit could never fill it; raise it silently.
+      const scanBudget = Math.max(scanBudgetArg, limit);
+      const stopOnErased = args?.stop_on_erased !== false;
       const groupByMaster = args?.group_by_master_job === true;
       const cursor = typeof args?.cursor === 'string' && args.cursor ? args.cursor : null;
       const full = args?.full === true;
+      const wantLabels = args?.report_labels !== false;
 
       const timeoutMs = Math.min(Math.max(args.timeout_ms ?? 30_000, 10_000), 110_000);
       // In-page budget: leave ~8s headroom so the walk returns partial results
@@ -234,10 +556,63 @@ class WorkatoListJobsTool extends BaseBrowserToolExecutor {
       const budgetMs = Math.max(timeoutMs - 8_000, 8_000);
 
       const tab = await findWorkatoTab(args.tabId);
+
+      let columns: ReportColumn[] = [];
+      let columnsVersion: number | null = null;
+      let columnsNote: string | undefined;
+      if (wantLabels) {
+        const cached = reportColumnsCache.get(args.recipe_id);
+        if (cached && Date.now() - cached.at < REPORT_COLUMNS_TTL_MS) {
+          columns = cached.columns;
+          columnsVersion = cached.version_no;
+        } else {
+          try {
+            const fetched = await runInWorkatoTab(
+              tab.tabId,
+              fetchReportColumnsInPage,
+              [args.recipe_id],
+              { timeoutMs: 20_000 },
+            );
+            if (fetched.ok) {
+              columns = fetched.columns ?? [];
+              columnsVersion = fetched.version_no ?? null;
+              reportColumnsCache.set(args.recipe_id, {
+                columns,
+                version_no: columnsVersion,
+                at: Date.now(),
+              });
+            } else {
+              columnsNote = `Report column labels unavailable: ${fetched.message ?? 'unknown error'}. Columns are keyed custom_column_N.`;
+            }
+          } catch (err) {
+            columnsNote = `Report column labels unavailable: ${
+              err instanceof Error ? err.message : String(err)
+            }. Columns are keyed custom_column_N.`;
+          }
+        }
+      }
+
+      const walkOptions: ListJobsWalkOptions = {
+        recipeId: args.recipe_id,
+        limit,
+        status,
+        query,
+        startedAt,
+        startedFrom: from.value ?? null,
+        startedTo: to.value ?? null,
+        groupByMaster,
+        cursor,
+        budgetMs,
+        scanBudget,
+        stopOnErased,
+        match,
+        columns,
+      };
+
       const { value: result, retried } = await runInWorkatoTabDetailed(
         tab.tabId,
         listJobsInPage,
-        [args.recipe_id, limit, status, query, startedAt, groupByMaster, cursor, budgetMs],
+        [walkOptions],
         { timeoutMs },
       );
 
@@ -250,52 +625,65 @@ class WorkatoListJobsTool extends BaseBrowserToolExecutor {
         );
       }
 
-      const pages = result.pages!;
-      const allJobs: Array<Record<string, unknown>> = [];
-      for (const p of pages) {
-        for (const j of p.jobs ?? []) allJobs.push(j);
-      }
-      // Truncate to limit (in case the last page overshot).
-      const trimmedJobs = allJobs.slice(0, limit);
-      const lastPage = pages[pages.length - 1] ?? {};
-      const meta = {
-        total: Number(lastPage.job_count ?? 0),
-        scope: Number(lastPage.job_scope_count ?? 0),
-        succeeded: Number(lastPage.job_succeeded_count ?? 0),
-        failed: Number(lastPage.job_failed_count ?? 0),
-      };
-      // Compute next_cursor only when more remains (scope > collected and last page was full).
-      // PER_PAGE mirrors the in-page constant — kept inline to avoid module-scope coupling
-      // with the serialized in-page function.
-      const collected = trimmedJobs.length;
-      const lastPageJobs = lastPage.jobs ?? [];
-      const lastPageFull = lastPageJobs.length >= 25;
-      const partial = result.partial === true;
-      const moreRemains = partial || (meta.scope > collected && lastPageFull);
-      const lastJobId =
-        moreRemains && trimmedJobs.length > 0
-          ? String(trimmedJobs[trimmedJobs.length - 1]?.id ?? '')
-          : '';
-      const nextCursor = moreRemains && lastJobId ? lastJobId : undefined;
+      const matchedJobs = result.jobs ?? [];
+      const complete = result.complete === true;
+      const backendFiltered = Boolean(query || status || startedAt || from.value || to.value);
+      const searchMode: JobScanCoverage['search_mode'] = match
+        ? backendFiltered
+          ? 'both'
+          : 'local'
+        : 'backend';
 
-      // In full mode, return raw jobs (untrimmed, truncated only at the auto-walk
-      // limit, not by .slice). Drop `pages` so the response isn't doubled.
+      const coverage: JobScanCoverage = {
+        search_mode: searchMode,
+        scanned: result.scanned ?? 0,
+        matched: result.matched ?? 0,
+        erased_seen: result.erased_seen ?? 0,
+        from_started_at: result.from_started_at,
+        through_started_at: result.through_started_at,
+        complete,
+        // The resume cursor is the last job SCANNED, not the last one returned:
+        // a scan that matched nothing still has to be resumable.
+        next_cursor: complete ? undefined : result.last_scanned_id,
+        retention_boundary_reached: result.retention_boundary_reached === true,
+        stopped_reason: result.stopped_reason ?? 'end_of_list',
+        scan_budget: scanBudget,
+        limit,
+      };
+
       const extras: Record<string, unknown> = {};
-      if (partial) {
+      if (!complete && coverage.stopped_reason === 'time_budget') {
         extras.partial = true;
-        if (result.scanned_through) extras.scanned_through = result.scanned_through;
+        if (coverage.through_started_at) extras.scanned_through = coverage.through_started_at;
         extras.note =
           'Time budget ran out mid-walk; results cover jobs scanned so far. Resume with cursor=next_cursor.';
       }
       if (retried) extras.retried = true;
-      const payload = full
-        ? { ...meta, ...extras, next_cursor: nextCursor, jobs: trimmedJobs }
-        : {
-            ...meta,
-            ...extras,
-            next_cursor: nextCursor,
-            jobs: trimmedJobs.map(shapeSlimJob),
-          };
+      if (columnsNote) extras.report_columns_note = columnsNote;
+
+      let jobs: unknown[];
+      if (fields) {
+        jobs = matchedJobs.map((job) => projectJobFields(shapeSlimJob(job, columns), fields));
+        if (full) extras.full_ignored = 'fields projection applied; full:true ignored.';
+      } else if (full) {
+        jobs = matchedJobs;
+      } else {
+        jobs = matchedJobs.map((job) => shapeSlimJob(job, columns));
+      }
+
+      const payload = {
+        total: result.meta?.job_count ?? 0,
+        scope: result.meta?.job_scope_count ?? 0,
+        succeeded: result.meta?.job_succeeded_count ?? 0,
+        failed: result.meta?.job_failed_count ?? 0,
+        ...extras,
+        search_mode: searchMode,
+        coverage,
+        summary: buildCoverageSummary(coverage),
+        ...(wantLabels ? { report_columns: columns, report_columns_version: columnsVersion } : {}),
+        next_cursor: coverage.next_cursor,
+        jobs,
+      };
 
       return {
         content: [{ type: 'text', text: JSON.stringify(payload) }],
