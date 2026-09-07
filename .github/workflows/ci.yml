@@ -70,6 +70,19 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # Both suites gate. Coverage is off for the bridge: its thresholds are a
+      # local quality signal, not a merge gate, and a package that ships code
+      # ahead of its tests should fail on a red test, not on a percentage.
+      - name: Test extension
+        run: pnpm --filter workatomcp-extension test
+
+      - name: Test bridge
+        # No `--` separator: pnpm forwards it verbatim and jest reads it as a
+        # test-name pattern, which then matches nothing.
+        run: pnpm --filter workatomcp-bridge test --coverage=false
+
+      # `wxt build` chains check:bundle, which fails on an in-page function the
+      # bundler rewrote into a module-scope helper. See scripts/check-bundle.mjs.
       - name: Build all packages
         run: pnpm build
 
