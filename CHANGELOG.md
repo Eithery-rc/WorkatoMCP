@@ -6,6 +6,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+## bridge 1.6.0 · shared 1.3.0 (2026-09-07)
+
 Recipe development efficiency: one guarded mutation engine, bounded reads, job and caller search that does not make an agent walk pages, recoverable multi-recipe saves, supported test execution, and a session that cannot silently change workspace. Implements [`docs/design/plans/2026-09-07-recipe-development-efficiency.md`](docs/design/plans/2026-09-07-recipe-development-efficiency.md); the endpoint captures behind it are in [`skills/workato-recipes/platform-endpoints.md`](skills/workato-recipes/platform-endpoints.md).
 
 **Upgrade note: the bridge and the extension must be updated together.** The three legacy recipe mutators (`workato_recipe_add_step`, `workato_recipe_set_step_input`, `workato_recipe_map_datapill`) moved out of the extension and into the bridge, and `app/chrome-extension/entrypoints/background/tools/workato-recipe/` is deleted. An old bridge against a new extension would forward those names to an extension that no longer has them. A new bridge against an old extension is fine. Rebuild `packages/shared`, rebuild and reload the unpacked extension, and restart the MCP client: the server name, version, instructions and tool catalogue all changed at initialize.
