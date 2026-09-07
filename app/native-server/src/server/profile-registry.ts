@@ -21,6 +21,12 @@ export class ProfileRegistry {
   private activeProfile: string | null = null;
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private defaultTimeoutMs = 120000;
+  /**
+   * Bumped whenever the set of connected profiles changes. A pinned MCP session
+   * watches it: a profile that reconnected is a new browser session, so the
+   * tab it pinned has to be re-validated before the next call is routed.
+   */
+  private generation = 0;
 
   /**
    * Register a new profile connection
@@ -37,6 +43,7 @@ export class ProfileRegistry {
     }
 
     this.connections.set(profileName, socket);
+    this.generation += 1;
     logProfileRegistry(`[ProfileRegistry] Profile "${profileName}" connected.`);
 
     // If no active profile, or the active profile is no longer connected, set this as active
@@ -74,6 +81,7 @@ export class ProfileRegistry {
   public deregister(profileName: string): void {
     if (this.connections.has(profileName)) {
       this.connections.delete(profileName);
+      this.generation += 1;
       logProfileRegistry(`[ProfileRegistry] Profile "${profileName}" disconnected.`);
 
       if (this.activeProfile === profileName) {
@@ -105,6 +113,14 @@ export class ProfileRegistry {
       `[ProfileRegistry] Cannot switch to "${profileName}" because it is not connected.`,
     );
     return false;
+  }
+
+  /**
+   * Connection-set generation. Changes on every register/deregister, including
+   * a reconnect of the same profile name.
+   */
+  public getGeneration(): number {
+    return this.generation;
   }
 
   /**

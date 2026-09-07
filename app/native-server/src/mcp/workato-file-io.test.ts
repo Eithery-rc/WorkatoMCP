@@ -183,3 +183,138 @@ describe('prepareWorkatoCall — py_eval code with code_path', () => {
     });
   });
 });
+
+describe('prepareWorkatoCall: file version lock and origin', () => {
+  test('defaults the optimistic lock to the version the file was pulled from', () => {
+    const out = path.join(tmpDir, 'lock.json');
+    writePulledRecipe(out, fullPullResult());
+
+    const prepared = prepareWorkatoCall('workato_ui_save_recipe_code', { code_path: out });
+    expect(prepared.args.expected_base_version_no).toBe(7);
+  });
+
+  test('an explicit expected_base_version_no wins over the file', () => {
+    const out = path.join(tmpDir, 'lock-explicit.json');
+    writePulledRecipe(out, fullPullResult());
+
+    const prepared = prepareWorkatoCall('workato_ui_save_recipe_code', {
+      code_path: out,
+      expected_base_version_no: 3,
+    });
+    expect(prepared.args.expected_base_version_no).toBe(3);
+  });
+
+  test('ignore_file_version drops the lock and never reaches the extension', () => {
+    const out = path.join(tmpDir, 'lock-ignored.json');
+    writePulledRecipe(out, fullPullResult());
+
+    const prepared = prepareWorkatoCall('workato_ui_save_recipe_code', {
+      code_path: out,
+      ignore_file_version: true,
+    });
+    expect(prepared.args.expected_base_version_no).toBeUndefined();
+    expect(prepared.args.ignore_file_version).toBeUndefined();
+  });
+
+  test('refuses a file whose recipe_id is not the one being saved', () => {
+    const out = path.join(tmpDir, 'other-recipe.json');
+    writePulledRecipe(out, fullPullResult());
+
+    expect(() =>
+      prepareWorkatoCall('workato_ui_save_recipe_code', { code_path: out, recipe_id: 99 }),
+    ).toThrow(/recipe_id mismatch/);
+  });
+
+  test('round-trips origin metadata and turns it into an expected_context', () => {
+    const out = path.join(tmpDir, 'origin.json');
+    const summary = parseText(
+      writePulledRecipe(out, fullPullResult(), {
+        profile: 'centium',
+        tab_id: 42,
+        host: 'app.workato.com',
+        workspace_id: 5150,
+        workspace_name: 'Acme prod',
+        environment: 'production',
+      }),
+    );
+
+    expect(summary.origin).toMatchObject({
+      profile: 'centium',
+      tab_id: 42,
+      host: 'app.workato.com',
+      workspace_id: 5150,
+      environment: 'production',
+    });
+    expect(typeof summary.origin.pulled_at).toBe('string');
+
+    const file = JSON.parse(fs.readFileSync(out, 'utf8'));
+    expect(file.origin.workspace_id).toBe(5150);
+
+    const prepared = prepareWorkatoCall('workato_ui_save_recipe_code', { code_path: out });
+    expect(prepared.args.expected_context).toEqual({
+      host: 'app.workato.com',
+      workspace_id: 5150,
+      environment: 'production',
+    });
+  });
+
+  test('allow_context_mismatch drops the origin check and the flag', () => {
+    const out = path.join(tmpDir, 'origin-override.json');
+    writePulledRecipe(out, fullPullResult(), { host: 'app.workato.com', workspace_id: 5150 });
+
+    const prepared = prepareWorkatoCall('workato_ui_save_recipe_code', {
+      code_path: out,
+      allow_context_mismatch: true,
+    });
+    expect(prepared.args.expected_context).toBeUndefined();
+    expect(prepared.args.allow_context_mismatch).toBeUndefined();
+  });
+
+  test('refuses a file pulled from a workspace other than the pinned one', () => {
+    const out = path.join(tmpDir, 'origin-clash.json');
+    writePulledRecipe(out, fullPullResult(), { host: 'app.workato.com', workspace_id: 5150 });
+
+    expect(() =>
+      prepareWorkatoCall('workato_ui_save_recipe_code', {
+        code_path: out,
+        expected_context: { host: 'app.workato.com', workspace_id: 9999 },
+      }),
+    ).toThrow(/context mismatch/);
+  });
+
+  test('an inline save carries no file flags to the extension', () => {
+    const prepared = prepareWorkatoCall('workato_ui_save_recipe_code', {
+      recipe_id: 4242,
+      code: sampleCode,
+      ignore_file_version: true,
+      allow_context_mismatch: true,
+      expected_context: { workspace_id: 5150 },
+    });
+    expect(prepared.args.ignore_file_version).toBeUndefined();
+    expect(prepared.args.allow_context_mismatch).toBeUndefined();
+    expect(prepared.args.expected_context).toBeUndefined();
+  });
+});
+
+describe('writePulledRecipe: origin folder', () => {
+  test('records the recipe folder from the pull payload', () => {
+    const out = path.join(tmpDir, 'origin-folder.json');
+    const result: CallToolResult = {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            recipe_id: 4242,
+            code: sampleCode,
+            version: { version_no: 7, name: 'My Recipe', folder_id: 771 },
+          }),
+        },
+      ],
+      isError: false,
+    };
+    writePulledRecipe(out, result, { profile: 'centium' });
+    const file = JSON.parse(fs.readFileSync(out, 'utf8'));
+    expect(file.origin.folder_id).toBe(771);
+    expect(file.origin.profile).toBe('centium');
+  });
+});
