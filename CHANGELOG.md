@@ -6,6 +6,21 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+### Added
+
+- **`workato_session_context`**: the cheap answer to "where would this call land?": tab, host, workspace, environment, user, from `/web_api/auth_user.json` and nothing else. `workato_whoami` returns roles, teams, membership and every available environment behind a debugger attach; this reads the five fields routing depends on through the ordinary script dispatch and caches them per tab for 60s, dropping the entry the moment the tab navigates or closes.
+- **Every successful `workato_*` response says where it ran.** One extra text block, `{"context":{"tab_id":..,"host":..,"workspace_id":..,"workspace_name":..,"environment":..}}`, under 200 bytes, with the routed profile added by the bridge. Workato resolves the workspace from the tab's own session, so until now nothing in a response distinguished "recipe 123 in prod" from "recipe 123 in the sandbox". Resolving the context can never fail a call: when it cannot be read, the block is simply absent.
+- **A pinned session pins the workspace, not just the tab.** `workato_switch_profile(profile, tabId)` now reads that tab's workspace and environment once and keeps the whole tuple (profile, tab, host, workspace, environment, pinned_at); `workato_list_profiles` returns it as `session_context` along with a note about how calls are routed. Every later Workato call, top-level and nested, carries the pinned tab and an `expected_context`, so a multi-step operation can no longer read one tab and write another.
+- **Writes verify the workspace before they act.** `workato_ui_save_recipe_code`, start/stop, non-GET `workato_api_request`, delete/rename/move/copy recipe check the target tab against the expected context and refuse with `ContextMismatch`, naming expected and actual, before anything is fetched or written.
+- **Recipe files record where they came from.** `workato_pull_recipe(out_file)` writes an `origin` block (pulled_at, profile, tab, host, workspace id and name, environment, folder). The push reads it back: a save into a different workspace is refused unless `allow_context_mismatch: true`.
+
+### Changed
+
+- **A file save defaults to the version it was pulled from.** `workato_ui_save_recipe_code(code_path)` sets `expected_base_version_no` from the file's `version_no` when the caller gives none, so a file edited yesterday can no longer overwrite today's version by omission. `ignore_file_version: true` is the deliberate override. A file whose `recipe_id` is not the recipe being saved is refused outright rather than written under the wrong id.
+- **A pinned profile is never routed around.** A failed call to a pinned profile is reported, naming that profile and the connected ones, instead of being re-sent to another profile or to the legacy native-messaging host. With no profile pinned the bridge default is still used, but a failure there is reported too. The stdio host stays reachable only when no Chrome profile is connected at all, and the response says that is what happened.
+- **A profile that reconnects is re-checked.** The registry now carries a generation counter; a pinned session re-reads its tab's context after any connect or disconnect and refuses the call with `ContextChanged` when the workspace or environment moved.
+- `resolveTabId` throws when an explicit tab is gone or is no longer a logged-in Workato app tab, instead of silently falling through to whatever other Workato tab is open. That fallthrough is how a save aimed at a closed pinned tab could land in another workspace.
+
 ## bridge 1.5.0 · shared 1.2.0 (2026-08-26)
 
 ### Added
