@@ -87,6 +87,7 @@ export const TOOL_NAMES = {
     APPS_LIST: 'workato_apps_list',
     PICK_LIST: 'workato_pick_list',
     RECIPE_STEP_SEARCH: 'workato_recipe_step_search',
+    RECIPE_CALLERS: 'workato_recipe_callers',
     SAVE_WITH_DEPENDENTS: 'workato_recipe_save_with_dependents',
     CALLABLE_SCHEMA_SET: 'workato_callable_schema_set',
     CALLER_BIND: 'workato_caller_bind',
@@ -2049,6 +2050,101 @@ export const TOOL_SCHEMAS: Tool[] = [
     },
   },
   {
+    name: TOOL_NAMES.WORKATO.RECIPE_CALLERS,
+    description:
+      'Who calls this recipe. Use it before stopping, saving or deleting a callable, and to ' +
+      'answer "what breaks if I change this". Three evidence sources, labelled per caller: ' +
+      "'graph' is Workato's own dependency graph (one request, workspace-wide, the Flow->Flow " +
+      "edges behind the Operations hub dependency page); 'code' reads candidate recipes and " +
+      'matches call_recipe / call_recipe_async input.flow_id, the only source that names the ' +
+      'calling STEP and the only one that can report a call whose flow_id is built at runtime; ' +
+      "'jobs' reads calling_recipe_id off recent jobs of this recipe, which is observed " +
+      'EXECUTION HISTORY, never a complete dependency list. Default sources: graph + code. ' +
+      "The code scan covers the recipe's own folder unless folder_ids, project_id or " +
+      "scope:'workspace' is given, and walks every page of every folder it scans. " +
+      'Returns callers[] (recipe_id, name, running, folder_id, step, sources, observed_at), ' +
+      'callees, connections, lookup_tables, lcap_pages, unresolved_dynamic_targets, ' +
+      "failed_reads, scope, freshness and completeness 'complete' | 'partial' with reasons. " +
+      "Take 'partial' literally: it means other callers may exist and the list must not be " +
+      'described as exhaustive. Repeated calls reuse a version-aware index and re-read only ' +
+      'the recipes whose updated_at changed. Read-only. Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'The recipe whose callers you want.' },
+        sources: {
+          type: 'array',
+          items: { type: 'string', enum: ['graph', 'code', 'jobs'] },
+          description:
+            'Evidence sources to combine. Default ["graph","code"]. Add "jobs" for observed ' +
+            'execution history, which is supplementary, not proof of the full caller set.',
+        },
+        folder_ids: {
+          type: 'array',
+          items: { type: 'number' },
+          description:
+            'Folders the code scan reads (non-recursive per folder, so list subfolders too). ' +
+            'From workato_list_folders. Implies scope "folders".',
+        },
+        project_id: {
+          type: 'string',
+          description:
+            'Project id, project name or project root folder id. With scope "project" every ' +
+            'folder under that root is scanned.',
+        },
+        scope: {
+          type: 'string',
+          enum: ['folders', 'project', 'workspace'],
+          description:
+            'Code scan scope. Omit to scan the recipe\'s own folder (or "folders" when ' +
+            'folder_ids is given). "workspace" walks the whole recipe list and costs the most.',
+        },
+        max_recipes: {
+          type: 'number',
+          description: 'Cap on candidate recipes listed. Default 200, clamped 1-2000.',
+        },
+        max_pages: {
+          type: 'number',
+          description:
+            'Cap on listing pages per scanned folder, 20 recipes per page. Default 25, ' +
+            'clamped 1-200. Hitting the cap makes the answer partial.',
+        },
+        include_transitive: {
+          type: 'boolean',
+          description:
+            'Also return the caller edges this scan saw, the indirect callers with their hop ' +
+            'depth, and any call cycle. Default false.',
+        },
+        include_callees: {
+          type: 'boolean',
+          description: 'Return what this recipe itself calls. Default true.',
+        },
+        refresh: {
+          type: 'boolean',
+          description:
+            'Ignore the cached index and re-read every candidate. Use after edits made outside ' +
+            'this session. Default false.',
+        },
+        jobs_limit: {
+          type: 'number',
+          description: 'Recent jobs read when "jobs" is a source. Default 50, clamped 1-100.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description:
+            'Overall in-page budget across the graph, listing, code and job reads. Default ' +
+            '60000, clamped 10000-110000. Running out is reported, never hidden.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id'],
+    },
+  },
+  {
     name: TOOL_NAMES.WORKATO.SAVE_WITH_DEPENDENTS,
     description:
       'Save a CALLABLE recipe (recipe function) and handle its callers around the save. ' +
@@ -2057,11 +2153,12 @@ export const TOOL_SCHEMAS: Tool[] = [
       'edit to a shared callable is stop-caller-A, stop-caller-B, save, start-A, start-B. This ' +
       'does that in one call and RESTORES each dependent to the state it was in — a caller that ' +
       'was already stopped stays stopped. ' +
-      'DEPENDENT DISCOVERY: Workato exposes only a COUNT of active dependents, never their ids, ' +
-      'so this tool will not guess. Pass dependent_recipe_ids (the callers you know), or ' +
-      'scan_folder_id to read every recipe in a folder and match call_recipe.flow_id. With ' +
-      'neither, the call is REFUSED rather than saving as if there were no dependents. If the ' +
-      'save fails because more dependents are active than were listed, everything this call ' +
+      'DEPENDENT DISCOVERY: pass dependent_recipe_ids (the callers you already know), or a scan ' +
+      'scope (scan_folder_id, scan_folder_ids, scan_project_id or scan_scope:"workspace"), ' +
+      'which runs workato_recipe_callers (dependency graph plus a paged code scan) and uses its ' +
+      'result. With neither, the call is REFUSED rather than saving as if there were no ' +
+      'dependents. A discovery that comes back partial is reported as a warning, not hidden. If ' +
+      'the save fails because more dependents are active than were listed, everything this call ' +
       'stopped is restarted and the mismatch is reported. ' +
       'For a callable with no callers, use workato_ui_save_recipe_code instead.',
     inputSchema: {
@@ -2091,8 +2188,26 @@ export const TOOL_SCHEMAS: Tool[] = [
         scan_folder_id: {
           type: 'number',
           description:
-            'Instead of a list: read every recipe in this folder and treat those whose ' +
-            'call_recipe step targets recipe_id as the dependents. Costs one pull per recipe.',
+            'Instead of a list: discover the callers in this folder with workato_recipe_callers ' +
+            '(dependency graph plus a paged code scan) and use them as the dependents.',
+        },
+        scan_folder_ids: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Several folders to discover callers in. Same discovery as scan_folder_id.',
+        },
+        scan_project_id: {
+          type: 'string',
+          description:
+            'Discover callers across every folder of this project (project id, name or root ' +
+            'folder id).',
+        },
+        scan_scope: {
+          type: 'string',
+          enum: ['folders', 'project', 'workspace'],
+          description:
+            'Discovery scope passed to workato_recipe_callers. Use "workspace" when the callers ' +
+            "may live outside the callee's project; it costs a full recipe-list walk.",
         },
         expected_base_version_no: {
           type: 'number',
