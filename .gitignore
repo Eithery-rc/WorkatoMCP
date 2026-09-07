@@ -53,3 +53,4 @@ CLAUDE.md
 generated-images/
 *.local.json
 recipe_full.json
+.intercom/
