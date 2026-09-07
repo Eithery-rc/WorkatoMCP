@@ -158,7 +158,8 @@ class WorkatoCallActionTool extends BaseBrowserToolExecutor {
 
       // Safety gate — runs BEFORE any HTTP traffic so we never accidentally
       // invoke a write action that the caller didn't explicitly opt into.
-      if (!isReadAction(args.action_name, args.input) && !allowWrites) {
+      const readOnly = isReadAction(args.action_name, args.input);
+      if (!readOnly && !allowWrites) {
         return createErrorResponse(
           `WorkatoUnsafeAction: action_name='${args.action_name}' looks like a write ` +
             '(not in the read-only allowlist: search_*, get_*, list_*, query_*, find_*, ' +
@@ -169,11 +170,15 @@ class WorkatoCallActionTool extends BaseBrowserToolExecutor {
       }
 
       const tab = await findWorkatoTab(args.tabId);
-      const result = await runInWorkatoTab(tab.tabId, callActionInPage, [
-        args.connection_id,
-        args.action_name,
-        args.input,
-      ]);
+      // An action that is not classified read-only can have side effects in the
+      // target system, so a timed-out dispatch must NOT be retried: the first
+      // attempt may well have landed, and a blind retry double-applies it.
+      const result = await runInWorkatoTab(
+        tab.tabId,
+        callActionInPage,
+        [args.connection_id, args.action_name, args.input],
+        { retryOnTimeout: readOnly },
+      );
 
       if (!result.ok) {
         const f = result.failure!;
