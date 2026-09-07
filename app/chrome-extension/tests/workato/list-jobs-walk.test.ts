@@ -9,7 +9,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  fetchReportColumnsInPage,
   listJobsInPage,
   type ListJobsWalkOptions,
 } from '@/entrypoints/background/tools/workato/list-jobs';
@@ -316,71 +315,5 @@ describe('listJobsInPage retention handling', () => {
     const result = await listJobsInPage(options());
     expect(result.from_started_at).toBe('2026-09-05T09:41:12.000-07:00');
     expect(result.through_started_at).toBe('2026-07-20T08:06:38.122-07:00');
-  });
-});
-
-describe('fetchReportColumnsInPage', () => {
-  it('reads the trigger job_report_schema and the recipe version', async () => {
-    const code = JSON.stringify({
-      keyword: 'trigger',
-      job_report_schema: COLUMNS,
-      job_report_config: { custom_column_0: 'GIRAFFE-4412 static' },
-    });
-    const urls: string[] = [];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string) => {
-        urls.push(url);
-        const body = url.includes('code.json')
-          ? JSON.stringify({ result: code })
-          : JSON.stringify({ result: { recipe_data: { flow: { version_no: 6 } } } });
-        return Promise.resolve({ status: 200, text: () => Promise.resolve(body) });
-      }),
-    );
-    const result = await fetchReportColumnsInPage(82145436);
-    expect(result.ok).toBe(true);
-    expect(result.version_no).toBe(6);
-    expect(result.columns).toEqual(COLUMNS);
-    expect(urls).toEqual(['/recipes/82145436.json', '/recipes/82145436/code.json?mode=view']);
-  });
-
-  it('returns no columns for a recipe without a job report', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string) =>
-        Promise.resolve({
-          status: 200,
-          text: () =>
-            Promise.resolve(
-              url.includes('code.json')
-                ? JSON.stringify({ result: JSON.stringify({ keyword: 'trigger' }) })
-                : JSON.stringify({ result: { recipe_data: { flow: { version_no: 3 } } } }),
-            ),
-        }),
-      ),
-    );
-    const result = await fetchReportColumnsInPage(1);
-    expect(result.ok).toBe(true);
-    expect(result.columns).toEqual([]);
-  });
-
-  it('reports a failed code read instead of pretending there are no labels', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string) =>
-        Promise.resolve({
-          status: url.includes('code.json') ? 403 : 200,
-          text: () =>
-            Promise.resolve(
-              url.includes('code.json')
-                ? 'forbidden'
-                : JSON.stringify({ result: { recipe_data: { flow: { version_no: 3 } } } }),
-            ),
-        }),
-      ),
-    );
-    const result = await fetchReportColumnsInPage(1);
-    expect(result.ok).toBe(false);
-    expect(result.message).toMatch(/HTTP 403/);
   });
 });

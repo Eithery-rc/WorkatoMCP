@@ -1,16 +1,12 @@
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
-import {
-  findWorkatoTab,
-  runInWorkatoTab,
-  runInWorkatoTabDetailed,
-  WorkatoDispatchError,
-} from './tab-dispatch';
+import { findWorkatoTab, runInWorkatoTabDetailed, WorkatoDispatchError } from './tab-dispatch';
 import {
   buildCoverageSummary,
   normalizeMatchSpec,
   normalizeStartedBound,
+  parseReportColumns,
   projectJobFields,
   shapeSlimJob,
   validateJobFields,
@@ -18,6 +14,7 @@ import {
   type MatchSpec,
   type ReportColumn,
 } from './job-projection';
+import { loadRecipeSnapshot } from './pull-recipe';
 
 /** started_at values Workato honours. Anything else is silently ignored server-side. */
 const STARTED_AT_VALUES = ['1.hour', '24.hours', '7.days', '30.days', 'all'] as const;
@@ -397,111 +394,6 @@ export function listJobsInPage(opts: ListJobsWalkOptions): Promise<ListJobsWalkR
   return loop(opts.cursor);
 }
 
-export interface ReportColumnsResult {
-  ok: boolean;
-  version_no?: number | null;
-  columns?: ReportColumn[];
-  message?: string;
-}
-
-/**
- * In-page function. Reads the recipe's job-report column labels.
- *
- * The labels are not on the job: they live on the recipe code tree's trigger
- * node as job_report_schema [{name: 'custom_column_N', label}]. The version is
- * read from the cheap /recipes/<id>.json metadata so the background cache can
- * key on it. Plain function, .then() chains only: see listJobsInPage.
- */
-export function fetchReportColumnsInPage(recipeId: number): Promise<ReportColumnsResult> {
-  const fetchOpts: RequestInit = {
-    credentials: 'include',
-    headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' },
-  };
-
-  function readVersion(): Promise<number | null> {
-    return fetch(`/recipes/${recipeId}.json`, fetchOpts).then(
-      (r) =>
-        r.text().then((body) => {
-          if (r.status < 200 || r.status >= 300) return null;
-          try {
-            const json = JSON.parse(body) as {
-              result?: { recipe_data?: { flow?: { version_no?: unknown } } };
-            };
-            const version = json.result?.recipe_data?.flow?.version_no;
-            return version == null ? null : Number(version);
-          } catch {
-            return null;
-          }
-        }),
-      () => null,
-    );
-  }
-
-  function readColumns(): Promise<{ ok: boolean; columns?: ReportColumn[]; message?: string }> {
-    const url = `/recipes/${recipeId}/code.json?mode=view`;
-    return fetch(url, fetchOpts).then((r) =>
-      r.text().then((body) => {
-        if (r.status < 200 || r.status >= 300) {
-          return { ok: false, message: `GET ${url} returned HTTP ${r.status}` };
-        }
-        let tree: unknown;
-        try {
-          const json = JSON.parse(body) as { result?: unknown };
-          tree = typeof json.result === 'string' ? JSON.parse(json.result) : json.result;
-        } catch (e) {
-          return {
-            ok: false,
-            message: `GET ${url}: JSON.parse failed: ${e instanceof Error ? e.message : String(e)}`,
-          };
-        }
-        const schema =
-          tree && typeof tree === 'object'
-            ? (tree as Record<string, unknown>).job_report_schema
-            : null;
-        const columns: ReportColumn[] = [];
-        if (Array.isArray(schema)) {
-          for (let i = 0; i < schema.length; i++) {
-            const entry = schema[i];
-            if (!entry || typeof entry !== 'object') continue;
-            const record = entry as Record<string, unknown>;
-            const name = typeof record.name === 'string' ? record.name : '';
-            if (name.indexOf('custom_column_') !== 0) continue;
-            const label =
-              typeof record.label === 'string' && record.label !== '' ? record.label : null;
-            columns.push({ name: name, label: label });
-          }
-        }
-        return { ok: true, columns: columns };
-      }),
-    );
-  }
-
-  return readVersion().then((version) =>
-    readColumns().then((res) => {
-      if (!res.ok) return { ok: false, message: res.message };
-      return { ok: true, version_no: version, columns: res.columns };
-    }),
-  );
-}
-
-interface ReportColumnsCacheEntry {
-  version_no: number | null;
-  columns: ReportColumn[];
-  at: number;
-}
-
-/**
- * Report-column labels, cached per recipe id and version for the life of the
- * service worker. A recipe save that changes the labels bumps version_no, and
- * the TTL bounds how long a stale entry can survive an unnoticed change.
- */
-const reportColumnsCache = new Map<number, ReportColumnsCacheEntry>();
-const REPORT_COLUMNS_TTL_MS = 10 * 60_000;
-
-export function clearReportColumnsCache(): void {
-  reportColumnsCache.clear();
-}
-
 class WorkatoListJobsTool extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.WORKATO.LIST_JOBS;
 
@@ -557,38 +449,27 @@ class WorkatoListJobsTool extends BaseBrowserToolExecutor {
 
       const tab = await findWorkatoTab(args.tabId);
 
+      // Report-column labels live on the recipe trigger's job_report_schema, so
+      // they come from the version-pinned recipe snapshot rather than a second
+      // unpinned code fetch behind a time-based cache. The snapshot cache is
+      // keyed by recipe id AND version, so a save that changes the labels can
+      // never be served stale, and a repeat call costs one cheap metadata read.
       let columns: ReportColumn[] = [];
       let columnsVersion: number | null = null;
       let columnsNote: string | undefined;
       if (wantLabels) {
-        const cached = reportColumnsCache.get(args.recipe_id);
-        if (cached && Date.now() - cached.at < REPORT_COLUMNS_TTL_MS) {
-          columns = cached.columns;
-          columnsVersion = cached.version_no;
-        } else {
-          try {
-            const fetched = await runInWorkatoTab(
-              tab.tabId,
-              fetchReportColumnsInPage,
-              [args.recipe_id],
-              { timeoutMs: 20_000 },
-            );
-            if (fetched.ok) {
-              columns = fetched.columns ?? [];
-              columnsVersion = fetched.version_no ?? null;
-              reportColumnsCache.set(args.recipe_id, {
-                columns,
-                version_no: columnsVersion,
-                at: Date.now(),
-              });
-            } else {
-              columnsNote = `Report column labels unavailable: ${fetched.message ?? 'unknown error'}. Columns are keyed custom_column_N.`;
-            }
-          } catch (err) {
-            columnsNote = `Report column labels unavailable: ${
-              err instanceof Error ? err.message : String(err)
-            }. Columns are keyed custom_column_N.`;
+        try {
+          const snapshot = await loadRecipeSnapshot(tab, args.recipe_id, { timeoutMs: 20_000 });
+          if (snapshot.ok) {
+            columns = parseReportColumns(snapshot.code);
+            columnsVersion = snapshot.version.version_no;
+          } else {
+            columnsNote = `Report column labels unavailable: ${snapshot.error}. Columns are keyed custom_column_N.`;
           }
+        } catch (err) {
+          columnsNote = `Report column labels unavailable: ${
+            err instanceof Error ? err.message : String(err)
+          }. Columns are keyed custom_column_N.`;
         }
       }
 
