@@ -6,6 +6,26 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+### Added
+
+- **`workato_recipe_apply`**: several recipe edits in ONE pull, validate, save, readback cycle, so five mappings create one version instead of five. Ops: `set_input`, `delete_input`, `set_extended_schema`, `set_py_eval_code`, `map_datapill`, plus the structural ones the surgical tools never had: `insert_step`, `remove_step`, `move_step`, `set_loop_source`, `bind_connection`. Steps are addressed by number, `as` anchor, or uuid, and a number that appears twice in a tree an older renumbering bug corrupted is refused rather than resolved to the first hit. Every change is applied to a CLONE of the pulled tree: one invalid operation refuses the whole batch before anything is written, naming the change index, the step and the reason. `dry_run` returns the same summary (validation, `changed_paths`, `would_save_version`) without saving; `idempotency_key` makes a retried batch return the stored summary instead of creating a second version.
+- **A shared mutation engine** (`workato-recipe-engine.ts`) behind every native recipe write: the surgical mutators, the batch tool, the three legacy names and the callable-schema tools now pull once, mutate a clone, validate locally, merge the config, save once and summarize once. Local validation covers what Workato accepts silently and then runs wrong: globally sequential numbering including nested blocks, unique 8-hex `as` anchors, a uuid on every node the call creates (the live probe: a node without one is rejected with `code is invalid: line=0, uuid not present`), `else`/`elsif` last inside an `if` block, `catch` last inside `try`, `while_condition` first inside `repeat`, and a `foreach` whose `source` sits at the node root rather than under `input`.
+- **Mutation responses distinguish persisted, valid and verified**, alongside `changed_paths` and `version_no`. A save that stored a tree Workato rejects is persisted and NOT valid, and used to read exactly like a clean edit.
+
+### Fixed
+
+- **The legacy mutators no longer unbind every connection in the recipe.** `workato_recipe_add_step`, `workato_recipe_set_step_input` and `workato_recipe_map_datapill` rebuilt the `config` array from the providers found in the code tree, which dropped `account_id` from every entry and reset `skip_validation`. Reproduced live in the audit: one added step silently unbound both Salesforce and NetSuite. All three now run through the engine, which MERGES the pulled config and only appends entries for a provider the recipe did not already use. A new provider gets its `account_id` when `connection_id` is given, and otherwise the response says `connection_binding: missing` rather than leaving a recipe that cannot start.
+- **`workato_recipe_add_step` renumbers the whole tree and can insert into a nested block.** It renumbered only the top-level block, so an insert at position 0 gave a nested step and a top-level step the same number; and any `after_step` inside a `foreach`/`if`/`try` returned "not found". Insertion now takes an `anchor` (`after` / `before` / `into` with `first` / `last`), keeps `elsif`/`else`/`catch` at the tail of their parent block and a `while_condition` first, and repairs numbering left broken by an earlier save.
+- **The optimistic lock fails closed.** `workato_ui_save_recipe_code` skipped the version check whenever the status probe failed, which is exactly the case where a stale tree can overwrite a newer one; when `expected_base_version_no` was requested and the current version cannot be read, the save is refused. The engine also refuses a stale `expected_base_version_no` before applying anything, so operations are never computed against a tree the caller never saw.
+- **A save that Workato reports validation errors on no longer restarts the recipe.** The payload carries `save_status: 'persisted_invalid'`, the automatic restart is skipped, and the first line says the recipe is stopped rather than reading as a clean save.
+- **py_eval shadowing warnings from a whole-tree file save reach the response.** `workato-file-io.ts` computed them into `args.py_eval_warnings` and nothing ever read them; the save payload now carries `py_eval_warnings`.
+
+### Changed
+
+- `workato_recipe_add_step`'s `keyword` enum matches the code tree: `action`, `if`, `foreach`, `repeat`, `try`, `stop`. `repeat_each` and `return_result` were never keywords (a foreach is `foreach`, a return_result is an `action` named `return_result` on `workato_recipe_function`) and produced a malformed node with no `block`, `source` or `condition`. A `repeat` is built with its `while_condition` as the first child and a `try` with its `catch` last.
+- The three legacy mutators, plus `workato_recipe_delete_input_path`, `set_py_eval_code` and `set_extended_schema`, advertise the save modifiers their handler already forwarded: `expected_base_version_no`, `comment`, `verify_readback`, `restart_if_running`, `ensure_running`, and `dry_run` where it applies.
+- The three legacy mutators moved out of the Chrome extension into the bridge; `app/chrome-extension/entrypoints/background/tools/workato-recipe/` is deleted, so there is one implementation rather than two that drift.
+
 ## bridge 1.5.0 · shared 1.2.0 (2026-08-26)
 
 ### Added
