@@ -3,6 +3,8 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
 import { stripConnectionSecrets } from './strip-secrets';
+import { loadRecipeSnapshot } from './pull-recipe';
+import { cachedRecipeVersions } from './recipe-snapshot';
 
 /**
  * workato_recipe_callers: who calls this recipe, and how sure are we.
@@ -836,6 +838,8 @@ export interface BuildInput {
   include_callees: boolean;
   include_transitive: boolean;
   extra_reasons?: string[];
+  /** Candidates whose code came from the version-pinned snapshot cache. */
+  snapshot_reads?: number;
 }
 
 /** Per-collection caps. A response never returns an unbounded list. */
@@ -1112,6 +1116,7 @@ export function buildCallersPayload(input: BuildInput): Record<string, unknown> 
     freshness: {
       index_hits: input.hits.length,
       index_misses: input.candidates.length - input.hits.length,
+      snapshot_reads: input.snapshot_reads ?? 0,
       graph_fetched_at: input.graph_fetched_at ?? null,
     },
     limits: CALLER_LIMITS,
@@ -1354,6 +1359,7 @@ class WorkatoRecipeCallersTool extends BaseBrowserToolExecutor {
       const failedReads: FailedRead[] = [];
       let readCount = 0;
 
+      let snapshotReads = 0;
       if (wantCode && plan.to_read.length > 0) {
         const remaining = deadline - Date.now();
         if (remaining < 5_000) {
@@ -1362,14 +1368,66 @@ class WorkatoRecipeCallersTool extends BaseBrowserToolExecutor {
               `${plan.to_read.length} candidate(s) were left unread. Raise timeout_ms or narrow the scope.`,
           );
         } else {
-          const codeResult = await runInWorkatoTab(
-            tab.tabId,
-            fetchRecipeCallStepsInPage,
-            [plan.to_read, remaining - 2_000],
-            { timeoutMs: remaining },
-          );
           const nameById = new Map<number, CandidateRow>();
           for (const candidate of candidates) nameById.set(candidate.id, candidate);
+
+          // A candidate this session already pulled is held in the version-
+          // pinned snapshot cache. Reading it through loadRecipeSnapshot costs
+          // one cheap metadata request and skips the code body entirely, and
+          // the version check means a save since the pull is picked up rather
+          // than served stale. Candidates with no snapshot keep the batched
+          // in-page read, which is one dispatch for the whole list.
+          const toRead: number[] = [];
+          for (const candidateId of plan.to_read) {
+            if (cachedRecipeVersions(tab.host, candidateId).length === 0) {
+              toRead.push(candidateId);
+              continue;
+            }
+            const left = deadline - Date.now();
+            if (left < 5_000) {
+              toRead.push(candidateId);
+              continue;
+            }
+            let snapshot: Awaited<ReturnType<typeof loadRecipeSnapshot>>;
+            try {
+              snapshot = await loadRecipeSnapshot(tab, candidateId, {
+                timeoutMs: Math.min(left - 2_000, 30_000),
+              });
+            } catch {
+              // Transport trouble on one recipe must not sink the scan; let
+              // the batched reader try it and report its own failure.
+              toRead.push(candidateId);
+              continue;
+            }
+            if (!snapshot.ok) {
+              toRead.push(candidateId);
+              continue;
+            }
+            snapshotReads += 1;
+            readCount += 1;
+            const fromSnapshot = extractCallTargets(snapshot.code);
+            const candidate = nameById.get(candidateId);
+            const cachedEntry: CallerIndexEntry = {
+              recipe_id: candidateId,
+              targets: fromSnapshot.targets,
+              dynamic_targets: fromSnapshot.dynamic_targets,
+              scanned_at: new Date().toISOString(),
+            };
+            if (candidate?.name !== undefined) cachedEntry.name = candidate.name;
+            if (candidate?.folder_id !== undefined) cachedEntry.folder_id = candidate.folder_id;
+            if (candidate?.updated_at !== undefined) cachedEntry.updated_at = candidate.updated_at;
+            index[String(candidateId)] = cachedEntry;
+          }
+
+          const codeResult =
+            toRead.length > 0
+              ? await runInWorkatoTab(
+                  tab.tabId,
+                  fetchRecipeCallStepsInPage,
+                  [toRead, Math.max(deadline - Date.now() - 2_000, 1_000)],
+                  { timeoutMs: Math.max(deadline - Date.now(), 5_000) },
+                )
+              : { ok: true, reads: [], unread: [], stopped_early: false };
           for (const read of codeResult.reads) {
             const candidate = nameById.get(read.recipe_id);
             if (!read.ok) {
@@ -1448,6 +1506,7 @@ class WorkatoRecipeCallersTool extends BaseBrowserToolExecutor {
         graph: scan.graph,
         graph_error: scan.graph_error,
         graph_fetched_at: graphFetchedAt,
+        snapshot_reads: snapshotReads,
         candidates,
         index,
         hits: plan.hits,

@@ -11,14 +11,18 @@ import {
 import {
   DEFAULT_INCLUDE,
   findStep,
+  flattenAdapterFields,
   inspectStep,
   inspectSteps,
   listStepRefs,
+  staticFieldKey,
   toCompactRecipe,
   type IncludeSection,
   type RawNode,
   type RecipeVersion,
+  type StaticFieldIndex,
 } from './recipe-view';
+import { fetchAdapterMetaInPage, findOperationInputFields } from './adapter-meta';
 import {
   DEFAULT_COMPACT_BUDGET_CHARS,
   DEFAULT_STEP_BUDGET_CHARS,
@@ -333,6 +337,52 @@ export async function loadRecipeSnapshot(
   return { ok: true, unchanged: false, version: result.version, code: code as RawNode, cacheHit };
 }
 
+/**
+ * Steps that declare no input schema of their own but do name an app operation.
+ * Those are the ones whose `fields` list would otherwise come back empty, which
+ * reads as "this step takes nothing" rather than "the schema lives on the
+ * adapter". Connectionless built-ins (logger, py_eval, the Variables actions)
+ * are included: `/integrations/meta` describes them like any other adapter.
+ */
+export function stepsNeedingStaticFields(
+  nodes: readonly RawNode[],
+): Array<{ provider: string; name: string }> {
+  const seen = new Set<string>();
+  const wanted: Array<{ provider: string; name: string }> = [];
+  for (const node of nodes) {
+    const schema = node.extended_input_schema;
+    if (Array.isArray(schema) && schema.length > 0) continue;
+    const provider = typeof node.provider === 'string' ? node.provider : '';
+    const name = typeof node.name === 'string' ? node.name : '';
+    if (!provider || !name) continue;
+    const key = staticFieldKey(provider, name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    wanted.push({ provider, name });
+  }
+  return wanted;
+}
+
+/** Turn one raw `/integrations/meta` document into the merge index. */
+export function buildStaticFieldIndex(
+  meta: unknown,
+  wanted: ReadonlyArray<{ provider: string; name: string }>,
+): StaticFieldIndex {
+  const index: StaticFieldIndex = {};
+  for (const entry of wanted) {
+    const found = findOperationInputFields(meta, entry.provider, entry.name);
+    if (!found) continue;
+    index[staticFieldKey(entry.provider, entry.name)] = {
+      fields: flattenAdapterFields(found.fields),
+      // An operation that derives its input per connection/object publishes a
+      // floor, not the whole set; saying otherwise would repeat the mistake
+      // this merge exists to fix.
+      complete: !found.extends_input_schema,
+    };
+  }
+  return index;
+}
+
 const INCLUDE_SECTIONS: IncludeSection[] = ['mappings', 'fields', 'datapills', 'schemas', 'code'];
 
 function normalizeStringArray(value: unknown): string[] | null {
@@ -465,6 +515,27 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
           );
         }
 
+        // One adapter-meta read for the whole call, and only when the caller
+        // asked for fields and at least one resolved step declares none. The
+        // fetch is best effort: a failure leaves fields_complete false rather
+        // than failing the read.
+        let staticFields: StaticFieldIndex | undefined;
+        const wantFields = (include ?? DEFAULT_INCLUDE).includes('fields');
+        if (view !== 'full' && wantFields) {
+          const wanted = stepsNeedingStaticFields(resolved.map((entry) => entry.node));
+          if (wanted.length > 0) {
+            const providers = [...new Set(wanted.map((entry) => entry.provider))];
+            try {
+              const meta = await runInWorkatoTab(tab.tabId, fetchAdapterMetaInPage, [providers], {
+                timeoutMs: Math.min(timeoutMs, 30_000),
+              });
+              if (meta.ok) staticFields = buildStaticFieldIndex(meta.meta, wanted);
+            } catch {
+              /* the adapter meta is an enrichment; the step view stands without it */
+            }
+          }
+        }
+
         if (view === 'full') {
           payload = {
             recipe_id: args.recipe_id,
@@ -486,6 +557,7 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
               budgetChars,
               offsets: cursorState?.o,
               versionNo,
+              staticFields,
             }),
             cache_hit: snapshot.cacheHit,
           };
@@ -502,6 +574,7 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
               stepOffset: cursorState?.s,
               versionNo,
               notFound,
+              staticFields,
             }),
             cache_hit: snapshot.cacheHit,
           };

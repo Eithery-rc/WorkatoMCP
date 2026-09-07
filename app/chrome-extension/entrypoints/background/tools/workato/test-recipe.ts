@@ -6,7 +6,9 @@ import {
   runInWorkatoTab,
   workatoNotFoundHint,
   WorkatoDispatchError,
+  type WorkatoTabInfo,
 } from './tab-dispatch';
+import { loadRecipeSnapshot } from './pull-recipe';
 
 /**
  * workato_test_recipe: the supported "Test recipe" path, with trigger input.
@@ -96,15 +98,6 @@ interface InPageFailure {
   body_excerpt?: string;
   message: string;
   details?: unknown;
-}
-
-interface ContextInPageResult {
-  ok: boolean;
-  name?: string;
-  version_no?: number;
-  config?: string;
-  code?: unknown;
-  failure?: InPageFailure;
 }
 
 interface RunInPageResult {
@@ -344,95 +337,6 @@ export function buildTestRequestBody(
 /* -------------------------------------------------------------------------- */
 /* In-page functions                                                           */
 /* -------------------------------------------------------------------------- */
-
-/**
- * Runs in the Workato tab's MAIN world. Plain function, .then() chains only,
- * every helper declared inside (see pull-recipe.ts for why async/await and
- * module-scope references do not survive serialization).
- */
-export function fetchTestContextInPage(recipeId: number): Promise<ContextInPageResult> {
-  const fetchOpts: RequestInit = {
-    credentials: 'include',
-    headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' },
-  };
-  const fetchAndParse = (
-    url: string,
-  ): Promise<{ status: number; bodyText: string; json: unknown }> =>
-    fetch(url, fetchOpts).then((r) =>
-      r.text().then((bodyText) => {
-        let json: unknown = null;
-        try {
-          json = JSON.parse(bodyText);
-        } catch {
-          /* keep the raw body for diagnostics */
-        }
-        return { status: r.status, bodyText, json };
-      }),
-    );
-
-  return fetchAndParse(`/recipes/${recipeId}.json?error_format=json`).then((meta) => {
-    if (meta.status < 200 || meta.status >= 300) {
-      return {
-        ok: false,
-        failure: {
-          stage: 'meta' as const,
-          status: meta.status,
-          body_excerpt: meta.bodyText.slice(0, 1024),
-          message: `GET /recipes/${recipeId}.json returned HTTP ${meta.status}`,
-        },
-      };
-    }
-    return fetchAndParse(`/recipes/${recipeId}/code.json?mode=view`).then((code) => {
-      if (code.status < 200 || code.status >= 300) {
-        return {
-          ok: false,
-          failure: {
-            stage: 'code' as const,
-            status: code.status,
-            body_excerpt: code.bodyText.slice(0, 1024),
-            message: `GET /recipes/${recipeId}/code.json returned HTTP ${code.status}`,
-          },
-        };
-      }
-      const flow =
-        (meta.json as any) && (meta.json as any).result
-          ? (meta.json as any).result.recipe_data && (meta.json as any).result.recipe_data.flow
-          : null;
-      const codeStr = (code.json as any) ? (code.json as any).result : null;
-      if (!flow || typeof codeStr !== 'string') {
-        return {
-          ok: false,
-          failure: {
-            stage: 'shape' as const,
-            body_excerpt: JSON.stringify({ has_flow: Boolean(flow) }).slice(0, 512),
-            message:
-              'Unexpected response shape - missing result.recipe_data.flow or result code string.',
-          },
-        };
-      }
-      let parsedCode: unknown;
-      try {
-        parsedCode = JSON.parse(codeStr);
-      } catch (e) {
-        return {
-          ok: false,
-          failure: {
-            stage: 'shape' as const,
-            body_excerpt: codeStr.slice(0, 512),
-            message: `JSON.parse(code.result) failed: ${e instanceof Error ? e.message : String(e)}`,
-          },
-        };
-      }
-      return {
-        ok: true,
-        name: String(flow.name || ''),
-        version_no: Number(flow.version_no || 0),
-        config: typeof flow.config === 'string' ? flow.config : JSON.stringify(flow.config || []),
-        code: parsedCode,
-      };
-    });
-  });
-}
 
 /**
  * Starts one test run and polls the test-job list for the job it produced.
@@ -853,7 +757,7 @@ class WorkatoTestRecipeTool extends BaseBrowserToolExecutor {
 
       if (action === 'stop') return this.stopTest(tab.tabId, args.recipe_id);
       if (action === 'status') return this.readStatus(tab.tabId, args.recipe_id);
-      return this.runTest(tab.tabId, args);
+      return this.runTest(tab, args);
     } catch (err) {
       if (err instanceof WorkatoDispatchError) {
         return createErrorResponse(`${err.code}: ${err.message}`);
@@ -930,7 +834,8 @@ class WorkatoTestRecipeTool extends BaseBrowserToolExecutor {
     };
   }
 
-  private async runTest(tabId: number, args: TestRecipeArgs): Promise<ToolResult> {
+  private async runTest(tab: WorkatoTabInfo, args: TestRecipeArgs): Promise<ToolResult> {
+    const tabId = tab.tabId;
     const recipeId = args.recipe_id;
     if (args.trigger_input !== undefined && asRecord(args.trigger_input) === null) {
       return createErrorResponse('Param [trigger_input] must be a non-null object when supplied');
@@ -939,12 +844,14 @@ class WorkatoTestRecipeTool extends BaseBrowserToolExecutor {
       return createErrorResponse('Param [wait_timeout_ms] must be a number of milliseconds');
     }
 
-    const context = await runInWorkatoTab(tabId, fetchTestContextInPage, [recipeId], {
-      timeoutMs: CONTEXT_TIMEOUT_MS,
-    });
-    if (!context.ok) {
-      return createErrorResponse(failureText('WorkatoApiError', context.failure));
+    // One version-pinned snapshot instead of an unpinned meta+code pair: the
+    // config and the tree are then guaranteed to describe the same version,
+    // and a recipe already read in this session costs no code fetch at all.
+    const snapshot = await loadRecipeSnapshot(tab, recipeId, { timeoutMs: CONTEXT_TIMEOUT_MS });
+    if (!snapshot.ok) {
+      return createErrorResponse(snapshot.error);
     }
+    const context = { config: snapshot.version.config, code: snapshot.code as unknown };
 
     const decision = detectTestMode(context.code);
     if (decision.mode === 'unsupported') {

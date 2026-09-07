@@ -3,6 +3,7 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
 import { assertExpectedContext, type ExpectedTabContext } from './session-context';
+import { invalidateRecipeSnapshot } from './recipe-snapshot';
 
 interface RenameRecipeArgs {
   recipe_id: number;
@@ -184,6 +185,9 @@ class WorkatoRenameRecipeTool extends BaseBrowserToolExecutor {
               : ''),
         );
       }
+
+      // A rename writes a new recipe version, so the cached code is stale.
+      invalidateRecipeSnapshot(result.recipe_id);
 
       const errCount =
         result.code_errors.length +

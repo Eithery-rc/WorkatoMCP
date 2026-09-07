@@ -3,6 +3,7 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
 import { assertExpectedContext, type ExpectedTabContext } from './session-context';
+import { invalidateRecipeSnapshot } from './recipe-snapshot';
 
 /**
  * workato_copy_recipe: clone a recipe into a folder.
@@ -249,6 +250,10 @@ class WorkatoCopyRecipeTool extends BaseBrowserToolExecutor {
               : ''),
         );
       }
+
+      // Harmless today (a brand new id cannot be cached), but a recycled id
+      // from a previous session would otherwise serve another recipe's code.
+      invalidateRecipeSnapshot(result.new_recipe_id);
 
       const payload: Record<string, unknown> = {
         recipe_id: args.recipe_id,
