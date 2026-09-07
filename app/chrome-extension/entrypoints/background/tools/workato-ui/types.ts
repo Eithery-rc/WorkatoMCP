@@ -90,6 +90,12 @@ export interface SaveRecipeCodeArgs extends TabTargetArgs {
    * a false positive — it disables the silent-strip guard.
    */
   verify_readback?: boolean;
+  /**
+   * Set by the bridge when a whole tree is saved from a file: py_eval steps
+   * whose output shadows one of their own `code_input` keys. Reported in the
+   * save payload so the warning is not computed and then dropped.
+   */
+  py_eval_warnings?: unknown[];
 }
 
 export interface StepInfo {
