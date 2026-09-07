@@ -27,3 +27,70 @@ describe('ProfileRegistry', () => {
     expect(stderrLog).toHaveBeenCalled();
   });
 });
+
+describe('ProfileRegistry active-profile election', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  function quietRegistry(): ProfileRegistry {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    return new ProfileRegistry();
+  }
+
+  test('elects the remaining profile when the active one disconnects', () => {
+    const registry = quietRegistry();
+    const first = new FakeSocket();
+    const second = new FakeSocket();
+
+    registry.register('centium', first);
+    registry.register('bluBanyan', second);
+    expect(registry.getActiveProfile()).toBe('centium');
+
+    first.emit('close');
+
+    expect(registry.getConnectedProfiles()).toEqual(['bluBanyan']);
+    expect(registry.getActiveProfile()).toBe('bluBanyan');
+  });
+
+  test('a non-active profile disconnecting does not move the active one', () => {
+    const registry = quietRegistry();
+    const first = new FakeSocket();
+    const second = new FakeSocket();
+    registry.register('centium', first);
+    registry.register('bluBanyan', second);
+
+    second.emit('close');
+
+    expect(registry.getActiveProfile()).toBe('centium');
+  });
+
+  test('the last profile leaving clears the active profile', () => {
+    const registry = quietRegistry();
+    const socket = new FakeSocket();
+    registry.register('centium', socket);
+
+    socket.emit('close');
+
+    expect(registry.getActiveProfile()).toBeNull();
+    expect(registry.getConnectedProfiles()).toEqual([]);
+  });
+
+  test('the generation changes on every connect and disconnect', () => {
+    const registry = quietRegistry();
+    const first = new FakeSocket();
+    const start = registry.getGeneration();
+
+    registry.register('centium', first);
+    const afterConnect = registry.getGeneration();
+    expect(afterConnect).not.toBe(start);
+
+    first.emit('close');
+    const afterClose = registry.getGeneration();
+    expect(afterClose).not.toBe(afterConnect);
+
+    // A reconnect of the same name is a new browser session, so it must show up.
+    registry.register('centium', new FakeSocket());
+    expect(registry.getGeneration()).not.toBe(afterClose);
+  });
+});

@@ -397,8 +397,14 @@ export function applyAutoFile(
   if (result.isError) return result;
   if (!Array.isArray(result.content) || result.content.length === 0) return result;
 
-  const image = firstImageBlock(result);
-  const texts = textBlocks(result);
+  // The extension appends a small {"context":...} text block last; it describes
+  // the tab the call ran in and must stay on the response, never in the file.
+  const contextBlock = trailingContextBlock(result);
+  const body: CallToolResult = contextBlock
+    ? { ...result, content: result.content.slice(0, -1) }
+    : result;
+  const image = firstImageBlock(body);
+  const texts = textBlocks(body);
   const measuredChars =
     texts.reduce((total, block) => total + block.text.length, 0) + (image ? image.data.length : 0);
 
@@ -407,13 +413,26 @@ export function applyAutoFile(
   if (!shouldWrite) return result;
 
   try {
-    return image
+    const written = image
       ? writeImageResult(name, plan, image, texts)
-      : writeTextResult(name, plan, result, texts);
+      : writeTextResult(name, plan, body, texts);
+    if (written === body) return result;
+    return contextBlock
+      ? { ...written, content: [...written.content, contextBlock as any] }
+      : written;
   } catch (err) {
     if (explicit) throw err;
     return result;
   }
+}
+
+/** The trailing actual-context block the extension appends, if present. */
+function trailingContextBlock(result: CallToolResult): TextBlock | undefined {
+  const content = Array.isArray(result.content) ? result.content : [];
+  if (content.length < 2) return undefined;
+  const last: any = content[content.length - 1];
+  if (last?.type !== 'text' || typeof last.text !== 'string') return undefined;
+  return last.text.startsWith('{"context":') ? (last as TextBlock) : undefined;
 }
 
 function writeImageResult(

@@ -19,6 +19,7 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { ensureAttached, sendCommand } from '../browser/snapshot/debugger-session';
 import { isWorkatoAppHost, WORKATO_URL_PATTERNS } from '../workato/tab-dispatch';
+import { assertExpectedContext } from '../workato/session-context';
 import {
   axName,
   axRole,
@@ -1900,15 +1901,15 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
         );
       }
 
+      // resolveTabId now validates an explicit tabId the way findWorkatoTab
+      // does (exists, scriptable, logged-in app host) and throws instead of
+      // retargeting, so a stale pinned tab can no longer redirect this save.
       const tabId = await resolveTabId(args);
+      // A valid app host is not a valid workspace: when the caller pinned one
+      // (or the recipe file records where it came from) refuse a save into a
+      // different workspace before anything is fetched or written.
+      await assertExpectedContext(args, tabId);
       await ensureAttached(tabId);
-
-      const url = await getTabUrl(tabId);
-      if (!/workato\.(com|is)/.test(url)) {
-        return createErrorResponse(
-          `workato_ui_save_recipe_code: resolved tab is not a Workato page (url=${url}).`,
-        );
-      }
 
       // --- Datapill integrity ----------------------------------------------
       // A pill whose payload is not JSON cannot be normalized and cannot

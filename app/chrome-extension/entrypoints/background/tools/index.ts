@@ -8,6 +8,7 @@ import * as workatoLcapTools from './workato-lcap';
 import * as workatoDataTableTools from './workato-data-table';
 import * as workatoSessionTools from './workato-session';
 import { flowRunTool, listPublishedFlowsTool } from './record-replay';
+import { maybeAppendContextBlock } from './workato/session-context';
 
 const tools = {
   ...browserTools,
@@ -40,7 +41,10 @@ export const handleCallTool = async (param: ToolCallParam) => {
   }
 
   try {
-    return await tool.execute(param.args);
+    const result = await tool.execute(param.args);
+    // Say which tab/workspace the call actually ran in. Best effort: it never
+    // turns a successful call into a failure (see maybeAppendContextBlock).
+    return await maybeAppendContextBlock(param.name, param.args, result);
   } catch (error) {
     console.error(`Tool execution failed for ${param.name}:`, error);
     return createErrorResponse(
