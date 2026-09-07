@@ -43,6 +43,7 @@ import {
   findBrokenDatapills,
   isFullyPersisted,
   normalizeCodeTree,
+  summarizeSaveOutcome,
   type TreeDiff,
 } from './save-guards';
 import type {
@@ -1933,6 +1934,24 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
       const preflight = await this.fetchStatus(tabId, args.recipe_id);
       const baseVersion = preflight.ok ? (preflight.version_no ?? null) : null;
 
+      // An optimistic lock that cannot read the current version is not a lock.
+      // Failing open here is how a stale tree overwrote a newer one: when the
+      // caller asked for the check, a probe failure refuses the save.
+      if (
+        typeof args.expected_base_version_no === 'number' &&
+        (!preflight.ok || typeof preflight.version_no !== 'number')
+      ) {
+        return createErrorResponse(
+          `workato_ui_save_recipe_code: expected_base_version_no ` +
+            `${args.expected_base_version_no} was requested but the current version of recipe ` +
+            `${args.recipe_id} could not be read` +
+            (preflight.ok ? '' : ` (${preflight.error ?? 'status probe failed'})`) +
+            `. Nothing was saved: the lock is not verifiable, so the save could overwrite a ` +
+            `newer version. Retry, or re-pull and save without the lock only if you mean to ` +
+            `replace whatever is there. (retriable: true)`,
+        );
+      }
+
       if (
         typeof args.expected_base_version_no === 'number' &&
         preflight.ok &&
@@ -1952,6 +1971,9 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
             save_status: 'already_applied',
             was_running: preflight.running === true,
             code_errors: [],
+            persisted: true,
+            valid: true,
+            verified: true,
           };
           // The attempt this retries may well be the one that stopped the
           // recipe and then died before restarting it.
@@ -2156,7 +2178,21 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
       // would be a surprise the caller never asked for. `ensure_running`
       // exists for the caller who does want it up either way; without it the
       // response says out loud that the recipe is lying there stopped.
-      const startAfterSave = stoppedForSave || (args.ensure_running === true && !wasRunning);
+      const errCount = Array.isArray(result.code_errors) ? result.code_errors.length : 0;
+      const outcome = summarizeSaveOutcome({
+        code_errors: result.code_errors,
+        verification_error: verification.error,
+        value_mismatches: verification.diff?.changed,
+        verify_readback: args.verify_readback,
+        save_status: saveStatus,
+      });
+
+      // A recipe Workato reports validation errors on must not be started by
+      // this call: starting it either fails or runs a broken version. It stays
+      // stopped and the response says so.
+      const restartWanted = stoppedForSave || (args.ensure_running === true && !wasRunning);
+      const restartSkippedInvalid = restartWanted && !outcome.valid;
+      const startAfterSave = restartWanted && outcome.valid;
       let restarted: boolean | undefined;
       let restartError: string | undefined;
       if (startAfterSave) {
@@ -2173,15 +2209,23 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
         }
       }
 
-      const errCount = Array.isArray(result.code_errors) ? result.code_errors.length : 0;
       const payload: Record<string, unknown> = {
         recipe_id: result.recipe_id,
         version_no: result.version_no,
         updated_at: result.updated_at,
         code_errors: result.code_errors,
+        persisted: outcome.persisted,
+        valid: outcome.valid,
+        verified: outcome.verified,
       };
       if (baseVersion !== null) payload.base_version_no = baseVersion;
-      if (saveStatus) payload.save_status = saveStatus;
+      if (outcome.save_status) payload.save_status = outcome.save_status;
+      if (restartSkippedInvalid) payload.restart_skipped_invalid = true;
+      // Computed by the bridge when a full tree was saved from a file; nothing
+      // downstream ever read them, so a shadowed py_eval input stayed silent.
+      if (Array.isArray(args.py_eval_warnings) && args.py_eval_warnings.length > 0) {
+        payload.py_eval_warnings = args.py_eval_warnings;
+      }
       // JSON.stringify drops an undefined value outright — flag the gap so a
       // caller reading the payload can't mistake it for "no version field".
       if (result.version_no === undefined) payload.version_no_unknown = true;
@@ -2191,7 +2235,7 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
       if (startAfterSave) {
         payload.restarted = restarted;
         if (restartError) payload.restart_error = restartError;
-      } else if (wasRunning === false) {
+      } else if (restartSkippedInvalid || wasRunning === false) {
         payload.running_after_save = false;
       }
       if (verification.error) payload.verification_error = verification.error;
@@ -2206,12 +2250,17 @@ class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
       // A recipe that was already stopped stays stopped — the one thing an
       // agent must not mistake for "the chain is live again".
       const idleNotice =
-        !startAfterSave && wasRunning === false
+        !startAfterSave && !restartSkippedInvalid && wasRunning === false
           ? ', recipe is STOPPED (it was stopped before this save; pass ensure_running:true to start it)'
           : '';
       const text =
         `saved recipe ${result.recipe_id} (${versionLabel}` +
-        (errCount > 0 ? `, ${errCount} validation error${errCount === 1 ? '' : 's'}` : '') +
+        (errCount > 0
+          ? `, PERSISTED BUT INVALID: ${errCount} validation error${errCount === 1 ? '' : 's'}`
+          : '') +
+        (restartSkippedInvalid
+          ? ', NOT restarted because the saved version has validation errors, recipe is stopped'
+          : '') +
         (startAfterSave
           ? restarted
             ? ', restarted'
