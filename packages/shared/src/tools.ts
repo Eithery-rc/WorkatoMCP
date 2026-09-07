@@ -112,6 +112,7 @@ export const TOOL_NAMES = {
     DELETE_INPUT_PATH: 'workato_recipe_delete_input_path',
     SET_PY_EVAL_CODE: 'workato_recipe_set_py_eval_code',
     SET_EXTENDED_SCHEMA: 'workato_recipe_set_extended_schema',
+    APPLY: 'workato_recipe_apply',
   },
   WORKATO_LCAP: {
     APPS_LIST: 'workato_lcap_apps_list',
@@ -3558,30 +3559,51 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO_RECIPE.ADD_STEP,
     description:
-      'Insert a new step into a Workato recipe via a single GET-mutate-PUT round-trip ' +
-      '(GET /recipes/<id>/code.json then PUT /recipes/<id>.json). This is the high-level mutator that ' +
-      'sits on top of workato_pull_recipe + workato_ui_save_recipe_code: one call per logical change, ' +
-      'no manual code-tree manipulation. Generates a fresh `as` (8-char hex) and `uuid`, renumbers the ' +
-      'block sequentially, deduplicates the `config` array of providers, and returns the new step number. ' +
-      'Requires an open logged-in Workato tab (uses the session pinned tab or first Workato app tab — never whatever tab is focused).',
+      'Insert one step into a Workato recipe. Runs through the guarded mutation engine ' +
+      '(pull, apply to a clone, validate, merge config, save, read back), so the existing ' +
+      '`config` array is MERGED rather than rebuilt and every account_id binding survives; the ' +
+      'whole tree is renumbered, nested blocks included; and the insertion point may be nested ' +
+      '(pass anchor, or an after_step that lives inside a foreach/if/try). Generates a fresh ' +
+      '8-hex `as` and a uuid, and refuses before saving when the result would break the nesting ' +
+      'rules. A provider new to the recipe gets a config entry, with account_id only when ' +
+      'connection_id is given (otherwise the response reports connection_binding: missing). ' +
+      'For several edits at once, or for remove/move/loop-source operations, use ' +
+      'workato_recipe_apply. Requires an open logged-in Workato tab (uses the session pinned ' +
+      'tab or first Workato app tab, never whatever tab is focused).',
     inputSchema: {
       type: 'object',
       properties: {
         recipe_id: { type: 'number', description: 'Numeric Workato recipe id.' },
         after_step: {
-          type: 'number',
+          oneOf: [{ type: 'number' }, { type: 'string' }],
           description:
-            'Insert the new step after this step number. Use 0 to insert as the first action right after the trigger.',
+            'Insert the new step after this step number or `as` anchor, nested blocks included. ' +
+            'Use 0 to insert as the first action right after the trigger. Omit to append at the end, ' +
+            'or pass `anchor` for full control.',
+        },
+        anchor: {
+          type: 'object',
+          description:
+            'Explicit placement, overriding after_step. mode: after | before | into; step: number, `as`, or uuid; position: first | last (mode into only).',
+          properties: {
+            mode: { type: 'string', enum: ['after', 'before', 'into'] },
+            step: { oneOf: [{ type: 'string' }, { type: 'number' }] },
+            position: { type: 'string', enum: ['first', 'last'] },
+          },
+        },
+        connection_id: {
+          description:
+            'Connection id for a provider new to this recipe, written as account_id in its config entry.',
         },
         provider: {
           type: 'string',
           description:
-            'Connector/provider name, e.g. "logger", "salesforce", "netsuite". Becomes the step.provider field and is added to the recipe `config` array.',
+            'Connector/provider name, e.g. "logger", "salesforce", "netsuite". Becomes step.provider. Required for keyword "action".',
         },
         action_name: {
           type: 'string',
           description:
-            'Action name within the provider, e.g. "log_message", "search_sobjects_soql_v2". Becomes step.name.',
+            'Action name within the provider, e.g. "log_message", "search_sobjects_soql_v2". Becomes step.name. Required for keyword "action".',
         },
         input: {
           type: 'object',
@@ -3590,8 +3612,33 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         keyword: {
           type: 'string',
-          enum: ['action', 'if', 'repeat_each', 'stop', 'return_result'],
-          description: 'Step keyword. Defaults to "action".',
+          enum: ['action', 'if', 'foreach', 'repeat', 'try', 'stop'],
+          description:
+            'Step keyword. Defaults to "action". A repeat is created with its while_condition as the first child and a try with its catch last, per the code-tree rules. A return_result step is keyword "action" with action_name "return_result" and provider "workato_recipe_function".',
+        },
+        source: {
+          description:
+            'foreach only: the list datapill (object or `provider.line.path` shorthand) written at the node root.',
+        },
+        expected_base_version_no: {
+          type: 'number',
+          description:
+            'Optimistic lock forwarded to the save. Defaults to the version_no this call just pulled.',
+        },
+        comment: {
+          type: 'string',
+          description: 'Forwarded to the underlying save: version comment for the new version.',
+        },
+        verify_readback: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: read the stored tree back and fail when Workato silently dropped input keys (default true).',
+          default: true,
+        },
+        dry_run: {
+          type: 'boolean',
+          description: 'Validate and report what would change without saving anything.',
+          default: false,
         },
         tabId: {
           type: 'number',
@@ -3600,14 +3647,16 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
       },
-      required: ['recipe_id', 'after_step', 'provider', 'action_name'],
+      required: ['recipe_id'],
     },
   },
   {
     name: TOOL_NAMES.WORKATO_RECIPE.SET_STEP_INPUT,
     description:
-      'Set an input field on an existing recipe step (GET /recipes/<id>/code.json, mutate, ' +
-      'PUT /recipes/<id>.json). NESTED PATHS SUPPORTED: field accepts dotted paths like ' +
+      'Set an input field on an existing recipe step. Runs through the guarded mutation engine ' +
+      '(pull, apply to a clone, validate, merge config, save, read back), so the existing config ' +
+      'and its account_id bindings survive the save and the stored tree is verified afterwards. ' +
+      'NESTED PATHS SUPPORTED: field accepts dotted paths like ' +
       '"parameters.sysid_param.asset_id" or "filters[0].value" — no file round-trip needed for ' +
       'one-field fixes deep in a step. Steps anywhere in the tree are reachable: step_number ' +
       'accepts the numeric step number (0 = trigger) OR the step `as` anchor string, and nested ' +
@@ -3621,7 +3670,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         step_number: {
           oneOf: [{ type: 'number' }, { type: 'string' }],
           description:
-            'Step to modify: numeric step number (0 = trigger) or `as` anchor string (e.g. "c0a385ab"). Nested blocks are searched.',
+            'Step to modify: numeric step number (0 = trigger), `as` anchor string (e.g. "c0a385ab"), or uuid. Nested blocks are searched; a duplicated number in a corrupted tree is refused rather than guessed.',
         },
         field: {
           type: 'string',
@@ -3631,6 +3680,26 @@ export const TOOL_SCHEMAS: Tool[] = [
         value: {
           description:
             'Value to write into the path. Accepts string, number, boolean, object, or array.',
+        },
+        expected_base_version_no: {
+          type: 'number',
+          description:
+            'Optimistic lock forwarded to the save. Defaults to the version_no this call just pulled.',
+        },
+        comment: {
+          type: 'string',
+          description: 'Forwarded to the underlying save: version comment for the new version.',
+        },
+        verify_readback: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: read the stored tree back and fail when Workato silently dropped input keys (default true).',
+          default: true,
+        },
+        dry_run: {
+          type: 'boolean',
+          description: 'Validate and report what would change without saving anything.',
+          default: false,
         },
         tabId: {
           type: 'number',
@@ -3645,8 +3714,10 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO_RECIPE.MAP_DATAPILL,
     description:
-      "Map a target step field to a datapill from another step's output (GET /recipes/<id>/code.json, " +
-      'mutate, PUT /recipes/<id>.json). Builds the canonical Workato `=_dp(...)` formula from the source ' +
+      "Map a target step field to a datapill from another step's output. Runs through the guarded " +
+      'mutation engine (pull, apply to a clone, validate, merge config, save, read back), so the ' +
+      'existing config and its account_id bindings survive the save. ' +
+      'Builds the canonical Workato `=_dp(...)` formula from the source ' +
       "step's `as` (line id) and `provider`, then writes it into the target path. " +
       'NESTED PATHS SUPPORTED: target_field accepts dotted paths like "parameters.sysid_param.asset_id"; ' +
       'target_step/source_step accept step numbers (0 = trigger) or `as` anchor strings, and nested ' +
@@ -3678,8 +3749,29 @@ export const TOOL_SCHEMAS: Tool[] = [
           items: { oneOf: [{ type: 'string' }, { type: 'object', additionalProperties: true }] },
           description:
             'Path into the source step output, e.g. ["records"] or ["body","id"]. "name[]" expands to ' +
-            'name + {path_element_type:"current_item"}; raw objects (e.g. {path_element_type:"current_item"}) ' +
+            'name + {path_element_type:"current_item"}; "name#size" expands to the collection count; ' +
+            'raw objects (e.g. {path_element_type:"current_item"}) ' +
             'pass through as-is. Empty array references the root output.',
+        },
+        expected_base_version_no: {
+          type: 'number',
+          description:
+            'Optimistic lock forwarded to the save. Defaults to the version_no this call just pulled.',
+        },
+        comment: {
+          type: 'string',
+          description: 'Forwarded to the underlying save: version comment for the new version.',
+        },
+        verify_readback: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: read the stored tree back and fail when Workato silently dropped input keys (default true).',
+          default: true,
+        },
+        dry_run: {
+          type: 'boolean',
+          description: 'Validate and report what would change without saving anything.',
+          default: false,
         },
         tabId: {
           type: 'number',
@@ -3790,6 +3882,32 @@ export const TOOL_SCHEMAS: Tool[] = [
           ],
           description: 'Input path to delete, e.g. `records.tranId` or `filters[0].field_id`.',
         },
+        restart_if_running: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: stop a running recipe, save, restart. Already-stopped recipes stay stopped.',
+          default: false,
+        },
+        ensure_running: {
+          type: 'boolean',
+          description: 'Forwarded to the underlying save: start the recipe afterwards.',
+          default: false,
+        },
+        comment: {
+          type: 'string',
+          description: 'Forwarded to the underlying save: version comment for the new version.',
+        },
+        expected_base_version_no: {
+          type: 'number',
+          description:
+            'Optimistic lock forwarded to the save. Defaults to the version_no this call just pulled.',
+        },
+        verify_readback: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: read the stored tree back and fail when Workato silently dropped input keys (default true).',
+          default: true,
+        },
         tabId: { type: 'number', description: 'Target tab ID for the final save (optional).' },
         windowId: { type: 'number', description: 'Window ID for the final save (optional).' },
       },
@@ -3821,6 +3939,32 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'boolean',
           description: 'When false, skip the default provider/name check. Default true.',
         },
+        restart_if_running: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: stop a running recipe, save, restart. Already-stopped recipes stay stopped.',
+          default: false,
+        },
+        ensure_running: {
+          type: 'boolean',
+          description: 'Forwarded to the underlying save: start the recipe afterwards.',
+          default: false,
+        },
+        comment: {
+          type: 'string',
+          description: 'Forwarded to the underlying save: version comment for the new version.',
+        },
+        expected_base_version_no: {
+          type: 'number',
+          description:
+            'Optimistic lock forwarded to the save. Defaults to the version_no this call just pulled.',
+        },
+        verify_readback: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: read the stored tree back and fail when Workato silently dropped input keys (default true).',
+          default: true,
+        },
         tabId: { type: 'number', description: 'Target tab ID for the final save (optional).' },
         windowId: { type: 'number', description: 'Window ID for the final save (optional).' },
       },
@@ -3851,10 +3995,275 @@ export const TOOL_SCHEMAS: Tool[] = [
           items: { type: 'object', additionalProperties: true },
           description: 'Full Workato schema array to write. Each entry is preserved as provided.',
         },
+        restart_if_running: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: stop a running recipe, save, restart. Already-stopped recipes stay stopped.',
+          default: false,
+        },
+        ensure_running: {
+          type: 'boolean',
+          description: 'Forwarded to the underlying save: start the recipe afterwards.',
+          default: false,
+        },
+        comment: {
+          type: 'string',
+          description: 'Forwarded to the underlying save: version comment for the new version.',
+        },
+        expected_base_version_no: {
+          type: 'number',
+          description:
+            'Optimistic lock forwarded to the save. Defaults to the version_no this call just pulled.',
+        },
+        verify_readback: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: read the stored tree back and fail when Workato silently dropped input keys (default true).',
+          default: true,
+        },
         tabId: { type: 'number', description: 'Target tab ID for the final save (optional).' },
         windowId: { type: 'number', description: 'Window ID for the final save (optional).' },
       },
       required: ['recipe_id', 'step', 'kind', 'schema'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO_RECIPE.APPLY,
+    description:
+      'Several recipe edits in ONE pull-validate-save-readback cycle: many mappings become one ' +
+      'version instead of one version per field. THE tool for more than a single edit, and the ' +
+      'only one with structural operations. Ops: set_input, delete_input, set_extended_schema, ' +
+      'set_py_eval_code, map_datapill, insert_step, remove_step, move_step, set_loop_source, ' +
+      'bind_connection. Steps are addressed by number, `as` anchor, or uuid; a duplicated number ' +
+      'in a corrupted tree is refused rather than guessed. Changes are applied to a clone and ' +
+      'validated locally first (numbering globally sequential including nested blocks, unique ' +
+      '8-hex `as`, uuid on new nodes, else/elsif last inside if.block, catch last inside ' +
+      'try.block, foreach source at the node root, while_condition first in a repeat): one ' +
+      'invalid operation refuses the WHOLE batch before anything is written, naming the change ' +
+      'index and the reason. The config is merged, never rebuilt, so existing account_id ' +
+      'bindings survive; a provider new to the recipe gets an entry, with account_id only when ' +
+      'connection_id is given (otherwise the response reports connection_binding: missing). ' +
+      'dry_run returns the same summary with nothing saved. The response reports persisted, ' +
+      'valid and verified separately, plus changed_paths and version_no. ' +
+      'Requires a logged-in Workato browser session.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'Numeric Workato recipe id.' },
+        changes: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 50,
+          description:
+            'Operations, applied in order to one pulled tree and saved as one version. ' +
+            'An empty array is refused; the cap is 50.',
+          items: {
+            type: 'object',
+            additionalProperties: true,
+            required: ['op'],
+            properties: {
+              op: {
+                type: 'string',
+                enum: [
+                  'set_input',
+                  'delete_input',
+                  'set_extended_schema',
+                  'set_py_eval_code',
+                  'map_datapill',
+                  'insert_step',
+                  'remove_step',
+                  'move_step',
+                  'set_loop_source',
+                  'bind_connection',
+                ],
+                description: 'Which operation this entry performs.',
+              },
+              step: {
+                oneOf: [{ type: 'string' }, { type: 'number' }],
+                description:
+                  'Target step: number (0 = trigger), `as` anchor, or uuid. Required by every op except insert_step and bind_connection.',
+              },
+              path: {
+                oneOf: [
+                  { type: 'string' },
+                  { type: 'array', items: { oneOf: [{ type: 'string' }, { type: 'number' }] } },
+                ],
+                description:
+                  'set_input / delete_input / map_datapill: input path, e.g. `filters[0].field_id`.',
+              },
+              value: {
+                description: 'set_input: the value to write (any JSON value for a literal).',
+              },
+              value_kind: {
+                type: 'string',
+                enum: ['literal', 'datapill', 'formula', 'interpolated'],
+                description: 'set_input: how to encode value. Default literal.',
+              },
+              kind: {
+                type: 'string',
+                enum: ['extended_input_schema', 'extended_output_schema'],
+                description: 'set_extended_schema: which schema property to replace.',
+              },
+              schema: {
+                type: 'array',
+                items: { type: 'object', additionalProperties: true },
+                description: 'set_extended_schema: the full schema array to write.',
+              },
+              code: { type: 'string', description: 'set_py_eval_code: the Python source.' },
+              validate_step: {
+                type: 'boolean',
+                description: 'set_py_eval_code: false skips the py_eval provider/name check.',
+              },
+              source_step: {
+                oneOf: [{ type: 'string' }, { type: 'number' }],
+                description: 'map_datapill: the step whose output is referenced.',
+              },
+              source_path: {
+                type: 'array',
+                items: {
+                  oneOf: [{ type: 'string' }, { type: 'object', additionalProperties: true }],
+                },
+                description:
+                  'map_datapill: path into the source output. "rows[]" expands to the current item, "rows#size" to the count; raw path objects pass through.',
+              },
+              mode: {
+                type: 'string',
+                enum: ['formula', 'interpolated'],
+                description:
+                  'map_datapill: `=_dp(...)` (formula) or `#{_dp(...)}` (interpolated, default).',
+              },
+              keyword: {
+                type: 'string',
+                enum: ['action', 'if', 'foreach', 'repeat', 'try', 'stop'],
+                description:
+                  'insert_step: node shape. Default action. repeat gets a while_condition first child and try gets a trailing catch automatically.',
+              },
+              provider: {
+                type: 'string',
+                description:
+                  'insert_step (action) / bind_connection: technical adapter name, e.g. `logger`, `salesforce`.',
+              },
+              action_name: {
+                type: 'string',
+                description:
+                  'insert_step (action): action name within the provider, becomes step.name.',
+              },
+              input: {
+                type: 'object',
+                description: 'insert_step: initial step.input. Default {}.',
+              },
+              connection_id: {
+                description:
+                  'insert_step / bind_connection: connection id written as account_id in the config entry. null clears it.',
+              },
+              extended_input_schema: {
+                type: 'array',
+                items: { type: 'object', additionalProperties: true },
+                description: 'insert_step: extended_input_schema for structured inputs.',
+              },
+              extended_output_schema: {
+                type: 'array',
+                items: { type: 'object', additionalProperties: true },
+                description:
+                  'insert_step: extended_output_schema when downstream pills read this step.',
+              },
+              title: { type: 'string', description: 'insert_step: optional step title.' },
+              as: {
+                type: 'string',
+                description: 'insert_step: explicit 8-hex `as` anchor. Generated when omitted.',
+              },
+              anchor: {
+                type: 'object',
+                description:
+                  'insert_step / move_step: where the step goes. Defaults to the end of the trigger block.',
+                properties: {
+                  mode: {
+                    type: 'string',
+                    enum: ['after', 'before', 'into'],
+                    description: 'Placement relative to `step`. Default into.',
+                  },
+                  step: {
+                    oneOf: [{ type: 'string' }, { type: 'number' }],
+                    description: 'Anchor step: number, `as`, or uuid. 0 is the trigger.',
+                  },
+                  position: {
+                    type: 'string',
+                    enum: ['first', 'last'],
+                    description: 'For mode into: first or last child of that block. Default last.',
+                  },
+                },
+              },
+              source: {
+                description:
+                  'insert_step (foreach) / set_loop_source: list datapill (object or `provider.line.path` shorthand) written at the node root, never under input.',
+              },
+              source_kind: {
+                type: 'string',
+                enum: ['datapill', 'formula', 'interpolated', 'literal'],
+                description: 'How to encode source. Inferred when omitted.',
+              },
+              repeat_mode: {
+                type: 'string',
+                enum: ['simple', 'batch'],
+                description: 'foreach mode.',
+              },
+              batch_size: {
+                oneOf: [{ type: 'string' }, { type: 'number' }],
+                description: 'foreach batch size (stored as a string).',
+              },
+              clear_scope: {
+                type: 'string',
+                description: 'foreach clear_scope, "true" or "false".',
+              },
+              force: {
+                type: 'boolean',
+                description:
+                  'remove_step: remove even though other steps reference its datapills. Default false.',
+              },
+            },
+          },
+        },
+        expected_base_version_no: {
+          type: 'number',
+          description:
+            'Optimistic lock forwarded to the save. Defaults to the version_no this call just pulled, so concurrent edits are refused automatically.',
+        },
+        dry_run: {
+          type: 'boolean',
+          description:
+            'Validate and report changed_paths and would_save_version without saving anything.',
+          default: false,
+        },
+        idempotency_key: {
+          type: 'string',
+          description:
+            'Caller-chosen key. A repeat of the same key on the same recipe returns the stored summary instead of saving again (kept in bridge memory only).',
+        },
+        comment: {
+          type: 'string',
+          description: 'Forwarded to the underlying save: version comment for the new version.',
+        },
+        restart_if_running: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: stop a running recipe, save, restart. Already-stopped recipes stay stopped.',
+          default: false,
+        },
+        ensure_running: {
+          type: 'boolean',
+          description: 'Forwarded to the underlying save: start the recipe afterwards.',
+          default: false,
+        },
+        verify_readback: {
+          type: 'boolean',
+          description:
+            'Forwarded to the underlying save: read the stored tree back and fail when Workato silently dropped input keys (default true).',
+          default: true,
+        },
+        tabId: { type: 'number', description: 'Target tab ID for the pull and save (optional).' },
+        windowId: { type: 'number', description: 'Window ID (when tabId omitted).' },
+      },
+      required: ['recipe_id', 'changes'],
     },
   },
   {
