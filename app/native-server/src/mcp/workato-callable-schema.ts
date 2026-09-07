@@ -33,7 +33,7 @@
  */
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { buildMutatorSummary, parseToolJson } from './workato-recipe-mutators';
+import { parseToolJson, runRecipeMutation, type MutationSummary } from './workato-recipe-engine';
 
 export const WORKATO_CALLABLE_TOOLS = {
   CALLABLE_SCHEMA_SET: 'workato_callable_schema_set',
@@ -596,16 +596,7 @@ function requireRecipeId(args: JsonObject, key = 'recipe_id'): number {
   return value;
 }
 
-function parseConfig(config: unknown): unknown {
-  if (typeof config !== 'string') return config;
-  try {
-    return JSON.parse(config);
-  } catch {
-    return config;
-  }
-}
-
-/** Copy the tab/window routing and save modifiers a caller may have passed. */
+/** Copy the tab/window routing a caller may have passed. */
 function withPassThrough(args: JsonObject, target: JsonObject): JsonObject {
   if (typeof args.tabId === 'number') target.tabId = args.tabId;
   if (typeof args.windowId === 'number') target.windowId = args.windowId;
@@ -623,83 +614,74 @@ export async function handleWorkatoCallableCall(
     }
     const recipeId = requireRecipeId(args);
 
-    const pulled = parseToolJson(
-      await callExtension(
-        'workato_pull_recipe',
-        withPassThrough(args, { recipe_id: recipeId, view: 'full' }),
-      ),
-    );
-    let code = pulled.code;
-    if (!isRecord(code)) throw new Error('workato_pull_recipe did not return a recipe code object');
-    const version = isRecord(pulled.version) ? pulled.version : {};
-
-    let mutation: JsonObject;
-
-    if (name === WORKATO_CALLABLE_TOOLS.CALLABLE_SCHEMA_SET) {
-      if (args.parameters === undefined && args.results === undefined) {
-        throw new Error('pass parameters[], results[], or both — nothing to write otherwise');
-      }
-      const parameters =
-        args.parameters === undefined
-          ? undefined
-          : normalizeFieldList(args.parameters, 'parameters');
-      const results =
-        args.results === undefined ? undefined : normalizeFieldList(args.results, 'results');
-      mutation = applyCallableSchema(code, { parameters, results });
-    } else {
-      // caller_bind: the callee's own trigger is the source of truth for the
-      // contract, so nothing here is guessed from the caller's side.
-      const step = findCallRecipeStep(code, {
-        stepRef: args.step,
-        calleeId: args.callee_recipe_id === undefined ? undefined : String(args.callee_recipe_id),
-      });
-      const stepInput = isRecord(step.input) ? step.input : {};
-      const calleeId = String(args.callee_recipe_id ?? stepInput.flow_id ?? '');
-      if (!/^\d+$/.test(calleeId)) {
-        throw new Error(
-          `could not determine the callee recipe id (step flow_id = ${JSON.stringify(
-            stepInput.flow_id,
-          )}). Pass callee_recipe_id explicitly.`,
-        );
-      }
-      const calleePulled = parseToolJson(
-        await callExtension(
-          'workato_pull_recipe',
-          withPassThrough(args, { recipe_id: Number(calleeId), view: 'full' }),
-        ),
-      );
-      const contract = readCalleeContract(calleePulled.code);
-      const bound = applyCallerBind(code, {
-        step,
-        results: contract.results,
-        parameters: contract.parameters,
-      });
-      code = bound.code;
-      mutation = bound.summary;
-    }
-
-    const saveArgs: JsonObject = withPassThrough(args, {
+    // Same guarded engine as every other recipe write: one pull, one validated
+    // tree, a merged config, one save, one summary.
+    return await runRecipeMutation({
+      name,
       recipe_id: recipeId,
-      code,
-      config: parseConfig(version.config),
-    });
-    if (args.restart_if_running === true) saveArgs.restart_if_running = true;
-    if (args.ensure_running === true) saveArgs.ensure_running = true;
-    saveArgs.comment = typeof args.comment === 'string' ? args.comment : NEUTRAL_VERSION_COMMENT;
-    if (args.verify_readback === false) saveArgs.verify_readback = false;
-    if (typeof args.expected_base_version_no === 'number') {
-      saveArgs.expected_base_version_no = args.expected_base_version_no;
-    } else if (typeof version.version_no === 'number') {
-      saveArgs.expected_base_version_no = version.version_no;
-    }
+      args,
+      callExtension,
+      dry_run: args.dry_run === true,
+      defaultComment: NEUTRAL_VERSION_COMMENT,
+      apply: async (ctx) => {
+        if (name === WORKATO_CALLABLE_TOOLS.CALLABLE_SCHEMA_SET) {
+          if (args.parameters === undefined && args.results === undefined) {
+            throw new Error('pass parameters[], results[], or both, nothing to write otherwise');
+          }
+          const parameters =
+            args.parameters === undefined
+              ? undefined
+              : normalizeFieldList(args.parameters, 'parameters');
+          const results =
+            args.results === undefined ? undefined : normalizeFieldList(args.results, 'results');
+          const summary = applyCallableSchema(ctx.code, { parameters, results });
+          if (typeof summary.trigger_as === 'string') {
+            ctx.touch(ctx.locate(summary.trigger_as).step);
+            ctx.change(`${summary.trigger_as}:parameters_schema_json`);
+          }
+          if (typeof summary.return_result_as === 'string') {
+            ctx.touch(ctx.locate(summary.return_result_as).step);
+            ctx.change(`${summary.return_result_as}:input.result`);
+          }
+          return summary as unknown as MutationSummary;
+        }
 
-    const saved = parseToolJson(await callExtension('workato_ui_save_recipe_code', saveArgs));
-    return buildMutatorSummary(name, {
-      recipe_id: saved.recipe_id ?? recipeId,
-      version_no: saved.version_no,
-      code_errors: saved.code_errors,
-      mutation: mutation as never,
-      save: saved,
+        // caller_bind: the callee's own trigger is the source of truth for the
+        // contract, so nothing here is guessed from the caller's side.
+        const step = findCallRecipeStep(ctx.code, {
+          stepRef: args.step,
+          calleeId: args.callee_recipe_id === undefined ? undefined : String(args.callee_recipe_id),
+        });
+        const stepInput = isRecord(step.input) ? step.input : {};
+        const calleeId = String(args.callee_recipe_id ?? stepInput.flow_id ?? '');
+        if (!/^\d+$/.test(calleeId)) {
+          throw new Error(
+            `could not determine the callee recipe id (step flow_id = ${JSON.stringify(
+              stepInput.flow_id,
+            )}). Pass callee_recipe_id explicitly.`,
+          );
+        }
+        const calleePulled = parseToolJson(
+          await callExtension(
+            'workato_pull_recipe',
+            withPassThrough(args, { recipe_id: Number(calleeId), view: 'full' }),
+          ),
+        );
+        const contract = readCalleeContract(calleePulled.code);
+        const bound = applyCallerBind(ctx.code, {
+          step,
+          results: contract.results,
+          parameters: contract.parameters,
+        });
+        // repointPillsToResult rebuilds the tree, so the context takes the new
+        // object and the bound step is marked again on it.
+        ctx.replaceCode(bound.code as never);
+        if (typeof bound.summary.step_as === 'string') {
+          ctx.touch(ctx.locate(bound.summary.step_as).step);
+          ctx.change(`${bound.summary.step_as}:extended_output_schema`);
+        }
+        return bound.summary as unknown as MutationSummary;
+      },
     });
   } catch (error) {
     return errorResult(`${name} failed: ${error instanceof Error ? error.message : String(error)}`);

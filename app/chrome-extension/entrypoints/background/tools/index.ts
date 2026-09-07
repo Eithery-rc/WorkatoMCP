@@ -3,7 +3,6 @@ import { ERROR_MESSAGES } from '@/common/constants';
 import * as browserTools from './browser';
 import * as workatoTools from './workato';
 import * as workatoUiTools from './workato-ui';
-import * as workatoRecipeTools from './workato-recipe';
 import * as workatoLookupTools from './workato-lookup';
 import * as workatoLcapTools from './workato-lcap';
 import * as workatoDataTableTools from './workato-data-table';
@@ -14,7 +13,6 @@ const tools = {
   ...browserTools,
   ...workatoTools,
   ...workatoUiTools,
-  ...workatoRecipeTools,
   ...workatoLookupTools,
   ...workatoLcapTools,
   ...workatoDataTableTools,
