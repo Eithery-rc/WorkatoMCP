@@ -2,6 +2,7 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
+import { assertExpectedContext, type ExpectedTabContext } from './session-context';
 
 /**
  * workato_copy_recipe: clone a recipe into a folder.
@@ -169,6 +170,7 @@ class WorkatoCopyRecipeTool extends BaseBrowserToolExecutor {
     recipe_id: number;
     folder_id: number;
     tabId?: number;
+    expected_context?: ExpectedTabContext;
   }): Promise<ToolResult> {
     try {
       if (typeof args?.recipe_id !== 'number' || !Number.isFinite(args.recipe_id)) {
@@ -180,6 +182,7 @@ class WorkatoCopyRecipeTool extends BaseBrowserToolExecutor {
         );
       }
       const tab = await findWorkatoTab(args.tabId);
+      await assertExpectedContext(args, tab.tabId);
 
       // Snapshot the destination folder's recipe ids so a timed-out copy can
       // be verified instead of blind-retried (a retry would clone twice).

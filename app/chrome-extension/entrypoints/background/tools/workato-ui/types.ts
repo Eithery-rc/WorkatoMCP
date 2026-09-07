@@ -10,12 +10,19 @@
  */
 
 import type { AXNode } from '../browser/snapshot/types';
+import type { ExpectedTabContext } from '../workato/session-context';
 
-export type { AXNode };
+export type { AXNode, ExpectedTabContext };
 
 export interface TabTargetArgs {
   tabId?: number;
   windowId?: number;
+  /**
+   * Workspace/environment the caller expects the target tab to be in. Injected
+   * by the bridge from the pinned session (or a recipe file's origin); write
+   * handlers refuse the call when the tab resolves somewhere else.
+   */
+  expected_context?: ExpectedTabContext;
 }
 
 export interface OpenRecipeArgs extends TabTargetArgs {

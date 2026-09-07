@@ -25,6 +25,24 @@ export const PULL_RECIPE_TOOL = 'workato_pull_recipe';
 export const SAVE_RECIPE_CODE_TOOL = 'workato_ui_save_recipe_code';
 export const SET_PY_EVAL_CODE_TOOL = 'workato_recipe_set_py_eval_code';
 
+/**
+ * Where a recipe file came from. Recorded on pull so the push can default the
+ * version lock and refuse a save into a different workspace: the same recipe id
+ * means a different recipe in another workspace, and Workato answers a
+ * cross-workspace id with a plain 404 rather than an error a caller can read.
+ */
+export interface RecipeFileOrigin {
+  /** ISO timestamp of the pull. */
+  pulled_at: string;
+  profile?: string;
+  tab_id?: number;
+  host?: string;
+  workspace_id?: number;
+  workspace_name?: string;
+  environment?: string;
+  folder_id?: number;
+}
+
 /** Recipe file envelope: written by the pull hook, read by the push hook. */
 interface RecipeFile {
   recipe_id?: number;
@@ -32,6 +50,7 @@ interface RecipeFile {
   version_no?: unknown;
   code: unknown;
   config?: unknown;
+  origin?: RecipeFileOrigin;
 }
 
 interface StepRef {
@@ -92,6 +111,10 @@ function loadRecipeFile(rawArgs: Record<string, unknown>): Record<string, unknow
   // the pull hook, or a bare recipe code tree. Detect by the presence of `.code`.
   const obj = parsed as Record<string, unknown>;
   const isEnvelope = obj.code != null && typeof obj.code === 'object';
+  const origin =
+    obj.origin != null && typeof obj.origin === 'object' && !Array.isArray(obj.origin)
+      ? (obj.origin as RecipeFileOrigin)
+      : undefined;
   const env: RecipeFile = isEnvelope
     ? {
         recipe_id: typeof obj.recipe_id === 'number' ? obj.recipe_id : undefined,
@@ -99,11 +122,16 @@ function loadRecipeFile(rawArgs: Record<string, unknown>): Record<string, unknow
         version_no: obj.version_no,
         code: obj.code,
         config: obj.config,
+        origin,
       }
     : { code: parsed };
 
   const args: Record<string, unknown> = { ...rawArgs };
   delete args.code_path;
+  const ignoreFileVersion = args.ignore_file_version === true;
+  const allowContextMismatch = args.allow_context_mismatch === true;
+  delete args.ignore_file_version;
+  delete args.allow_context_mismatch;
   args.code = env.code;
   if (env.config != null && args.config == null) args.config = env.config;
   if (args.recipe_id == null && typeof env.recipe_id === 'number') {
@@ -114,6 +142,49 @@ function loadRecipeFile(rawArgs: Record<string, unknown>): Record<string, unknow
       'recipe_id is required: pass it explicitly, or use a code_path file that ' +
         'contains a numeric "recipe_id" field.',
     );
+  }
+  // A file holds one recipe's tree. Saving it under a different id would write
+  // recipe A's steps over recipe B and report success.
+  if (typeof env.recipe_id === 'number' && env.recipe_id !== args.recipe_id) {
+    throw new Error(
+      `recipe_id mismatch: the file ${codePath} holds recipe ${env.recipe_id}, but the call ` +
+        `targets recipe ${args.recipe_id}. Nothing was sent. Pull the intended recipe again, ` +
+        'or drop recipe_id from the call to use the file.',
+    );
+  }
+  // Default the optimistic lock to the version this file was pulled from, so a
+  // file edited yesterday cannot silently overwrite today's version.
+  if (args.expected_base_version_no == null && !ignoreFileVersion) {
+    if (typeof env.version_no === 'number') args.expected_base_version_no = env.version_no;
+  }
+  // The file knows which workspace it came from; make the extension verify the
+  // target tab before it writes anything.
+  if (!allowContextMismatch && origin && (origin.workspace_id != null || origin.host)) {
+    const fileContext: Record<string, unknown> = {};
+    if (origin.host) fileContext.host = origin.host;
+    if (origin.workspace_id != null) fileContext.workspace_id = origin.workspace_id;
+    if (origin.environment != null) fileContext.environment = origin.environment;
+    const pinned = args.expected_context;
+    if (pinned && typeof pinned === 'object' && !Array.isArray(pinned)) {
+      const p = pinned as Record<string, unknown>;
+      const workspaceClash =
+        p.workspace_id != null &&
+        origin.workspace_id != null &&
+        Number(p.workspace_id) !== Number(origin.workspace_id);
+      const hostClash = typeof p.host === 'string' && origin.host && p.host !== origin.host;
+      if (workspaceClash || hostClash) {
+        throw new Error(
+          `context mismatch: ${codePath} was pulled from workspace ` +
+            `${origin.workspace_id ?? '?'} on ${origin.host ?? '?'}, but this MCP session is ` +
+            `pinned to workspace ${p.workspace_id ?? '?'} on ${p.host ?? '?'}. Nothing was sent. ` +
+            'Re-pull the recipe in the pinned workspace, or pass allow_context_mismatch:true.',
+        );
+      }
+      if (p.environment != null && fileContext.environment == null) {
+        fileContext.environment = p.environment;
+      }
+    }
+    args.expected_context = fileContext;
   }
   return args;
 }
@@ -183,6 +254,11 @@ function validatePyEvalSteps(code: unknown): string[] {
 export function prepareWorkatoCall(name: string, rawArgs: Record<string, unknown>): PreparedCall {
   if (name === SAVE_RECIPE_CODE_TOOL) {
     const args = typeof rawArgs.code_path === 'string' ? loadRecipeFile(rawArgs) : { ...rawArgs };
+    // Both flags are about the file round trip; without a code_path they mean
+    // nothing and must not travel to the extension.
+    if (args.allow_context_mismatch === true) delete args.expected_context;
+    delete args.ignore_file_version;
+    delete args.allow_context_mismatch;
     // Runs for both forms — a tree passed inline is no safer than one on disk.
     const warnings = validatePyEvalSteps(args.code);
     if (warnings.length > 0) args.py_eval_warnings = warnings;
@@ -223,7 +299,11 @@ export function prepareWorkatoCall(name: string, rawArgs: Record<string, unknown
  * write the full recipe to disk and replace the response with a compact summary.
  * On any unexpected shape or upstream error the original result is passed back.
  */
-export function writePulledRecipe(outFile: string, result: CallToolResult): CallToolResult {
+export function writePulledRecipe(
+  outFile: string,
+  result: CallToolResult,
+  origin?: Partial<RecipeFileOrigin>,
+): CallToolResult {
   if (result.isError) return result;
   const first = Array.isArray(result.content) ? result.content[0] : undefined;
   if (!first || first.type !== 'text' || typeof first.text !== 'string') return result;
@@ -246,12 +326,21 @@ export function writePulledRecipe(outFile: string, result: CallToolResult): Call
     }
   }
 
+  const fileOrigin: RecipeFileOrigin = {
+    pulled_at: new Date().toISOString(),
+    ...(origin ?? {}),
+  };
+  if (fileOrigin.folder_id == null && typeof version.folder_id === 'number') {
+    fileOrigin.folder_id = version.folder_id;
+  }
+
   const envelope: RecipeFile = {
     recipe_id: payload.recipe_id,
     name: version.name,
     version_no: version.version_no,
     code: payload.code,
     config,
+    origin: fileOrigin,
   };
 
   // Atomic write: temp file then rename.
@@ -268,12 +357,15 @@ export function writePulledRecipe(outFile: string, result: CallToolResult): Call
     recipe_id: envelope.recipe_id,
     name: envelope.name,
     version_no: envelope.version_no,
+    origin: fileOrigin,
     step_count: steps.length,
     steps,
     hint:
       'Full recipe code tree written to file. Edit the file directly, then push it back ' +
-      `with workato_ui_save_recipe_code(code_path:"${outFile}"). For one step's detail use ` +
-      'workato_pull_recipe(recipe_id, step:"<number|as>").',
+      `with workato_ui_save_recipe_code(code_path:"${outFile}"). The push defaults its version ` +
+      `lock to version_no ${String(envelope.version_no ?? '?')} and to this file's origin ` +
+      'workspace; pass ignore_file_version / allow_context_mismatch to override either. ' +
+      `For one step's detail use workato_pull_recipe(recipe_id, step:"<number|as>").`,
   };
   return { content: [{ type: 'text', text: JSON.stringify(summary) }], isError: false };
 }

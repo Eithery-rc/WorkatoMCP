@@ -2,11 +2,14 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
+import { assertExpectedContext, type ExpectedTabContext } from './session-context';
 
 interface RenameRecipeArgs {
   recipe_id: number;
   name: string;
   tabId?: number;
+  /** Workspace/environment the caller expects this tab to be in (bridge-injected). */
+  expected_context?: ExpectedTabContext;
 }
 
 interface RenameRecipeSuccess {
@@ -166,6 +169,7 @@ class WorkatoRenameRecipeTool extends BaseBrowserToolExecutor {
       }
 
       const tab = await findWorkatoTab(args.tabId);
+      await assertExpectedContext(args, tab.tabId);
       const result = await runInWorkatoTab(tab.tabId, renameRecipeInPage, [
         args.recipe_id,
         args.name,

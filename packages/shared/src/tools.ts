@@ -157,6 +157,7 @@ export const TOOL_NAMES = {
   },
   WORKATO_SESSION: {
     WHOAMI: 'workato_whoami',
+    SESSION_CONTEXT: 'workato_session_context',
   },
 };
 
@@ -1654,7 +1655,9 @@ export const TOOL_SCHEMAS: Tool[] = [
             'the projection params ([view], [step], [steps], [paths], [fields], ' +
             '[include], [max_items], [budget_chars], [cursor], [if_version]) are ' +
             'ignored. Edit the file, then push it back with ' +
-            'workato_ui_save_recipe_code(code_path).',
+            'workato_ui_save_recipe_code(code_path). The file also records an origin block ' +
+            '(pulled_at, profile, tab, host, workspace, environment, folder) that the save uses ' +
+            'to default the version lock and to refuse a push into another workspace.',
         },
         timeout_ms: {
           type: 'number',
@@ -4166,7 +4169,22 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description:
             'Optimistic lock: refuse to save when the current version_no differs from this value ' +
-            '(someone else saved since you pulled). Pass the version_no from your pull_recipe call.',
+            '(someone else saved since you pulled). Pass the version_no from your pull_recipe call. ' +
+            'With [code_path] it defaults to the version_no recorded in the file.',
+        },
+        ignore_file_version: {
+          type: 'boolean',
+          description:
+            'Push a [code_path] file even though the recipe moved on since it was pulled: skips ' +
+            'the version lock defaulted from the file. A deliberate overwrite of newer work.',
+          default: false,
+        },
+        allow_context_mismatch: {
+          type: 'boolean',
+          description:
+            'Allow the save when the target tab is in a different workspace/environment than the ' +
+            'file origin or the pinned session. Off by default, and off is what you want.',
+          default: false,
         },
         verify_readback: {
           type: 'boolean',
@@ -4594,6 +4612,20 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Forwarded to the underlying save: read the stored tree back and fail when Workato silently dropped input keys (default true).',
           default: true,
+        },
+        ignore_file_version: {
+          type: 'boolean',
+          description:
+            'Save without the optimistic lock the tool otherwise derives from the version it just ' +
+            'pulled. A deliberate overwrite of a concurrent edit.',
+          default: false,
+        },
+        allow_context_mismatch: {
+          type: 'boolean',
+          description:
+            'Allow the save when the target tab is in a different workspace/environment than the ' +
+            'pinned session. Off by default.',
+          default: false,
         },
         tabId: { type: 'number', description: 'Target tab ID for the final save (optional).' },
         windowId: { type: 'number', description: 'Window ID for the final save (optional).' },
@@ -5588,10 +5620,43 @@ export const TOOL_SCHEMAS: Tool[] = [
     },
   },
   {
+    name: TOOL_NAMES.WORKATO_SESSION.SESSION_CONTEXT,
+    description:
+      'Which Workato tab, host, workspace and environment a call would actually land in: ' +
+      '{tab_id, host, workspace_id, workspace_name, environment, user_id}. ' +
+      'The cheap identity check: prefer it over workato_whoami whenever you only need to ' +
+      'confirm the target workspace/environment; use whoami for the full profile (user, roles, ' +
+      'teams, membership, available environments). ' +
+      'Cached per tab for 60s and dropped automatically when the tab navigates, so calling it ' +
+      'repeatedly is nearly free. ' +
+      'Prerequisite: a logged-in Workato app tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+        max_age_ms: {
+          type: 'number',
+          description: 'Accept a cached context younger than this. Default 60000, max 600000.',
+        },
+        refresh: {
+          type: 'boolean',
+          description: 'Ignore the cache and read the tab again.',
+          default: false,
+        },
+      },
+    },
+  },
+  {
     name: TOOL_NAMES.WORKATO.LIST_PROFILES,
     description:
       'List all currently active/connected Chrome profiles (e.g. "prod", "staging", "dev") ' +
-      'and see which one is selected for this MCP session, if any.',
+      'and see which one is selected for this MCP session, if any. Also returns session_context: ' +
+      'the profile, tab, host, workspace and environment this session is pinned to (null when ' +
+      'nothing is pinned, in which case calls follow the bridge default profile).',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -5604,7 +5669,10 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Switch the active profile context for this MCP session. All subsequent tool calls in ' +
       'this session will automatically route to the selected browser profile unless an individual ' +
       'call passes its own profile argument. Optionally pins subsequent Workato tools to a ' +
-      'specific Workato tab id so browser focus changes do not retarget the session.',
+      'specific Workato tab id so browser focus changes do not retarget the session. ' +
+      'With a tabId the bridge also pins that tab workspace/environment and returns it: later ' +
+      'writes are refused when the tab moved to another workspace, and a pinned session never ' +
+      'falls back to another profile or transport.',
     inputSchema: {
       type: 'object',
       properties: {

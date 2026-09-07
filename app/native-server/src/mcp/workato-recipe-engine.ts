@@ -1309,9 +1309,12 @@ export async function runRecipeMutation(
   // version it mutated unless the caller supplied their own expectation.
   if (typeof args.expected_base_version_no === 'number') {
     saveArgs.expected_base_version_no = args.expected_base_version_no;
-  } else if (baseVersion !== undefined) {
+  } else if (baseVersion !== undefined && args.ignore_file_version !== true) {
     saveArgs.expected_base_version_no = baseVersion;
   }
+  // Carry the caller's opt-out to the nested save, where the router decides
+  // whether to attach the session's expected workspace.
+  if (args.allow_context_mismatch === true) saveArgs.allow_context_mismatch = true;
 
   const saved = parseToolJson(await callExtension('workato_ui_save_recipe_code', saveArgs));
   return buildMutatorSummary(name, {

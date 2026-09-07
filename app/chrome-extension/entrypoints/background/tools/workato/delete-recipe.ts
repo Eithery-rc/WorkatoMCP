@@ -2,6 +2,7 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
+import { assertExpectedContext, type ExpectedTabContext } from './session-context';
 import { fetchRecipeStatusInPage } from './recipe-status';
 
 /**
@@ -100,12 +101,17 @@ function deleteRecipeInPage(recipeId: number): Promise<DeleteRecipeInPageResult>
 class WorkatoDeleteRecipeTool extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.WORKATO.DELETE_RECIPE;
 
-  async execute(args: { recipe_id: number; tabId?: number }): Promise<ToolResult> {
+  async execute(args: {
+    recipe_id: number;
+    tabId?: number;
+    expected_context?: ExpectedTabContext;
+  }): Promise<ToolResult> {
     try {
       if (typeof args?.recipe_id !== 'number' || !Number.isFinite(args.recipe_id)) {
         return createErrorResponse('Param [recipe_id] must be a finite number');
       }
       const tab = await findWorkatoTab(args.tabId);
+      await assertExpectedContext(args, tab.tabId);
 
       // Safety pre-check: fail fast on a missing recipe, refuse a running one.
       const pre = await runInWorkatoTab(tab.tabId, fetchRecipeStatusInPage, [args.recipe_id], {

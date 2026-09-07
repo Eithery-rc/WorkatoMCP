@@ -2,6 +2,7 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
+import { assertExpectedContext, type ExpectedTabContext } from './session-context';
 import { fetchRecipeStatus, type RecipeStatusSlim } from './recipe-status';
 import {
   describeStartError,
@@ -40,6 +41,8 @@ interface RecipeLifecycleArgs {
   /** Max time to poll when wait:true. Default 20000, clamped 1000–60000. */
   wait_timeout_ms?: number;
   tabId?: number;
+  /** Workspace/environment the caller expects this tab to be in (bridge-injected). */
+  expected_context?: ExpectedTabContext;
 }
 
 interface RecipeLifecycleSuccess {
@@ -192,6 +195,9 @@ abstract class WorkatoRecipeLifecycleTool extends BaseBrowserToolExecutor {
 
       const force = this.action === 'stop' && args.force === true;
       const tab = await findWorkatoTab(args.tabId);
+      // Starting or stopping the wrong workspace's recipe is a production
+      // incident, so verify the tab's workspace before the POST.
+      await assertExpectedContext(args, tab.tabId);
 
       // Writes must not auto-retry (a blind retry can double-apply); instead,
       // on timeout we verify the actual recipe state before reporting failure.
