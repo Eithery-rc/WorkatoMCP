@@ -17,6 +17,7 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
+import { assertExpectedContext, type ExpectedTabContext } from './session-context';
 
 interface ApiRequestArgs {
   method?: string;
@@ -28,6 +29,8 @@ interface ApiRequestArgs {
   max_bytes?: number;
   timeout_ms?: number;
   tabId?: number;
+  /** Workspace/environment the caller expects this tab to be in (bridge-injected). */
+  expected_context?: ExpectedTabContext;
   /**
    * Internal, set by the native-server when out_file is used, and absent from
    * the public inputSchema. Disables the response cap: the body is going to a
@@ -174,6 +177,11 @@ class WorkatoApiRequestTool extends BaseBrowserToolExecutor {
       }
 
       const tab = await findWorkatoTab(args.tabId);
+      // Reads are harmless in the wrong workspace (Workato answers 404); a
+      // write is not, so only non-GET calls pay for the context check.
+      if (!READ_ONLY_METHODS.has(method)) {
+        await assertExpectedContext(args, tab.tabId);
+      }
       const resolved = resolveWorkatoPath(args?.path, tab.origin);
       if ('error' in resolved) return createErrorResponse(resolved.error);
 

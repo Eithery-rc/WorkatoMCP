@@ -214,7 +214,10 @@ import { findWorkatoTab, isWorkatoAppHost, WORKATO_URL_PATTERNS } from '../worka
  *
  * Resolution order (unified across all tool families — spec: "never the
  * active tab"):
- *   1. Explicit `tabId` — validated to still exist.
+ *   1. Explicit `tabId`, validated by findWorkatoTab: it must still exist and
+ *      still be a logged-in Workato app tab. A pinned tab that was closed or
+ *      navigated away THROWS; silently retargeting it sent writes to whatever
+ *      other Workato tab happened to be open, possibly another workspace.
  *   2. A Workato app tab in `windowId`, when provided.
  *   3. Any open Workato app tab (same algorithm as findWorkatoTab, which the
  *      workato_* read tools already use).
@@ -225,12 +228,8 @@ import { findWorkatoTab, isWorkatoAppHost, WORKATO_URL_PATTERNS } from '../worka
  */
 export async function resolveTabId(args: { tabId?: number; windowId?: number }): Promise<number> {
   if (typeof args.tabId === 'number') {
-    try {
-      const t = await chrome.tabs.get(args.tabId);
-      if (t && typeof t.id === 'number') return t.id;
-    } catch {
-      /* fall through to Workato-tab discovery */
-    }
+    const info = await findWorkatoTab(args.tabId);
+    return info.tabId;
   }
 
   if (typeof args.windowId === 'number') {

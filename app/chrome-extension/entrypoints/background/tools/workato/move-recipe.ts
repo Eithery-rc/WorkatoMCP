@@ -2,6 +2,7 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
+import { assertExpectedContext, type ExpectedTabContext } from './session-context';
 
 /**
  * workato_move_recipe — move a recipe into another folder.
@@ -153,6 +154,7 @@ class WorkatoMoveRecipeTool extends BaseBrowserToolExecutor {
     recipe_id: number;
     folder_id: number;
     tabId?: number;
+    expected_context?: ExpectedTabContext;
   }): Promise<ToolResult> {
     try {
       if (typeof args?.recipe_id !== 'number' || !Number.isFinite(args.recipe_id)) {
@@ -164,6 +166,7 @@ class WorkatoMoveRecipeTool extends BaseBrowserToolExecutor {
         );
       }
       const tab = await findWorkatoTab(args.tabId);
+      await assertExpectedContext(args, tab.tabId);
 
       let result: MoveRecipeInPageResult;
       let succeededAfterTimeout = false;
