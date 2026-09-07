@@ -30,3 +30,4 @@ export { workatoCreateProjectTool, workatoUpdateProjectTool } from './create-pro
 export { workatoRecipeConnectionsTool } from './recipe-connections';
 export { workatoTestRecipeTool } from './test-recipe';
 export { workatoRecipeCallersTool } from './recipe-callers';
+export { workatoRecipeGrepTool } from './recipe-grep';

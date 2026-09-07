@@ -317,9 +317,20 @@ describe('flattenInput', () => {
     expect(maps.map((m) => m.path).sort()).toEqual(['a.b', 'filters[0].field_id']);
   });
 
-  it('classifies a long non-JSON string as code and keeps it whole', () => {
+  it('previews a long code body and names the exact read-back call', () => {
     const code = `def main():\n${' x = 1\n'.repeat(60)}`;
-    const [m] = flattenInput({ code });
+    const [m] = flattenInput({ code }, '', { markerPrefix: 'input', stepRef: 'py01' });
+    expect(m.kind).toBe('code');
+    expect(m.truncated).toBe(true);
+    expect(m.chars).toBe(code.length);
+    expect(m.value as string).toContain('path=input.code');
+    expect(m.value as string).toContain('read with step:"py01", paths:["input.code"]');
+    expect((m.value as string).length).toBeLessThan(code.length);
+  });
+
+  it('returns a code body whole when keepCode is set (include:"code")', () => {
+    const code = `def main():\n${' x = 1\n'.repeat(60)}`;
+    const [m] = flattenInput({ code }, '', { keepCode: true });
     expect(m.kind).toBe('code');
     expect(m.value).toBe(code);
     expect(m.truncated).toBeUndefined();
@@ -327,7 +338,7 @@ describe('flattenInput', () => {
 
   it('shortens datapills inside a code body', () => {
     const code = `# build query\n${'x\n'.repeat(140)}val = _dp('${PILL}')`;
-    const [m] = flattenInput({ code });
+    const [m] = flattenInput({ code }, '', { keepCode: true });
     expect(m.kind).toBe('code');
     expect(m.value).toContain('datapill(py_eval.e4f443bd.output.x)');
     expect(m.value).not.toContain('_dp(');
@@ -374,31 +385,56 @@ describe('collectUpstreamDatapills', () => {
 });
 
 describe('inspectStep', () => {
-  it('returns a header without input, plus mappings, fields, and datapills', () => {
+  it('returns a header without input, plus mappings and fields by default', () => {
     const code = sampleCode();
-    const view = inspectStep(code, findStep(code, '2')!, 72436887);
+    const view = inspectStep(code, findStep(code, '2')!, 72436887, { versionNo: 12 });
     expect(view.step.n).toBe(2);
+    expect(view.version_no).toBe(12);
     expect(view.step).not.toHaveProperty('input');
     expect(view.step).not.toHaveProperty('block');
-    expect(view.mappings.map((m) => m.path).sort()).toEqual(['limit', 'table_id']);
-    expect(view.mappings.every((m) => m.kind === 'literal')).toBe(true);
-    expect(view.fields.map((f) => f.name).sort()).toEqual(['limit', 'table_id']);
+    expect(view.mappings!.map((m) => m.path).sort()).toEqual(['limit', 'table_id']);
+    expect(view.mappings!.every((m) => m.kind === 'literal')).toBe(true);
+    expect(view.fields!.map((f) => f.name).sort()).toEqual(['limit', 'table_id']);
+    // datapills are opt-in
+    expect(view.available_datapills).toBeUndefined();
+    expect(view.include).toEqual(['mappings', 'fields']);
   });
 
-  it('lists datapills from upstream steps only', () => {
+  it('lists datapills from upstream steps only when asked for them', () => {
     const code = sampleCode();
-    const view = inspectStep(code, findStep(code, '2')!, 72436887);
+    const view = inspectStep(code, findStep(code, '2')!, 72436887, {
+      include: ['datapills'],
+    });
     expect(view.available_datapills).toEqual([
       { ref: 'datapill(scheduler.trigger00.started_at)', label: 'Started at', type: 'date_time' },
     ]);
+    expect(view.mappings).toBeUndefined();
   });
 
-  it('filters fields and datapills by query, lifting the cap', () => {
+  it('filters mappings, fields and datapills by query WITHOUT lifting the limit', () => {
     const code = sampleCode();
-    const view = inspectStep(code, findStep(code, '2')!, 72436887, 'limit');
-    expect(view.fields.map((f) => f.name)).toEqual(['limit']);
+    const view = inspectStep(code, findStep(code, '2')!, 72436887, {
+      fieldQuery: 'limit',
+      include: ['mappings', 'fields', 'datapills'],
+    });
+    expect(view.fields!.map((f) => f.name)).toEqual(['limit']);
+    expect(view.mappings!.map((m) => m.path)).toEqual(['limit']);
     expect(view.available_datapills).toEqual([]);
     expect(view.fields_truncated).toBe(false);
+  });
+
+  it('keeps max_items over a filter that matches everything', () => {
+    const big: RawSchemaEntry[] = Array.from({ length: 300 }, (_, i) => ({
+      name: `field_${i}`,
+      type: 'string',
+    }));
+    const node: RawNode = { number: 9, keyword: 'action', as: 'big', extended_input_schema: big };
+    const view = inspectStep(node, node, 1, { fieldQuery: 'field_', maxItems: 25 });
+    expect(view.fields).toHaveLength(25);
+    expect(view.total_fields).toBe(300);
+    expect(view.fields_truncated).toBe(true);
+    expect(view.truncated).toBe(true);
+    expect(typeof view.next_cursor).toBe('string');
   });
 
   it('caps fields at FIELD_CAP and flags truncation without a query', () => {
@@ -407,7 +443,7 @@ describe('inspectStep', () => {
       type: 'string',
     }));
     const node: RawNode = { number: 9, keyword: 'action', as: 'big', extended_input_schema: big };
-    const view = inspectStep(node, node, 1);
+    const view = inspectStep(node, node, 1, { budgetChars: 200_000 });
     expect(view.fields).toHaveLength(FIELD_CAP);
     expect(view.total_fields).toBe(FIELD_CAP + 5);
     expect(view.fields_truncated).toBe(true);
@@ -427,7 +463,10 @@ describe('inspectStep', () => {
       extended_output_schema: bigOut,
       block: [target],
     };
-    const view = inspectStep(code, target, 1);
+    const view = inspectStep(code, target, 1, {
+      include: ['datapills'],
+      budgetChars: 200_000,
+    });
     expect(view.available_datapills).toHaveLength(FIELD_CAP);
     expect(view.total_datapills).toBe(FIELD_CAP + 5);
     expect(view.datapills_truncated).toBe(true);

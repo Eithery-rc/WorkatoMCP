@@ -6,30 +6,69 @@ import {
   runInWorkatoTab,
   workatoNotFoundHint,
   WorkatoDispatchError,
+  type WorkatoTabInfo,
 } from './tab-dispatch';
 import {
+  DEFAULT_INCLUDE,
   findStep,
   inspectStep,
+  inspectSteps,
   listStepRefs,
   toCompactRecipe,
+  type IncludeSection,
   type RawNode,
   type RecipeVersion,
 } from './recipe-view';
+import {
+  DEFAULT_COMPACT_BUDGET_CHARS,
+  DEFAULT_STEP_BUDGET_CHARS,
+  decodeCursor,
+  normalizeBudgetChars,
+  normalizeMaxItems,
+  readPaths,
+} from './recipe-projection';
+import {
+  buildRecipeCodeUrlTemplate,
+  cachedRecipeVersions,
+  getRecipeSnapshot,
+  invalidateRecipeSnapshot,
+  putRecipeSnapshot,
+} from './recipe-snapshot';
 
 interface PullRecipeArgs {
   recipe_id: number;
   view?: 'compact' | 'full' | 'outline';
   step?: string;
+  /** Several step refs read against one snapshot. */
+  steps?: string[];
+  /** Sections of a step view to return. Default ['mappings','fields']. */
+  include?: IncludeSection[];
+  /** Exact input paths, returned losslessly. */
+  paths?: string[];
+  /** Field/datapill/mapping filter. `field_query` is the older name. */
+  fields?: string;
   field_query?: string;
-  /** In-page script timeout. Default 30000, clamped 10000–110000. Raise for very large recipes. */
+  /** Items per list. Default 60, hard max 500. */
+  max_items?: number;
+  /** Character budget for the response. */
+  budget_chars?: number;
+  /** Continuation token from a previous truncated response. */
+  cursor?: string;
+  /** Return {unchanged:true} when the recipe is still at this version. */
+  if_version?: number;
+  /** In-page script timeout. Default 30000, clamped 10000 to 110000. */
   timeout_ms?: number;
   tabId?: number;
 }
 
 interface InPageResult {
   ok: boolean;
-  /** present when ok=true */
+  /** present when ok=true and the code fetch was not skipped */
   code?: unknown;
+  /** length of the code JSON as the API returned it */
+  code_chars?: number;
+  /** true when the version was already known to the caller and code was skipped */
+  code_skipped?: boolean;
   version?: {
     version_no: number;
     name: string;
@@ -56,8 +95,17 @@ interface InPageResult {
  * Only the wrapper survives `Function.prototype.toString()`, so the helper
  * reference dangles in the page context ("ReferenceError: _pullInPage is not
  * defined"). Promise chains pass through the bundler untouched.
+ *
+ * Metadata is fetched first and the code is then pinned to the version it
+ * reported, so the two halves of the answer describe the same snapshot. When
+ * that version is one the caller already holds (`skipVersions`), the code
+ * fetch is skipped entirely and `code_skipped` says so.
  */
-function pullInPage(recipeId: number): Promise<InPageResult> {
+function pullInPage(
+  recipeId: number,
+  skipVersions: number[],
+  codeUrlTemplate: string,
+): Promise<InPageResult> {
   const fetchOpts: RequestInit = {
     credentials: 'include',
     headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' },
@@ -90,9 +138,53 @@ function pullInPage(recipeId: number): Promise<InPageResult> {
       };
     }
 
-    return fetchAndParse(
-      `/recipes/${recipeId}/code.json?mode=view&hideHeader=false&noBorderRadius=false&banHotkeys=false`,
-    ).then((code) => {
+    // Shape: meta.result.recipe_data.flow.{version_no,name,folder_id,config,...}
+    const flow = (meta.json as any)?.result?.recipe_data?.flow;
+    if (!flow) {
+      return {
+        ok: false,
+        failure: {
+          stage: 'shape' as const,
+          body_excerpt: JSON.stringify({
+            meta_keys: Object.keys((meta.json as any) ?? {}),
+          }).slice(0, 1024),
+          message:
+            'Unexpected response shape — missing result.recipe_data.flow. ' +
+            'Workato API may have drifted; check SKILL.md.',
+        },
+      };
+    }
+
+    const versionNo = Number(flow.version_no);
+    if (!Number.isFinite(versionNo) || versionNo <= 0) {
+      return {
+        ok: false,
+        failure: {
+          stage: 'shape' as const,
+          body_excerpt: JSON.stringify({ version_no: flow.version_no }).slice(0, 1024),
+          message:
+            `result.recipe_data.flow.version_no is not a positive finite number ` +
+            `(got ${JSON.stringify(flow.version_no)}). Workato API may have drifted.`,
+        },
+      };
+    }
+
+    const version = {
+      version_no: versionNo,
+      name: String(flow.name ?? ''),
+      folder_id: Number(flow.folder_id),
+      config: typeof flow.config === 'string' ? flow.config : JSON.stringify(flow.config ?? {}),
+      visibility_private: Boolean(flow.visibility_private),
+      description: String(flow.description ?? ''),
+      worker_concurrency: Number(flow.worker_concurrency ?? 1),
+      job_data_retention_policy: String(flow.job_data_retention_policy ?? 'default'),
+    };
+
+    if (skipVersions && skipVersions.indexOf(versionNo) >= 0) {
+      return { ok: true, code_skipped: true, version: version };
+    }
+
+    return fetchAndParse(codeUrlTemplate.replace('{version}', String(versionNo))).then((code) => {
       if (code.status < 200 || code.status >= 300) {
         return {
           ok: false,
@@ -105,21 +197,18 @@ function pullInPage(recipeId: number): Promise<InPageResult> {
         };
       }
 
-      // Shape: meta.result.recipe_data.flow.{version_no,name,folder_id,config,...}
-      //        code.result === "<stringified JSON of code tree>"
-      const flow = (meta.json as any)?.result?.recipe_data?.flow;
+      // code.result === "<stringified JSON of code tree>"
       const codeStr = (code.json as any)?.result;
-      if (!flow || typeof codeStr !== 'string') {
+      if (typeof codeStr !== 'string') {
         return {
           ok: false,
           failure: {
             stage: 'shape' as const,
             body_excerpt: JSON.stringify({
-              meta_keys: Object.keys((meta.json as any) ?? {}),
               code_keys: Object.keys((code.json as any) ?? {}),
             }).slice(0, 1024),
             message:
-              'Unexpected response shape — missing result.recipe_data.flow or result string. ' +
+              'Unexpected response shape — result is not a code string. ' +
               'Workato API may have drifted; check SKILL.md.',
           },
         };
@@ -139,36 +228,122 @@ function pullInPage(recipeId: number): Promise<InPageResult> {
         };
       }
 
-      const versionNo = Number(flow.version_no);
-      if (!Number.isFinite(versionNo) || versionNo <= 0) {
-        return {
-          ok: false,
-          failure: {
-            stage: 'shape' as const,
-            body_excerpt: JSON.stringify({ version_no: flow.version_no }).slice(0, 1024),
-            message:
-              `result.recipe_data.flow.version_no is not a positive finite number ` +
-              `(got ${JSON.stringify(flow.version_no)}). Workato API may have drifted.`,
-          },
-        };
-      }
-
       return {
         ok: true,
         code: parsedCode,
-        version: {
-          version_no: versionNo,
-          name: String(flow.name ?? ''),
-          folder_id: Number(flow.folder_id),
-          config: typeof flow.config === 'string' ? flow.config : JSON.stringify(flow.config ?? {}),
-          visibility_private: Boolean(flow.visibility_private),
-          description: String(flow.description ?? ''),
-          worker_concurrency: Number(flow.worker_concurrency ?? 1),
-          job_data_retention_policy: String(flow.job_data_retention_policy ?? 'default'),
-        },
+        code_chars: codeStr.length,
+        code_skipped: false,
+        version: version,
       };
     });
   });
+}
+
+function describeFailure(recipeId: number, result: InPageResult): string {
+  return (
+    `WorkatoApiError (${result.failure?.stage}): ${result.failure?.message}` +
+    workatoNotFoundHint(result.failure?.status) +
+    (result.failure?.body_excerpt ? `\n--- body excerpt ---\n${result.failure.body_excerpt}` : '')
+  );
+}
+
+export type RecipeSnapshotResult =
+  | {
+      ok: true;
+      /** true when if_version matched: no code was fetched */
+      unchanged: boolean;
+      version: NonNullable<InPageResult['version']>;
+      code: RawNode;
+      /** true when the code came from the service-worker snapshot cache */
+      cacheHit: boolean;
+    }
+  | { ok: false; error: string };
+
+/**
+ * Fetch (or reuse) one recipe snapshot: metadata always fresh, code pinned to
+ * the version the metadata reported. Shared by `workato_pull_recipe` and
+ * `workato_recipe_grep` so a second read of the same version costs no fetch.
+ */
+export async function loadRecipeSnapshot(
+  tab: WorkatoTabInfo,
+  recipeId: number,
+  opts: { timeoutMs: number; ifVersion?: number },
+): Promise<RecipeSnapshotResult> {
+  const template = buildRecipeCodeUrlTemplate(recipeId);
+  const skip: number[] = [];
+  if (typeof opts.ifVersion === 'number' && opts.ifVersion > 0) skip.push(opts.ifVersion);
+  for (const version of cachedRecipeVersions(tab.host, recipeId)) {
+    if (skip.indexOf(version) < 0) skip.push(version);
+  }
+
+  let result = await runInWorkatoTab(tab.tabId, pullInPage, [recipeId, skip, template], {
+    timeoutMs: opts.timeoutMs,
+  });
+  if (!result.ok || !result.version) {
+    return { ok: false, error: describeFailure(recipeId, result) };
+  }
+
+  if (typeof opts.ifVersion === 'number' && result.version.version_no === opts.ifVersion) {
+    return {
+      ok: true,
+      unchanged: true,
+      version: result.version,
+      code: {} as RawNode,
+      cacheHit: false,
+    };
+  }
+
+  let cacheHit = false;
+  let code: RawNode | null = null;
+  if (result.code_skipped) {
+    const cached = getRecipeSnapshot(tab.host, recipeId, result.version.version_no);
+    if (cached) {
+      code = cached.code;
+      cacheHit = true;
+    } else {
+      // Evicted between the peek and the fetch. Ask again without the skip
+      // list rather than serving a version we no longer hold.
+      result = await runInWorkatoTab(tab.tabId, pullInPage, [recipeId, [], template], {
+        timeoutMs: opts.timeoutMs,
+      });
+      if (!result.ok || !result.version) {
+        return { ok: false, error: describeFailure(recipeId, result) };
+      }
+      code = result.code as RawNode;
+    }
+  } else {
+    code = result.code as RawNode;
+  }
+
+  if (!cacheHit && code) {
+    // Older versions of this recipe can never be served again; drop them now
+    // rather than waiting for the LRU to reach them.
+    invalidateRecipeSnapshot(recipeId);
+    putRecipeSnapshot({
+      host: tab.host,
+      recipe_id: recipeId,
+      version_no: result.version.version_no,
+      code,
+      version: result.version as unknown as RecipeVersion,
+      chars: result.code_chars ?? 0,
+      stored_at: Date.now(),
+    });
+  }
+
+  return { ok: true, unchanged: false, version: result.version, code: code as RawNode, cacheHit };
+}
+
+const INCLUDE_SECTIONS: IncludeSection[] = ['mappings', 'fields', 'datapills', 'schemas', 'code'];
+
+function normalizeStringArray(value: unknown): string[] | null {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return null;
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'string' || entry.trim() === '') return null;
+    out.push(entry.trim());
+  }
+  return out;
 }
 
 class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
@@ -184,49 +359,179 @@ class WorkatoPullRecipeTool extends BaseBrowserToolExecutor {
       if (view !== 'compact' && view !== 'full' && view !== 'outline') {
         return createErrorResponse("Param [view] must be 'compact', 'outline', or 'full'");
       }
-      if (args.field_query != null && args.step == null) {
-        return createErrorResponse('Param [field_query] requires [step]');
+      if (args.step != null && args.steps != null) {
+        return createErrorResponse('Pass either [step] or [steps], not both');
       }
 
-      const timeoutMs = Math.min(Math.max(args.timeout_ms ?? 30_000, 10_000), 110_000);
-      const tab = await findWorkatoTab(args.tabId);
-      const result = await runInWorkatoTab(tab.tabId, pullInPage, [args.recipe_id], {
-        timeoutMs,
-      });
+      const stepRefs = normalizeStringArray(args.steps);
+      if (stepRefs === null) {
+        return createErrorResponse('Param [steps] must be an array of non-empty step refs');
+      }
+      const refs = args.step != null ? [String(args.step)] : stepRefs;
 
-      if (!result.ok) {
+      const fieldQuery = args.fields ?? args.field_query;
+      if (fieldQuery != null && refs.length === 0) {
         return createErrorResponse(
-          `WorkatoApiError (${result.failure?.stage}): ${result.failure?.message}` +
-            workatoNotFoundHint(result.failure?.status) +
-            (result.failure?.body_excerpt
-              ? `\n--- body excerpt ---\n${result.failure.body_excerpt}`
-              : ''),
+          'Param [fields] (alias [field_query]) requires [step] or [steps]',
         );
       }
 
-      const code = result.code as RawNode;
-      const version = result.version as unknown as RecipeVersion;
-      let payload: unknown;
+      const paths = normalizeStringArray(args.paths);
+      if (paths === null) {
+        return createErrorResponse('Param [paths] must be an array of non-empty paths');
+      }
 
-      if (args.step != null) {
-        const node = findStep(code, args.step);
-        if (!node) {
-          const refs = listStepRefs(code)
+      let include: IncludeSection[] | undefined;
+      if (args.include != null) {
+        if (!Array.isArray(args.include)) {
+          return createErrorResponse('Param [include] must be an array');
+        }
+        for (const section of args.include) {
+          if (!INCLUDE_SECTIONS.includes(section)) {
+            return createErrorResponse(
+              `Param [include] accepts ${INCLUDE_SECTIONS.join(', ')}, got "${String(section)}"`,
+            );
+          }
+        }
+        include = args.include.length > 0 ? [...args.include] : DEFAULT_INCLUDE;
+      }
+
+      let cursorState = null;
+      if (args.cursor != null) {
+        cursorState = decodeCursor(String(args.cursor));
+        if (!cursorState) {
+          return createErrorResponse(
+            'Param [cursor] is not a cursor this tool produced. Drop it to start over.',
+          );
+        }
+      }
+
+      if (args.if_version != null) {
+        if (typeof args.if_version !== 'number' || !Number.isFinite(args.if_version)) {
+          return createErrorResponse('Param [if_version] must be a version number');
+        }
+      }
+
+      const maxItems = normalizeMaxItems(args.max_items);
+      const budgetChars = normalizeBudgetChars(
+        args.budget_chars,
+        refs.length > 0 ? DEFAULT_STEP_BUDGET_CHARS : DEFAULT_COMPACT_BUDGET_CHARS,
+      );
+
+      const timeoutMs = Math.min(Math.max(args.timeout_ms ?? 30_000, 10_000), 110_000);
+      const tab = await findWorkatoTab(args.tabId);
+      const snapshot = await loadRecipeSnapshot(tab, args.recipe_id, {
+        timeoutMs,
+        ifVersion: args.if_version,
+      });
+      if (!snapshot.ok) return createErrorResponse(snapshot.error);
+
+      if (snapshot.unchanged) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                recipe_id: args.recipe_id,
+                version_no: snapshot.version.version_no,
+                unchanged: true,
+              }),
+            },
+          ],
+          isError: false,
+        };
+      }
+
+      const code = snapshot.code;
+      const version = snapshot.version;
+      const versionNo = version.version_no;
+      let payload: Record<string, unknown>;
+
+      if (refs.length > 0) {
+        const resolved: Array<{ ref: string; node: RawNode }> = [];
+        const notFound: string[] = [];
+        for (const ref of refs) {
+          const node = findStep(code, ref);
+          if (node) resolved.push({ ref, node });
+          else notFound.push(ref);
+        }
+        if (resolved.length === 0) {
+          const available = listStepRefs(code)
             .map((r) => `${r.n ?? '?'}:${r.as ?? '?'}`)
             .join(', ');
           return createErrorResponse(
-            `Step [${args.step}] not found in recipe ${args.recipe_id}. ` +
-              `Available steps (number:as): ${refs}`,
+            `Step [${notFound.join(', ')}] not found in recipe ${args.recipe_id}. ` +
+              `Available steps (number:as): ${available}`,
           );
         }
-        payload =
-          view === 'full'
-            ? { recipe_id: args.recipe_id, step: node, version: result.version }
-            : inspectStep(code, node, args.recipe_id, args.field_query);
+
+        if (view === 'full') {
+          payload = {
+            recipe_id: args.recipe_id,
+            version_no: versionNo,
+            version,
+            cache_hit: snapshot.cacheHit,
+          };
+          if (args.step != null) payload.step = resolved[0].node;
+          else payload.steps = resolved.map((entry) => entry.node);
+          if (notFound.length > 0) payload.not_found = notFound;
+          if (paths.length > 0) payload.paths = readPaths(resolved[0].node, paths);
+        } else if (args.step != null) {
+          payload = {
+            ...inspectStep(code, resolved[0].node, args.recipe_id, {
+              include,
+              fieldQuery,
+              paths,
+              maxItems,
+              budgetChars,
+              offsets: cursorState?.o,
+              versionNo,
+            }),
+            cache_hit: snapshot.cacheHit,
+          };
+          if (notFound.length > 0) payload.not_found = notFound;
+        } else {
+          payload = {
+            ...inspectSteps(code, resolved, args.recipe_id, {
+              include,
+              fieldQuery,
+              paths,
+              maxItems,
+              budgetChars,
+              offsets: cursorState?.o,
+              stepOffset: cursorState?.s,
+              versionNo,
+              notFound,
+            }),
+            cache_hit: snapshot.cacheHit,
+          };
+        }
       } else if (view === 'full') {
-        payload = { recipe_id: args.recipe_id, code: result.code, version: result.version };
+        payload = {
+          recipe_id: args.recipe_id,
+          code,
+          version,
+          version_no: versionNo,
+          cache_hit: snapshot.cacheHit,
+        };
+        if (paths.length > 0) payload.paths = readPaths(code, paths);
       } else {
-        payload = toCompactRecipe(code, args.recipe_id, version, view === 'outline');
+        payload = {
+          ...toCompactRecipe(
+            code,
+            args.recipe_id,
+            version as unknown as RecipeVersion,
+            view === 'outline',
+            {
+              maxItems,
+              budgetChars,
+              offset: cursorState?.o?.steps,
+              keepCode: include?.includes('code'),
+            },
+          ),
+          cache_hit: snapshot.cacheHit,
+        };
+        if (paths.length > 0) payload.paths = readPaths(code, paths);
       }
 
       return {

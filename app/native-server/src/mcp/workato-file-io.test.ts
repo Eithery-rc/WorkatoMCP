@@ -73,6 +73,25 @@ describe('prepareWorkatoCall — pull with out_file', () => {
     expect(prepared.args).toEqual({ recipe_id: 1, view: 'full' });
   });
 
+  test('strips every projection param, so the file is never a partial recipe', () => {
+    const out = path.join(tmpDir, 'r2.json');
+    const prepared = prepareWorkatoCall('workato_pull_recipe', {
+      recipe_id: 1,
+      out_file: out,
+      steps: ['a', 'b'],
+      fields: 'memo',
+      include: ['mappings'],
+      paths: ['input.code'],
+      max_items: 10,
+      budget_chars: 1000,
+      cursor: 'abc',
+      if_version: 7,
+      timeout_ms: 60000,
+      tabId: 12,
+    });
+    expect(prepared.args).toEqual({ recipe_id: 1, view: 'full', timeout_ms: 60000, tabId: 12 });
+  });
+
   test('without out_file the call passes through untouched', () => {
     const prepared = prepareWorkatoCall('workato_pull_recipe', { recipe_id: 1, view: 'compact' });
     expect(prepared.pullOutFile).toBeUndefined();
