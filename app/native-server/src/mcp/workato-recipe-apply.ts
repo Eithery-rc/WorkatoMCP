@@ -35,6 +35,7 @@ import {
   type RecipeStep,
   type StepLocation,
 } from './workato-recipe-engine';
+import { deriveSchemasForStep, writeDerivedSchemas } from './workato-recipe-schema';
 
 export const RECIPE_APPLY_OPS = [
   'set_input',
@@ -47,6 +48,7 @@ export const RECIPE_APPLY_OPS = [
   'move_step',
   'set_loop_source',
   'bind_connection',
+  'derive_schema',
 ] as const;
 
 export type RecipeApplyOp = (typeof RECIPE_APPLY_OPS)[number];
@@ -524,6 +526,30 @@ function applyOne(ctx: RecipeMutationContext, change: JsonObject): MutationSumma
       step_number: located.step.number,
       step_as: located.step.as,
       detail: { repeat_mode: located.step.repeat_mode },
+    };
+  }
+
+  if (op === 'derive_schema') {
+    const located = ctx.locate(change.step);
+    const derived = deriveSchemasForStep(located.step, ctx.code);
+    if (!derived.ok) throw new Error(derived.reason);
+    // Explicit ask, so an existing schema that disagrees with the declaration
+    // is replaced rather than left as the caller found it.
+    const write = writeDerivedSchemas(located.step, derived, { replace: true });
+    ctx.touch(located.step);
+    for (const key of write.schemas) ctx.change(`${stepLabel(located.step)}:${key}`);
+    return {
+      kind: 'derive_schema',
+      step_number: located.step.number,
+      step_as: located.step.as,
+      detail: {
+        derived_kind: derived.kind,
+        fields: derived.fields,
+        schemas: write.schemas,
+        status: write.status,
+        evidence: derived.evidence,
+        differences: write.differences.length > 0 ? write.differences : undefined,
+      },
     };
   }
 

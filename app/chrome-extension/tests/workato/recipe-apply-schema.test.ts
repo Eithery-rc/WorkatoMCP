@@ -28,6 +28,7 @@ describe('workato_recipe_apply schema', () => {
       'move_step',
       'set_loop_source',
       'bind_connection',
+      'derive_schema',
     ]);
   });
 
