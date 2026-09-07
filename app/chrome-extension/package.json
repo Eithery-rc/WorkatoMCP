@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "wxt",
     "dev:firefox": "wxt -b firefox",
-    "build": "wxt build",
+    "build": "wxt build && npm run check:bundle",
+    "check:bundle": "node scripts/check-bundle.mjs",
     "build:firefox": "wxt build -b firefox",
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
