@@ -8,7 +8,7 @@ import { SERVER_INSTRUCTIONS, SERVER_NAME, serverVersion } from './server-identi
  * guidance ships whole; when their packages merge, they leave this list and
  * the assertion below starts covering them.
  */
-const PENDING_TOOL_NAMES = ['workato_operation_status', 'workato_recipe_validate'];
+const PENDING_TOOL_NAMES: string[] = [];
 
 function toolNamesInInstructions(): string[] {
   return [...new Set(SERVER_INSTRUCTIONS.match(/workato_[a-z0-9_]+/g) ?? [])];
