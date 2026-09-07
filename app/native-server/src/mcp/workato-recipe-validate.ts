@@ -94,6 +94,9 @@ const CONTROL_KEYWORDS = new Set([
  */
 const OUTPUT_SCHEMA_ONLY_ON_STEP = new Set([VARIABLES_PROVIDER]);
 
+/** Control nodes whose own output (catch message, loop item) is read by pills on the node itself. */
+const SELF_READ_KEYWORDS = new Set(['catch', 'foreach', 'repeat']);
+
 const DP_PAYLOAD = /_dp\('((?:[^'\\]|\\.)*)'\)/g;
 
 // ---------------------------------------------------------------------------
@@ -109,8 +112,12 @@ const DP_PAYLOAD = /_dp\('((?:[^'\\]|\\.)*)'\)/g;
  * reported at full strength and the caller decides.
  */
 export function checkStructure(code: unknown): ValidationFinding[] {
+  // Every node counts as touched (numbering and nesting are errors), none as
+  // created: a non-hex `as` such as "tjcall01" is accepted by Workato on a
+  // saved recipe, so its format is a warning here, not a reason to call a
+  // working recipe invalid.
   const nodes = new Set(indexSteps(code).map((entry) => entry.step));
-  const result = validateRecipeTree(code, nodes, nodes);
+  const result = validateRecipeTree(code, nodes, new Set());
   return [
     ...result.errors.map(
       (message): ValidationFinding => ({ severity: 'error', code: 'structure', message }),
@@ -295,10 +302,12 @@ export function collectDatapillReferences(code: unknown): DatapillReference[] {
 export function checkDatapillReferences(code: unknown): ValidationFinding[] {
   const findings: ValidationFinding[] = [];
   const order = new Map<string, number>();
+  const keywordByAnchor = new Map<string, string>();
   for (const entry of indexSteps(code)) {
     const anchor = entry.step.as;
     if (typeof anchor === 'string' && anchor.length > 0 && !order.has(anchor)) {
       order.set(anchor, entry.order);
+      keywordByAnchor.set(anchor, String(entry.step.keyword));
     }
   }
 
@@ -317,7 +326,13 @@ export function checkDatapillReferences(code: unknown): ValidationFinding[] {
       });
       continue;
     }
-    if (targetOrder >= reference.order) {
+    // A catch block reads its own error (catch.<as>.message) in its filter and
+    // its children; a foreach reads its own item the same way. Those are
+    // self-reads of a control node, not forward references.
+    const selfRead =
+      targetOrder === reference.order &&
+      SELF_READ_KEYWORDS.has(keywordByAnchor.get(reference.line) ?? '');
+    if (targetOrder >= reference.order && !selfRead) {
       findings.push({
         severity: 'error',
         code: 'datapill_not_upstream',
@@ -422,9 +437,9 @@ export function checkSchemas(code: unknown): ValidationFinding[] {
     if (reference.composite || reference.target_path.length === 0) continue;
     const target = byAnchor.get(reference.line);
     if (!target) continue;
+    // A catch publishes message/error implicitly and never carries a schema.
     const providerNeedsIt =
-      (typeof target.provider === 'string' && OUTPUT_SCHEMA_ONLY_ON_STEP.has(target.provider)) ||
-      target.keyword === 'catch';
+      typeof target.provider === 'string' && OUTPUT_SCHEMA_ONLY_ON_STEP.has(target.provider);
     if (!providerNeedsIt) continue;
     if (target.extended_output_schema !== undefined && target.extended_output_schema !== null) {
       continue;
