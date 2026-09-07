@@ -144,8 +144,15 @@ function fetchVersionCodesInPage(
 // Diffing (background worker — full trees never reach the agent)
 // ---------------------------------------------------------------------------
 
-interface StepEntry {
-  as: string;
+export interface StepEntry {
+  /**
+   * Identity used to match this node across the two versions. It is the node's
+   * `as` when it has one, else `uuid:<uuid>`, else a walk-order counter.
+   */
+  key: string;
+  /** The node's own `as`, when it has one. */
+  as?: string;
+  uuid?: string;
   number?: number;
   keyword?: string;
   provider?: string;
@@ -155,16 +162,31 @@ interface StepEntry {
   node: Record<string, unknown>;
 }
 
-function collectSteps(root: unknown): Map<string, StepEntry> {
+/**
+ * Index every node of a version's tree by a STABLE identity.
+ *
+ * Most nodes carry an `as` and that is the identity. Control nodes and older
+ * steps often do not, and the previous fallback was a walk-order counter:
+ * inserting one anonymous node near the top of the recipe shifted every later
+ * anonymous node's counter by one, so a diff reported them all as removed and
+ * re-added. Workato writes a `uuid` on those nodes, and unlike the counter it
+ * survives an insertion above, so it is preferred. The counter remains for a
+ * node that has neither, where nothing better exists.
+ */
+export function collectSteps(root: unknown): Map<string, StepEntry> {
   const steps = new Map<string, StepEntry>();
   let anonCounter = 0;
 
   function visit(node: unknown): void {
     if (!node || typeof node !== 'object' || Array.isArray(node)) return;
     const n = node as Record<string, unknown>;
-    const as = typeof n.as === 'string' && n.as.length > 0 ? n.as : `__anon_${anonCounter++}`;
-    steps.set(as, {
+    const as = typeof n.as === 'string' && n.as.length > 0 ? n.as : undefined;
+    const uuid = typeof n.uuid === 'string' && n.uuid.length > 0 ? n.uuid : undefined;
+    const key = as ?? (uuid !== undefined ? `uuid:${uuid}` : `__anon_${anonCounter++}`);
+    steps.set(key, {
+      key,
       as,
+      uuid,
       number: typeof n.number === 'number' ? n.number : undefined,
       keyword: typeof n.keyword === 'string' ? n.keyword : undefined,
       provider: typeof n.provider === 'string' ? n.provider : undefined,
@@ -242,9 +264,11 @@ function diffValues(
   out.push(change);
 }
 
-function stepHeader(s: StepEntry): Record<string, unknown> {
+export function stepHeader(s: StepEntry): Record<string, unknown> {
   return {
-    as: s.as,
+    // A node with no `as` is still identified: `key` names what matched it.
+    as: s.as ?? s.key,
+    uuid: s.uuid,
     number: s.number,
     keyword: s.keyword,
     provider: s.provider,
@@ -296,8 +320,8 @@ class WorkatoRecipeVersionDiffTool extends BaseBrowserToolExecutor {
       const changed: Record<string, unknown>[] = [];
       let moved = 0;
 
-      for (const [as, toStep] of toSteps) {
-        const fromStep = fromSteps.get(as);
+      for (const [key, toStep] of toSteps) {
+        const fromStep = fromSteps.get(key);
         if (!fromStep) {
           added.push(stepHeader(toStep));
           continue;
@@ -322,8 +346,8 @@ class WorkatoRecipeVersionDiffTool extends BaseBrowserToolExecutor {
           changed.push(entry);
         }
       }
-      for (const [as, fromStep] of fromSteps) {
-        if (!toSteps.has(as)) removed.push(stepHeader(fromStep));
+      for (const [key, fromStep] of fromSteps) {
+        if (!toSteps.has(key)) removed.push(stepHeader(fromStep));
       }
 
       const versionMeta = (v: number): Record<string, unknown> | undefined => {
