@@ -414,3 +414,43 @@ export function describeMissing(diff: TreeDiff): string {
     `The recipe is now at a version whose data is INCOMPLETE — do not start it as-is.`
   );
 }
+
+/** What a caller needs to tell apart "stored", "Workato accepts it" and "we checked". */
+export interface SaveOutcome {
+  /** A new version exists in Workato. */
+  persisted: boolean;
+  /** Workato reported no validation errors on the stored tree. */
+  valid: boolean;
+  /** The stored tree was read back and matched what was sent. */
+  verified: boolean;
+  /** Set when the outcome needs a name of its own. */
+  save_status?: string;
+}
+
+/**
+ * Persisted, valid and verified are three different things.
+ *
+ * A save that stores a tree Workato rejects is persisted and NOT valid, and a
+ * response that only says "saved recipe N" reads exactly like a clean edit.
+ * `verify_readback:false` turns the readback off, so `verified` is false there
+ * too rather than inheriting a check nobody ran.
+ */
+export function summarizeSaveOutcome(input: {
+  code_errors?: unknown;
+  verification_error?: string;
+  value_mismatches?: unknown[];
+  verify_readback?: boolean;
+  save_status?: string;
+}): SaveOutcome {
+  const errCount = Array.isArray(input.code_errors) ? input.code_errors.length : 0;
+  const valid = errCount === 0;
+  const verified =
+    input.verify_readback !== false &&
+    typeof input.verification_error !== 'string' &&
+    !(Array.isArray(input.value_mismatches) && input.value_mismatches.length > 0) &&
+    input.save_status !== 'succeeded_after_timeout';
+  const outcome: SaveOutcome = { persisted: true, valid, verified };
+  const status = input.save_status ?? (valid ? undefined : 'persisted_invalid');
+  if (status) outcome.save_status = status;
+  return outcome;
+}
