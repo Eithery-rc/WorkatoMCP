@@ -14,8 +14,14 @@ import { stripConnectionSecrets } from './strip-secrets';
  * itself. So this tool reads:
  *
  *   GET /recipes/<id>.json                -> flow.config (string or array)
+ *   GET /recipes/<id>/code.json           -> which providers steps actually use
  *   GET /connections/<account_id>.json    -> per bound connection
  *   GET /integrations/meta?name=a,b       -> config.required for the rest
+ *
+ * The code read is what keeps a stale entry from blocking a caller. Removing
+ * the last step of a provider leaves its `config` entry behind with no
+ * account_id, and reporting that as 'missing' blocked restarts over a
+ * connection the recipe no longer needs. Such an entry is reported 'unused'.
  *
  * Everything the connection returns passes through stripConnectionSecrets and
  * then a field whitelist, so no credential material and none of the provider
@@ -54,6 +60,10 @@ export interface RecipeConnectionsRaw {
   meta_required?: Record<string, boolean | null>;
   meta_error?: string;
   config_parse_error?: string;
+  /** Distinct `provider` values found on the recipe's steps. Absent when the code could not be read. */
+  step_providers?: string[];
+  /** Why the code could not be read, so 'unused' is never inferred from a failed fetch. */
+  code_error?: string;
   failure?: {
     stage: 'fetch' | 'shape';
     status?: number;
@@ -85,6 +95,63 @@ export function fetchRecipeConnectionsInPage(recipeId: number): Promise<RecipeCo
         }
         return { status: r.status, bodyText, json };
       }),
+    );
+  }
+
+  /**
+   * Every distinct `provider` a STEP carries. `config` entries carry a provider
+   * too, under keyword "application": those are the bindings being checked, so
+   * counting one as usage would make every entry look used.
+   */
+  function collectProviders(node: unknown, out: string[]): void {
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i++) collectProviders(node[i], out);
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    const rec = node as Record<string, unknown>;
+    const keyword = typeof rec.keyword === 'string' ? rec.keyword : null;
+    if (typeof rec.provider === 'string' && rec.provider !== '' && keyword !== 'application') {
+      if (out.indexOf(rec.provider) === -1) out.push(rec.provider);
+    }
+    const keys = Object.keys(rec);
+    for (let k = 0; k < keys.length; k++) {
+      const key = keys[k];
+      if (key === 'input' || key === 'extended_input_schema') continue;
+      if (key === 'extended_output_schema') continue;
+      const child = rec[key];
+      if (child && typeof child === 'object') collectProviders(child, out);
+    }
+  }
+
+  function readStepProviders(): Promise<{ providers?: string[]; error?: string }> {
+    const url = `/recipes/${recipeId}/code.json?mode=view`;
+    return getJson(url).then(
+      (res) => {
+        if (res.status < 200 || res.status >= 300) {
+          return { error: `GET ${url} returned HTTP ${res.status}` };
+        }
+        const result = res.json && (res.json as any).result;
+        let tree: unknown = result;
+        if (typeof result === 'string') {
+          try {
+            tree = JSON.parse(result);
+          } catch (e) {
+            return {
+              error: `GET ${url}: JSON.parse of result failed: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            };
+          }
+        }
+        if (!tree || typeof tree !== 'object') {
+          return { error: `GET ${url}: unexpected shape, missing result` };
+        }
+        const providers: string[] = [];
+        collectProviders(tree, providers);
+        return { providers: providers };
+      },
+      (e) => ({ error: `GET ${url} failed: ${e instanceof Error ? e.message : String(e)}` }),
     );
   }
 
@@ -236,7 +303,14 @@ export function fetchRecipeConnectionsInPage(recipeId: number): Promise<RecipeCo
             }
           });
 
-    return Promise.all(connectionReads.concat([metaRead])).then(() => {
+    let stepProviders: string[] | undefined;
+    let codeError: string | undefined;
+    const codeRead = readStepProviders().then((res) => {
+      stepProviders = res.providers;
+      codeError = res.error;
+    });
+
+    return Promise.all(connectionReads.concat([metaRead, codeRead])).then(() => {
       const out: RecipeConnectionsRaw = {
         ok: true,
         recipe,
@@ -247,6 +321,8 @@ export function fetchRecipeConnectionsInPage(recipeId: number): Promise<RecipeCo
       };
       if (metaError !== undefined) out.meta_error = metaError;
       if (configParseError !== undefined) out.config_parse_error = configParseError;
+      if (stepProviders !== undefined) out.step_providers = stepProviders;
+      if (codeError !== undefined) out.code_error = codeError;
       return out;
     });
   });
@@ -256,7 +332,13 @@ export function fetchRecipeConnectionsInPage(recipeId: number): Promise<RecipeCo
 // Pure projection. No I/O, no Chrome APIs, unit-tested with fixtures.
 // ---------------------------------------------------------------------------
 
-export type ConnectionHealthStatus = 'ok' | 'lost' | 'missing' | 'not_required' | 'unknown';
+export type ConnectionHealthStatus =
+  | 'ok'
+  | 'lost'
+  | 'missing'
+  | 'not_required'
+  | 'unused'
+  | 'unknown';
 
 export interface RecipeConnectionHealth {
   provider: string;
@@ -296,6 +378,8 @@ export interface RecipeConnectionsPayload {
   config_parse_error?: string;
   /** Set when /integrations/meta could not be read, so connection_required is unknown. */
   meta_error?: string;
+  /** Set when the recipe code could not be read, so an unused binding cannot be told apart. */
+  code_error?: string;
 }
 
 /** Compact form for attaching to another tool's payload. */
@@ -344,6 +428,8 @@ export function projectRecipeConnections(raw: RecipeConnectionsRaw): RecipeConne
   const connections = raw.connections ?? {};
   const connectionErrors = raw.connection_errors ?? {};
   const metaRequired = raw.meta_required ?? {};
+  // Absent (code unreadable) means "cannot tell", which must not become "unused".
+  const stepProviders = raw.step_providers;
 
   const projected: RecipeConnectionHealth[] = entries.map((entry) => {
     const health: RecipeConnectionHealth = {
@@ -400,11 +486,29 @@ export function projectRecipeConnections(raw: RecipeConnectionsRaw): RecipeConne
     return health;
   });
 
+  // A binding no step uses cannot stop this recipe from running, whatever
+  // shape it is in. Typically left behind when the last step of a provider was
+  // removed and its config entry was not, which used to read as 'missing' and
+  // blocked a caller restart over a connection the recipe no longer needs. The
+  // health fields already read are kept: 'unused' explains the entry, it does
+  // not hide what is known about it.
+  if (stepProviders !== undefined) {
+    for (const entry of projected) {
+      if (stepProviders.includes(entry.provider)) continue;
+      entry.status = 'unused';
+      entry.error =
+        `no step in this recipe uses provider ${entry.provider}, so this config entry is left ` +
+        'over and does not block a start';
+    }
+  }
+
   const blocking: BlockingConnection[] = [];
   const actions: string[] = [];
 
   for (const entry of projected) {
-    if (entry.status === 'ok' || entry.status === 'not_required') continue;
+    if (entry.status === 'ok' || entry.status === 'not_required' || entry.status === 'unused') {
+      continue;
+    }
 
     if (entry.status === 'lost') {
       const why =
@@ -482,6 +586,7 @@ export function projectRecipeConnections(raw: RecipeConnectionsRaw): RecipeConne
   };
   if (raw.config_parse_error !== undefined) payload.config_parse_error = raw.config_parse_error;
   if (raw.meta_error !== undefined) payload.meta_error = raw.meta_error;
+  if (raw.code_error !== undefined) payload.code_error = raw.code_error;
   return payload;
 }
 
@@ -546,10 +651,13 @@ class WorkatoRecipeConnectionsTool extends BaseBrowserToolExecutor {
       }
 
       const payload = projectRecipeConnections(raw);
+      const unusedCount = payload.connections.filter((c) => c.status === 'unused').length;
+      const unusedNote =
+        unusedCount > 0 ? `, ${unusedCount} unused (no step uses them, not blocking)` : '';
       const headline = payload.healthy
-        ? `recipe ${payload.recipe_id} connections: all ${payload.connections.length} binding(s) usable`
+        ? `recipe ${payload.recipe_id} connections: all ${payload.connections.length} binding(s) usable${unusedNote}`
         : `recipe ${payload.recipe_id} connections: ${payload.blocking.length} of ` +
-          `${payload.connections.length} binding(s) block a start`;
+          `${payload.connections.length} binding(s) block a start${unusedNote}`;
 
       return {
         content: [
