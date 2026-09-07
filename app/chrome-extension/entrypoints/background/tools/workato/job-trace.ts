@@ -3,10 +3,14 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
 import {
+  applyTraceProjection,
   buildSlimTrace,
+  pickStepFields,
   stripSchemaNoise,
+  STEP_FIELDS,
   type RawMetaResponse,
   type RawLineDetailsResponse,
+  type TraceProjectionOptions,
 } from './slim-trace';
 
 interface JobTraceArgs {
@@ -23,6 +27,14 @@ interface JobTraceArgs {
    * [lines] or [line_range] selecting at most 20 steps.
    */
   detail?: 'summary' | 'full';
+  /** Nested paths to keep inside each step's input/output, e.g. ['body.items[].id']. */
+  paths?: string[];
+  /** 'keep' (default) or 'drop'. Drop removes undefined/null/''/{}/[] only. */
+  empty?: 'keep' | 'drop';
+  /** Arrays longer than this are previewed with their total. Default 20, 0 disables. */
+  max_items?: number;
+  /** Keys to keep on each returned step, e.g. ['adapter_name','output']. */
+  fields?: string[];
   /** In-page script timeout. Default 30000, clamped 10000–110000. Raise for huge traces. */
   timeout_ms?: number;
   tabId?: number;
@@ -146,6 +158,49 @@ class WorkatoJobTraceTool extends BaseBrowserToolExecutor {
         );
       }
 
+      // Projection: paths -> empty policy -> array previews. Applied to each
+      // step's input/output, never to the raw full:true responses.
+      let paths: string[] | null = null;
+      if (args.paths !== undefined) {
+        if (
+          !Array.isArray(args.paths) ||
+          args.paths.length === 0 ||
+          args.paths.some((p) => typeof p !== 'string' || p.trim() === '')
+        ) {
+          return createErrorResponse(
+            'Param [paths] must be a non-empty array of path strings, e.g. ' +
+              "['body.items[].id', 'headers.status'].",
+          );
+        }
+        paths = args.paths.map((p) => p.trim());
+      }
+      if (args.empty !== undefined && args.empty !== 'keep' && args.empty !== 'drop') {
+        return createErrorResponse("Param [empty] must be 'keep' or 'drop'.");
+      }
+      const maxItems =
+        typeof args.max_items === 'number' && Number.isFinite(args.max_items) && args.max_items >= 0
+          ? Math.floor(args.max_items)
+          : 20;
+      let stepFields: string[] | null = null;
+      if (args.fields !== undefined) {
+        if (!Array.isArray(args.fields) || args.fields.length === 0) {
+          return createErrorResponse('Param [fields] must be a non-empty array of step keys.');
+        }
+        for (const field of args.fields) {
+          if (typeof field !== 'string' || !STEP_FIELDS.includes(field)) {
+            return createErrorResponse(
+              `Unknown step field ${JSON.stringify(field)}. Allowed: ${STEP_FIELDS.join(', ')}.`,
+            );
+          }
+        }
+        stepFields = args.fields;
+      }
+      const projection: TraceProjectionOptions = {
+        paths,
+        empty: args.empty === 'drop' ? 'drop' : 'keep',
+        maxItems,
+      };
+
       const timeoutMs = Math.min(Math.max(args.timeout_ms ?? 30_000, 10_000), 110_000);
       const tab = await findWorkatoTab(args.tabId);
       const result = await runInWorkatoTab(tab.tabId, tracePageFn, [args.recipe_id, jobId], {
@@ -161,6 +216,13 @@ class WorkatoJobTraceTool extends BaseBrowserToolExecutor {
         );
       }
 
+      const projectionApplied = {
+        ...(paths ? { paths } : {}),
+        empty: projection.empty,
+        max_items: maxItems,
+        ...(stepFields ? { fields: stepFields } : {}),
+      };
+
       let payload: unknown;
       if (full) {
         payload = { job_id: jobId, meta: result.meta, line_details: result.lineDetails };
@@ -173,22 +235,28 @@ class WorkatoJobTraceTool extends BaseBrowserToolExecutor {
             `detail:'full' selection matched ${selected.length} steps — narrow [lines]/[line_range] to at most 20.`,
           );
         }
-        const slim = buildSlimTrace(jobId, result.meta!, result.lineDetails!);
-        payload = {
-          ...slim,
-          steps: selected.map((l) => ({
+        const slim = buildSlimTrace(jobId, result.meta!, result.lineDetails!, projection);
+        const steps = selected.map((l) => {
+          const step: Record<string, unknown> = {
             recipe_line_number: Number(l.recipe_line_number ?? -1),
             adapter_name: String(l.adapter_name ?? ''),
             adapter_operation: String(l.adapter_operation ?? ''),
-            input: stripSchemaNoise(l.input),
-            output: stripSchemaNoise(l.output),
-          })),
-        };
+            input: applyTraceProjection(stripSchemaNoise(l.input), projection),
+            output: applyTraceProjection(stripSchemaNoise(l.output), projection),
+          };
+          return stepFields ? pickStepFields(step, stepFields) : step;
+        });
+        payload = { ...slim, projection: projectionApplied, steps };
       } else {
-        const slim = buildSlimTrace(jobId, result.meta!, result.lineDetails!);
-        payload = hasSelection
-          ? { ...slim, steps: slim.steps.filter((s) => lineSelected(s.recipe_line_number)) }
-          : slim;
+        const slim = buildSlimTrace(jobId, result.meta!, result.lineDetails!, projection);
+        const steps = (
+          hasSelection ? slim.steps.filter((s) => lineSelected(s.recipe_line_number)) : slim.steps
+        ).map((step) =>
+          stepFields
+            ? pickStepFields(step as unknown as Record<string, unknown>, stepFields)
+            : step,
+        );
+        payload = { ...slim, projection: projectionApplied, steps };
       }
 
       return {
