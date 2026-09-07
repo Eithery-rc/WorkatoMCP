@@ -301,6 +301,23 @@ describe('truthful restart reporting', () => {
     expect(journal.status).toBe('done');
     expect(journal.recipes.find((r) => r.recipe_id === 111)!.restarted).toBe(false);
   });
+
+  test("a dependent's journal keeps the version it was at before the save", async () => {
+    const wk = makeWorkato({ running: { 111: true }, versions: { 111: 42, 999: 7 } });
+    const result = await handleWorkatoSaveWithDependentsCall(
+      'workato_recipe_save_with_dependents',
+      { recipe_id: 999, code: {}, dependent_recipe_ids: [111] },
+      wk.call,
+    );
+
+    // Captured once at preflight from workato_recipe_status, then carried
+    // through every later journal write: each stop and restart rewrites the
+    // record, and used to blank the version with it.
+    const journal = readOperation(parse(result).operation_id)!;
+    const dependent = journal.recipes.find((r) => r.recipe_id === 111)!;
+    expect(dependent.initial).toMatchObject({ running: true, version_no: 42 });
+    expect(dependent.restarted).toBe(true);
+  });
 });
 
 describe('save classification drives the restore', () => {
