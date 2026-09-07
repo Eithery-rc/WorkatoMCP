@@ -3,6 +3,7 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
 import { buildSlimConnection, type ConnectionListItem } from './slim-asset';
+import { stripConnectionSecrets } from './strip-secrets';
 
 interface SearchConnectionsArgs {
   text?: string;
@@ -199,8 +200,11 @@ class WorkatoSearchConnectionsTool extends BaseBrowserToolExecutor {
       }
 
       const raw = result.raw!.result!;
+      // full=true returns list items as Workato sent them, so they go through the
+      // same secret strip as the single-connection read: there is no path out of
+      // this tool that can carry credential material.
       const payload = full
-        ? raw
+        ? (stripConnectionSecrets(raw) as typeof raw)
         : {
             count: Number(raw.count ?? 0),
             page: Number(raw.page ?? page),
