@@ -90,6 +90,7 @@ export const TOOL_NAMES = {
     RECIPE_STEP_SEARCH: 'workato_recipe_step_search',
     RECIPE_CALLERS: 'workato_recipe_callers',
     SAVE_WITH_DEPENDENTS: 'workato_recipe_save_with_dependents',
+    OPERATION_STATUS: 'workato_operation_status',
     CALLABLE_SCHEMA_SET: 'workato_callable_schema_set',
     CALLER_BIND: 'workato_caller_bind',
     DATAPILL: 'workato_datapill',
@@ -2383,6 +2384,10 @@ export const TOOL_SCHEMAS: Tool[] = [
       'dependents. A discovery that comes back partial is reported as a warning, not hidden. If ' +
       'the save fails because more dependents are active than were listed, everything this call ' +
       'stopped is restarted and the mismatch is reported. ' +
+      'DURABLE: every response carries an operation_id; a client timeout does not lose the ' +
+      'operation. Read it with workato_operation_status, finish it with resume:true. A save that ' +
+      'persisted an INVALID or INCOMPLETE version is reported with its version and never has ' +
+      'callers restarted against it. Connections are checked before anything is stopped. ' +
       'For a callable with no callers, use workato_ui_save_recipe_code instead.',
     inputSchema: {
       type: 'object',
@@ -2435,7 +2440,24 @@ export const TOOL_SCHEMAS: Tool[] = [
         expected_base_version_no: {
           type: 'number',
           description:
-            'Optimistic lock: refuse if the recipe moved past this version since you pulled it.',
+            'Optimistic lock: refuse if the recipe moved past this version since you pulled it. ' +
+            "Defaults to the callee's current version, read before anything is stopped, so a " +
+            'retry after a timeout cannot create a second version.',
+        },
+        preflight_connections: {
+          type: 'boolean',
+          description:
+            'Check connection health (workato_recipe_connections) for the callee and every ' +
+            'running caller BEFORE stopping anything. Default true. A callee whose connections ' +
+            'are broken is still saved so it stays editable, but it is not restarted and its ' +
+            'callers are not restarted against it, with exact ids and reasons in the response.',
+        },
+        async: {
+          type: 'boolean',
+          description:
+            'Return {operation_id, phase} immediately and keep running in the bridge. Poll with ' +
+            'workato_operation_status(operation_id). Default false (the call waits, and its ' +
+            'response still carries operation_id).',
         },
         ensure_running: {
           type: 'boolean',
@@ -2456,6 +2478,61 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['recipe_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.OPERATION_STATUS,
+    description:
+      'Read back a journalled multi-recipe operation, and finish one that was interrupted. ' +
+      'workato_recipe_save_with_dependents stops several recipes, saves one and puts the others ' +
+      'back; every response carries an operation_id and the bridge writes each phase to disk ' +
+      'BEFORE the call it describes, so a client timeout or a bridge restart cannot lose which ' +
+      'production recipes are sitting stopped. ' +
+      'Pass operation_id for the full record (context, affected recipes with the state and ' +
+      'version they had BEFORE the operation, phases with timestamps, the save outcome, and the ' +
+      'reasons anything was left stopped). Pass list:true for the most recent operations. ' +
+      'refresh:true adds one live workato_recipe_status per affected recipe plus a drift list. ' +
+      'resume:true finishes the restore: it re-reads every recipe, restarts ONLY the ones that ' +
+      'were running before and only when the saved version is usable and the connections are ' +
+      'healthy, leaves previously stopped recipes stopped, reuses the journalled version lock so ' +
+      'a retried save answers already_applied instead of creating a duplicate version, and lists ' +
+      'exact ids and reasons for anything it will not do. It never rolls back over a version ' +
+      'somebody else saved. Journals are kept 7 days or 200 records, in the bridge that ran them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        operation_id: {
+          type: 'string',
+          description: 'The operation to read, from a save_with_dependents response.',
+        },
+        list: {
+          type: 'boolean',
+          description: 'List the most recent operations instead of reading one.',
+        },
+        limit: {
+          type: 'number',
+          description: 'How many operations to list. Default 10, max 50.',
+        },
+        refresh: {
+          type: 'boolean',
+          description:
+            'Read the live state of every affected recipe (one workato_recipe_status each) and ' +
+            'report how it drifted from the journal.',
+        },
+        resume: {
+          type: 'boolean',
+          description:
+            'Finish an interrupted operation. WRITES: it can start recipes and, when the save ' +
+            'outcome is unknown and the code came from code_path, re-issue the save under the ' +
+            'journalled lock.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID for refresh/resume. Omit to use the session pinned tab.',
+        },
+      },
+      required: [],
     },
   },
   {
