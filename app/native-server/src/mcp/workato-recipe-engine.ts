@@ -802,6 +802,8 @@ export interface ConfigMergeResult {
   added: string[];
   bound: string[];
   missing_binding: string[];
+  /** Entries dropped because no step uses them any more and they bind nothing. */
+  removed: string[];
   note?: string;
 }
 
@@ -833,15 +835,24 @@ export function collectProviders(code: unknown): string[] {
  * silently unbound both connections in the audit. Only `newProviders` (the
  * providers this call introduced) can be appended, and only an explicit
  * binding writes an `account_id`.
+ *
+ * `usedProviders` is the one exception, and only a removal passes it. Removing
+ * the last step of a provider leaves its entry behind with no account_id, and
+ * workato_recipe_connections then reports that provider as "missing" and blocks
+ * a caller restart over a connection the recipe no longer needs. Such an entry
+ * is dropped. An entry carrying an account_id is NEVER dropped: it is a real
+ * binding a human made, and it costs nothing to keep.
  */
 export function mergeRecipeConfig(
   existingConfig: unknown,
   newProviders: Iterable<string> = [],
   bindings: Map<string, unknown> = new Map(),
+  usedProviders: readonly string[] | null = null,
 ): ConfigMergeResult {
   const added: string[] = [];
   const bound: string[] = [];
   const missing: string[] = [];
+  const removed: string[] = [];
 
   if (existingConfig !== undefined && existingConfig !== null && !Array.isArray(existingConfig)) {
     // An unparseable config is passed straight back rather than replaced: a
@@ -851,6 +862,7 @@ export function mergeRecipeConfig(
       added,
       bound,
       missing_binding: missing,
+      removed,
       note: 'the recipe config could not be parsed as an array and was passed through unchanged',
     };
   }
@@ -889,6 +901,22 @@ export function mergeRecipeConfig(
     bound.push(provider);
   }
 
+  // Drop the leftovers of a removal. Anything this call just added or bound is
+  // exempt: it was asked for, whatever the tree says.
+  let kept = config;
+  if (usedProviders !== null) {
+    kept = config.filter((entry) => {
+      if (!isRecord(entry)) return true;
+      const provider = typeof entry.provider === 'string' ? entry.provider : '';
+      if (provider === '') return true;
+      if (usedProviders.includes(provider)) return true;
+      if (added.includes(provider) || bound.includes(provider)) return true;
+      if (entry.account_id !== undefined && entry.account_id !== null) return true;
+      removed.push(provider);
+      return false;
+    });
+  }
+
   for (const provider of added) {
     const entry = entryFor(provider);
     if (!entry || entry.account_id !== undefined) continue;
@@ -896,7 +924,7 @@ export function mergeRecipeConfig(
     missing.push(provider);
   }
 
-  return { config, added, bound, missing_binding: missing };
+  return { config: kept, added, bound, missing_binding: missing, removed };
 }
 
 // ---------------------------------------------------------------------------
@@ -1300,10 +1328,25 @@ export async function runRecipeMutation(
     );
   }
 
-  const merged = mergeRecipeConfig(parseConfig(version.config), newProviders, bindings);
+  // Only a removal can orphan a config entry. An insert or a move leaves the
+  // provider set the same or larger, so nothing is pruned on those paths.
+  const removedSteps = mutations.some((mutation) => mutation.kind === 'remove_step');
+  const merged = mergeRecipeConfig(
+    parseConfig(version.config),
+    newProviders,
+    bindings,
+    removedSteps ? collectProviders(code) : null,
+  );
   const configNotes: JsonObject = {};
   if (merged.added.length > 0) configNotes.added_providers = merged.added;
   if (merged.bound.length > 0) configNotes.bound_providers = merged.bound;
+  if (merged.removed.length > 0) {
+    configNotes.removed_providers = merged.removed;
+    notices.push(
+      `dropped ${merged.removed.length} config entry(ies) for ${merged.removed.join(', ')}: no ` +
+        'step uses those providers any more and they bind no connection',
+    );
+  }
   if (merged.missing_binding.length > 0) {
     configNotes.connection_binding = 'missing';
     configNotes.unbound_providers = merged.missing_binding;

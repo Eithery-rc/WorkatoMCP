@@ -699,6 +699,116 @@ describe('config merge', () => {
     expect(merged.config).toBe('not json');
     expect(merged.note).toContain('could not be parsed');
   });
+
+  test('nothing is pruned when no used-provider list is given', () => {
+    const merged = mergeRecipeConfig(auditConfig(), [], new Map());
+    expect(merged.removed).toEqual([]);
+    expect(merged.config).toEqual(auditConfig());
+  });
+
+  test('an account-less entry no step uses any more is dropped', () => {
+    const config = auditConfig().concat([
+      {
+        keyword: 'application',
+        name: 'salesforce_orphan',
+        provider: 'salesforce_orphan',
+        skip_validation: false,
+      } as any,
+    ]);
+    const merged = mergeRecipeConfig(config, [], new Map(), ['salesforce', 'netsuite', 'logger']);
+    expect(merged.removed).toEqual(['salesforce_orphan']);
+    expect((merged.config as any[]).map((e) => e.provider)).toEqual([
+      'salesforce',
+      'netsuite',
+      'logger',
+    ]);
+  });
+
+  test('a bound entry is kept even when no step uses it', () => {
+    // account_id is a binding a human made. Dropping it would silently unbind
+    // a connection, which is the failure mode the merge exists to prevent.
+    const merged = mergeRecipeConfig(auditConfig(), [], new Map(), ['logger']);
+    expect(merged.removed).toEqual([]);
+    expect((merged.config as any[]).map((e) => e.provider)).toEqual([
+      'salesforce',
+      'netsuite',
+      'logger',
+    ]);
+  });
+
+  test('an entry this call just added or bound is never pruned', () => {
+    const merged = mergeRecipeConfig([], ['jira'], new Map([['slack', null]]), []);
+    expect(merged.removed).toEqual([]);
+    expect((merged.config as any[]).map((e) => e.provider)).toEqual(['jira', 'slack']);
+  });
+});
+
+describe('remove_step config cleanup', () => {
+  /** The audit tree with the netsuite action gone: only logger and the trigger remain. */
+  const REMOVE_ARGS = {
+    recipe_id: 10,
+    changes: [{ op: 'remove_step', step: 'dddddddd', force: true }],
+  };
+
+  test('drops the config entry of a provider the removal orphaned', async () => {
+    const config = auditConfig().map((entry) =>
+      entry.provider === 'netsuite'
+        ? { keyword: 'application', name: 'netsuite', provider: 'netsuite', skip_validation: false }
+        : entry,
+    );
+    const { calls, caller } = makeCaller({ config });
+
+    const result = await handleWorkatoRecipeApplyCall('workato_recipe_apply', REMOVE_ARGS, caller);
+
+    expect(result.isError).toBe(false);
+    const saved = savedCall(calls)?.args.config as any[];
+    expect(saved.map((e) => e.provider)).toEqual(['salesforce', 'logger']);
+    expect(jsonOf(result).config.removed_providers).toEqual(['netsuite']);
+    expect((result.content[0] as any).text).toMatch(/dropped 1 config entry/);
+  });
+
+  test('keeps a bound entry the removal orphaned', async () => {
+    const { calls, caller } = makeCaller();
+
+    const result = await handleWorkatoRecipeApplyCall('workato_recipe_apply', REMOVE_ARGS, caller);
+
+    expect(result.isError).toBe(false);
+    const saved = savedCall(calls)?.args.config as any[];
+    expect(saved).toEqual(auditConfig());
+    expect(jsonOf(result).config?.removed_providers).toBeUndefined();
+  });
+
+  test('an insert leaves every config entry alone', async () => {
+    const config = auditConfig().concat([
+      {
+        keyword: 'application',
+        name: 'stale',
+        provider: 'stale',
+        skip_validation: false,
+      } as any,
+    ]);
+    const { calls, caller } = makeCaller({ config });
+
+    await handleWorkatoRecipeApplyCall(
+      'workato_recipe_apply',
+      {
+        recipe_id: 10,
+        changes: [
+          {
+            op: 'insert_step',
+            anchor: { after: 'bbbbbbbb' },
+            provider: 'logger',
+            action_name: 'log_message',
+            input: { message: 'x' },
+          },
+        ],
+      },
+      caller,
+    );
+
+    const saved = savedCall(calls)?.args.config as any[];
+    expect(saved.map((e) => e.provider)).toContain('stale');
+  });
 });
 
 describe('local tree validation', () => {
