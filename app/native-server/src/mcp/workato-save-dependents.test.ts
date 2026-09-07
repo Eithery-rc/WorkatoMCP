@@ -1,5 +1,8 @@
-import { describe, expect, test } from '@jest/globals';
+import { afterAll, describe, expect, test } from '@jest/globals';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 import {
   describeDependentCountMismatch,
@@ -9,6 +12,21 @@ import {
   readScanScope,
   treeCallsRecipe,
 } from './workato-save-dependents';
+import { resetOperationsDirCache } from './workato-operations';
+
+// Every orchestrator call now journals to disk; keep that out of the real
+// bridge state directory.
+const journalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wops-sd-'));
+process.env.WORKATOMCP_OPERATIONS_DIR = journalDir;
+resetOperationsDirCache();
+
+afterAll(() => {
+  try {
+    fs.rmSync(journalDir, { recursive: true, force: true });
+  } catch {
+    /* best effort */
+  }
+});
 
 const okText = (payload: unknown): CallToolResult => ({
   isError: false,
@@ -174,9 +192,20 @@ describe('handleWorkatoSaveWithDependentsCall', () => {
     expect(result.isError).toBe(false);
     const payload = parse(result);
     expect(payload.dependents).toEqual([
-      { id: 111, name: 'recipe 111', was_running: true, stopped: true, restarted: true },
+      {
+        id: 111,
+        name: 'recipe 111',
+        was_running: true,
+        stopped: true,
+        restarted: true,
+        // The fake's start reports no outcome, so the single status re-check
+        // is what proves the restart, exactly as it would against Workato.
+        restart_outcome: 'state_reached_after_recheck',
+        connections_healthy: null,
+      },
       { id: 222, name: 'recipe 222', was_running: false, stopped: false, restarted: null },
     ]);
+    expect(typeof payload.operation_id).toBe('string');
     // 222 was stopped before the call and must still be stopped after it.
     expect(wk.running[111]).toBe(true);
     expect(wk.running[222]).toBe(false);
@@ -327,9 +356,10 @@ describe('handleWorkatoSaveWithDependentsCall', () => {
     expect(payload.discovery).toBe('recipe_callers:folders(30573643):complete');
     expect(payload.discovery_completeness).toBe('complete');
     expect(payload.dependents.map((d: any) => d.id)).toEqual([111, 222]);
-    // One discovery call, not one pull per recipe in the folder.
+    // One discovery call up front plus one revalidation after the stops, not
+    // one pull per recipe in the folder.
     const discoveryCalls = wk.calls.filter((c) => c.name === 'workato_recipe_callers');
-    expect(discoveryCalls).toHaveLength(1);
+    expect(discoveryCalls).toHaveLength(2);
     expect(discoveryCalls[0].args.folder_ids).toEqual([30573643]);
     expect(wk.calls.some((c) => c.name === 'workato_pull_recipe')).toBe(false);
     // Prior state is restored: 111 was running, 222 was not.

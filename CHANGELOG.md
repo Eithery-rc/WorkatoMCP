@@ -47,46 +47,45 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 - **Writes verify the workspace before they act.** `workato_ui_save_recipe_code`, start/stop, non-GET `workato_api_request`, delete/rename/move/copy recipe check the target tab against the expected context and refuse with `ContextMismatch`, naming expected and actual, before anything is fetched or written.
 - **Recipe files record where they came from.** `workato_pull_recipe(out_file)` writes an `origin` block (pulled_at, profile, tab, host, workspace id and name, environment, folder). The push reads it back: a save into a different workspace is refused unless `allow_context_mismatch: true`.
 
+- **`workato_operation_status`**: a save that times out no longer loses the operation. `workato_recipe_save_with_dependents` stops several production callers, saves one callable and puts them back; each of those is a nested bridge call with a 120 s ceiling, and until now the list of what had been stopped lived only in a closure that died with the request. The whole sequence is now journalled to disk (one JSON file per operation in the bridge state directory, atomic writes, 200 records or 7 days), the phase is written BEFORE the call it describes so an interrupted call still leaves a trace, and every save response carries an `operation_id`. The tool reads that journal back locally, with no browser round trip: context, every affected recipe with the running state and version it had BEFORE the operation, phases with timestamps, the save outcome, and the reason anything was left stopped. `list: true` shows the recent operations, `refresh: true` adds one live `workato_recipe_status` per affected recipe plus a drift list.
+- **`workato_operation_status(resume: true)` finishes an interrupted restore.** It re-reads every affected recipe, restarts ONLY the ones that were running before the operation and only when the callee's saved version is usable and the connections are healthy, leaves recipes that were already stopped stopped, and lists exact ids and reasons for anything it will not do. When the save's own outcome is unknown it is re-issued under the `expected_base_version_no` the journal recorded before the stops, so Workato answers `already_applied` instead of creating a second version, and refuses outright if somebody else saved in between. It never rolls back over another editor's version. A code tree passed inline cannot be re-issued (the journal stores a path or a hash, never a tree), which the response says in those words.
+- **`workato_recipe_save_with_dependents(async: true)`** returns `{operation_id, phase}` immediately and keeps running in the bridge. The default stays synchronous, and its response carries the same `operation_id`.
+- **A connection preflight before anything is stopped.** `workato_recipe_save_with_dependents` now calls `workato_recipe_connections` for the callee and for every running caller it is about to restart. A callee whose connections are broken is still SAVED, because a disconnected connector must not make a recipe uneditable, but it is not restarted and no caller is restarted against it; the response names the connection ids and the reasons. A caller whose own connections are broken is left stopped with its reason rather than started into a failure. `preflight_connections: false` skips the checks.
+
 ### Changed
 
 - **`workato_start_recipe` and `workato_stop_recipe` report how far the call got.** Every response carries `outcome`: `state_reached` when the recipe reports the state that was asked for, `accepted` when Workato took the request and the end state is NOT verified, `failed` when Workato refused to activate the recipe. A start that never reached running used to come back as a success with `state_flipped: false` buried in the JSON, which reads as restored to anything checking `isError` alone.
-
-
 
 - `workato_recipe_add_step`'s `keyword` enum matches the code tree: `action`, `if`, `foreach`, `repeat`, `try`, `stop`. `repeat_each` and `return_result` were never keywords (a foreach is `foreach`, a return_result is an `action` named `return_result` on `workato_recipe_function`) and produced a malformed node with no `block`, `source` or `condition`. A `repeat` is built with its `while_condition` as the first child and a `try` with its `catch` last.
 - The three legacy mutators, plus `workato_recipe_delete_input_path`, `set_py_eval_code` and `set_extended_schema`, advertise the save modifiers their handler already forwarded: `expected_base_version_no`, `comment`, `verify_readback`, `restart_if_running`, `ensure_running`, and `dry_run` where it applies.
 - The three legacy mutators moved out of the Chrome extension into the bridge; `app/chrome-extension/entrypoints/background/tools/workato-recipe/` is deleted, so there is one implementation rather than two that drift.
 
-
-
 - **`workato_recipe_save_with_dependents` discovers callers instead of scanning one page of one folder.** `scan_folder_id` now runs `workato_recipe_callers` (one call, not one recipe pull per candidate) and keeps working unchanged; `scan_folder_ids`, `scan_project_id` and `scan_scope` widen the search to several folders, a project or the workspace. When discovery comes back partial, the save says so in its response instead of presenting the dependent list as complete.
 - The `active_dependent_recipes_count` cross-check now fires on a refused dependent stop as well as on a failed save, and compares Workato's count against the callers this call actually discovered and stopped, naming the gap as a warning.
 
-
-
 - **`workato_list_jobs` stops at the retention boundary.** Three consecutive erased jobs end the walk (`stop_on_erased: false` to continue), and the response says so. Verified across five recipes: the sweep is workspace-wide, not per recipe, so everything older than the boundary is erased too and scanning on spends pages for nothing.
 - **The `query` and `text` descriptions no longer promise searches Workato does not run.** `workato_list_jobs` claimed `query` was full-text over the job title AND error message; searching the error text of a retained failed job returns nothing. `workato_search_recipes` claimed `text` was a name substring match; it is a full-text search over name, description and the recipe's own action and trigger titles, which is why `ECO` answers with recipes whose steps say "New/updated records".
-
-
 
 - **Compact and outline keep what the recipe actually does.** The allowlist copied `input` and dropped every other node-root key, which silently lost `source`, `repeat_mode`, `clear_scope`, `batch_size` and `comment`: a compact view of a loop did not say what the loop iterated. All of them are kept now, the loop source appears in the step header too, and if/else/try/catch structure is unchanged. Outline gains `input_keys`, the top-level input keys of each step, in place of the input it drops.
 - **Long embedded values are previewed, not copied whole.** A compact recipe reached 94k characters because `list_item_schema_json`, `output_schema`, `code_output_schema_json`, sample documents and Python or SQL bodies were copied verbatim. Anything over 240 characters is now replaced by a marker that names the way back, `<<preview 240 of 9021 chars; path=input.code; read with step:"py01", paths:["input.code"]>>`, followed by the first 240 characters. `paths:[...]`, `include:["code"]` and `view:"full"` all return the value verbatim.
 - **`field_query` is now `fields`, and a filter no longer removes the limit.** The old parameter lifted the 60-item cap on `fields` and `available_datapills` while returning every mapping uncapped, so the broad search that most needed a bound was the one without one. A filter now narrows the lists inside `max_items` and the budget. `field_query` remains as an alias with the same behaviour, and its schema text no longer claims that a field is matched by `ref` (fields match name and label; a datapill matches ref and label).
 - `out_file` on `workato_pull_recipe` drops the new projection parameters along with `step` and `field_query`. The file gets the whole lossless tree, so a projection would either be ignored or cut what is written, and a partial recipe must not reach disk under a name that reads as complete.
 
-
-
 - **A file save defaults to the version it was pulled from.** `workato_ui_save_recipe_code(code_path)` sets `expected_base_version_no` from the file's `version_no` when the caller gives none, so a file edited yesterday can no longer overwrite today's version by omission. `ignore_file_version: true` is the deliberate override. A file whose `recipe_id` is not the recipe being saved is refused outright rather than written under the wrong id.
 - **A pinned profile is never routed around.** A failed call to a pinned profile is reported, naming that profile and the connected ones, instead of being re-sent to another profile or to the legacy native-messaging host. With no profile pinned the bridge default is still used, but a failure there is reported too. The stdio host stays reachable only when no Chrome profile is connected at all, and the response says that is what happened.
 - **A profile that reconnects is re-checked.** The registry now carries a generation counter; a pinned session re-reads its tab's context after any connect or disconnect and refuses the call with `ContextChanged` when the workspace or environment moved.
 - `resolveTabId` throws when an explicit tab is gone or is no longer a logged-in Workato app tab, instead of silently falling through to whatever other Workato tab is open. That fallthrough is how a save aimed at a closed pinned tab could land in another workspace.
 
+- **`workato_recipe_save_with_dependents` reads the lifecycle outcome instead of assuming it.** A restart is counted only when the start reports `state_reached`; an `accepted` start gets exactly one `workato_recipe_status` re-check and is then reported as FAILED, with the caller left stopped and named. The old helper checked `isError` alone, so a start that never reached running came back as "stopped and restored".
+- **A persisted-but-broken save is no longer described as "nothing changed".** `persisted_invalid` (a new version exists, Workato reports validation errors) and `persisted_incomplete` (a new version exists, Workato dropped input keys) are both reported with the version number and the errors or dropped paths, and neither restarts callers against the callee. Only a save that genuinely created no version restores the callers.
+- **The save carries a version lock taken before the stops.** `expected_base_version_no` now defaults to the callee's own version read during the preflight, so a retry after a timeout re-sends the same base version and cannot create a duplicate. An explicit value still wins.
+- **Dependents are revalidated after the stops.** When discovery was used and something was actually stopped, `workato_recipe_callers` runs once more; a caller that appeared in the meantime is stopped, restored with the rest, and reported as `late_discovered_caller_ids` rather than silently blocking the save.
+- **An interrupted nested call is reported as interrupted, not as a generic failure.** The response names the phase, the exact recipe ids whose state is unknown, and the `operation_id` to poll or resume; nothing is rolled back blindly on a transport that just failed to answer.
+
 ### Fixed
 
 - **`workato_call_action` no longer auto-retries a write.** The dispatcher retries once on a timeout, which is right for a read and doubles anything else: a timed-out `create_record` could be applied twice. The tool now passes `retryOnTimeout: false` whenever its own gate does not classify the action as read-only.
 - **`workato_search_connections(full: true)` strips secrets.** The slim shape whitelists fields, but the raw list items were returned as Workato sent them, the one path out of the connection tools that had no strip. It now runs `stripConnectionSecrets` like the single-connection read.
-
-
 
 - **The legacy mutators no longer unbind every connection in the recipe.** `workato_recipe_add_step`, `workato_recipe_set_step_input` and `workato_recipe_map_datapill` rebuilt the `config` array from the providers found in the code tree, which dropped `account_id` from every entry and reset `skip_validation`. Reproduced live in the audit: one added step silently unbound both Salesforce and NetSuite. All three now run through the engine, which MERGES the pulled config and only appends entries for a provider the recipe did not already use. A new provider gets its `account_id` when `connection_id` is given, and otherwise the response says `connection_binding: missing` rather than leaving a recipe that cannot start.
 - **`workato_recipe_add_step` renumbers the whole tree and can insert into a nested block.** It renumbered only the top-level block, so an insert at position 0 gave a nested step and a top-level step the same number; and any `after_step` inside a `foreach`/`if`/`try` returned "not found". Insertion now takes an `anchor` (`after` / `before` / `into` with `first` / `last`), keeps `elsif`/`else`/`catch` at the tail of their parent block and a `while_condition` first, and repairs numbering left broken by an earlier save.
@@ -94,23 +93,13 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 - **A save that Workato reports validation errors on no longer restarts the recipe.** The payload carries `save_status: 'persisted_invalid'`, the automatic restart is skipped, and the first line says the recipe is stopped rather than reading as a clean save.
 - **py_eval shadowing warnings from a whole-tree file save reach the response.** `workato-file-io.ts` computed them into `args.py_eval_warnings` and nothing ever read them; the save payload now carries `py_eval_warnings`.
 
-
-
-
 - **An erased job no longer looks like an empty one.** A job swept by data retention stays in the list with `erased: true`, `report: null` and no `error` key even when it failed, and the slim shape coerced its title and columns to `''`, so unavailable data and empty data serialized identically and a failed job appeared to have no error. The slim job now carries `erased`, `zero_retention`, `is_test` and, for a called job, `calling_recipe_id` / `calling_job_id`, and reports title and report as `null` when erased.
 - **`workato_recipe_step_search` no longer reports a failed page as the end of the list.** A non-first list page that returned an HTTP error fell through with an empty item array, ending the walk as though the workspace held nothing more, while `pages_scanned` still counted it. A mid-walk failure now sets `incomplete` with the reason.
 
-
-
-
 - **A `foreach` no longer disappears from the datapills a step may reference.** `collectUpstreamDatapills` required a `provider`, and a loop node has none, so the current loop item, the pill most often needed inside the loop, was never offered. Loop nodes now contribute `foreach.<as>`. Visibility is also structural rather than numeric when the target step is known: ancestors and their earlier siblings are upstream, later siblings and other branches are not.
-
-
-
 
 - **A screenshot is returned as an image, not as base64 inside a text block.** `storeBase64: true` used to serialize the whole capture into JSON text: expensive to carry, and no client renders it. `chrome_screenshot` and `chrome_computer` (`screenshot` and `zoom`) now return an MCP `image` block plus a small metadata block (tabId, url, name, width, height, mimeType, bytes, fileSaved, fullPath); the base64 payload never appears in text. The record-replay screenshot node and action handler read the image block.
 - **`storeBase64` and `savePng` compose.** `storeBase64: true` returned before the save branch, so a caller who asked for both got only the image and a `fileSaved: false` that was not true of the request. The schema also claimed `fullPage` defaults to true while the handler defaults it to false, and implied the two output flags were independent when they were not. Both descriptions now match the code.
-
 
 ## bridge 1.5.0 · shared 1.2.0 (2026-08-26)
 

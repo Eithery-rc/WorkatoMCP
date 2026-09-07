@@ -35,6 +35,7 @@ import {
   isWorkatoSaveWithDependentsTool,
 } from './workato-save-dependents';
 import { handleWorkatoDatapillCall, isWorkatoDatapillTool } from './workato-datapill';
+import { handleWorkatoOperationCall, isWorkatoOperationTool } from './workato-operation-status';
 import {
   applyAutoFile,
   prepareAutoFileCall,
@@ -729,7 +730,8 @@ export function createToolRouter(): ToolRouter {
       if (
         isWorkatoRecipeMutatorTool(name) ||
         isWorkatoCallableTool(name) ||
-        isWorkatoSaveWithDependentsTool(name)
+        isWorkatoSaveWithDependentsTool(name) ||
+        isWorkatoOperationTool(name)
       ) {
         const callExtension = async (
           toolName: string,
@@ -777,6 +779,10 @@ export function createToolRouter(): ToolRouter {
         if (isWorkatoCallableTool(name)) {
           return handleWorkatoCallableCall(name, effectiveArgs || {}, callExtension);
         }
+        // Journal reads happen in this process; only refresh/resume calls out.
+        if (isWorkatoOperationTool(name)) {
+          return handleWorkatoOperationCall(name, effectiveArgs || {}, callExtension);
+        }
         return handleWorkatoSaveWithDependentsCall(name, effectiveArgs || {}, callExtension);
       }
 
@@ -801,10 +807,7 @@ export function createToolRouter(): ToolRouter {
         // Single return path for a routed tool response: spill a large result
         // to disk first (the context block is kept out of the file), then stamp
         // the profile into the context block (only this side knows the name).
-        return stampContextBlock(
-          applyAutoFile(name, autoFilePlan, response.data),
-          routingProfile,
-        );
+        return stampContextBlock(applyAutoFile(name, autoFilePlan, response.data), routingProfile);
       } else {
         return {
           content: [
