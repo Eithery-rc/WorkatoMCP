@@ -1,6 +1,6 @@
 # Complex data types (hash / nested objects)
 
-Methods for working with hashes (Workato calls them objects) and nested data — including JSON / XML / CSV / URL conversion and nil-safety patterns when `&.` is unavailable.
+Methods for working with hashes (Workato calls them objects) and nested data (including JSON / XML / CSV / URL conversion and nil-safety patterns when `&.` is unavailable).
 
 ## Hash access
 
@@ -13,12 +13,12 @@ Index access on a hash datapill. Symbol and string keys are interchangeable insi
 
 ### `.dig("a", "b", "c")`
 
-Safe nested access — returns `nil` if any intermediate key is missing, instead of raising.
+Safe nested access , returns `nil` if any intermediate key is missing, instead of raising.
 
 - `response.dig("data", "user", "email")` → either the value or `nil`
 - Equivalent to (and replaces) `response["data"]["user"]["email"]` when intermediate keys may not exist
 
-**Gotcha**: `.dig` is the formula-mode replacement for `&.`-style traversal — use it freely for nil-safe lookups.
+**Gotcha**: `.dig` is the formula-mode replacement for `&.`-style traversal , use it freely for nil-safe lookups.
 
 ## Hash transformation
 
@@ -68,13 +68,13 @@ True if no keys. Equivalent to `.blank?` for hashes.
 
 - `users.pluck("email")` → array of email strings
 - `users.pluck("first_name", "last_name")` → array of `[first, last]` tuples
-- `users.pluck("address.city")` — **not supported**; pluck only accesses top-level keys. Use `.format_map("%{address.city}")` to drill into nested.
+- `users.pluck("address.city")`  is not supported: pluck only accesses top-level keys. Use `.format_map("%{address.city}")` to drill into nested.
 
 ## Serialization
 
 ### `.to_json`
 
-Hash → JSON string. Allowed at encode side; **parse is not** — there is no `JSON.parse` in formulas.
+Hash → JSON string. Allowed at encode side; **parse is not**  (there is no `JSON.parse` in formulas).
 
 - `{a: 1, b: [2, 3]}.to_json` → `'{"a":1,"b":[2,3]}'`
 
@@ -106,7 +106,7 @@ Array → CSV row. Not directly available on hash; use `.values.to_csv` for hash
 | From            | To               | Method                                       |
 | --------------- | ---------------- | -------------------------------------------- |
 | Hash            | JSON string      | `.to_json`                                   |
-| JSON string     | Hash             | **Not available** — use a JSON-parser action |
+| JSON string     | Hash             | **Not available**  (use a JSON-parser action) |
 | Hash            | XML string       | `.to_xml`                                    |
 | XML string      | Hash             | `.from_xml`                                  |
 | Hash            | URL-encoded form | `.to_param` / `.encode_www_form`             |
@@ -138,7 +138,7 @@ _dp("step.email").presence || "fallback@example.com"
 response.dig("user", "email") || "unknown"
 ```
 
-`.dig` already returns `nil` for missing keys — no need to guard each step.
+`.dig` already returns `nil` for missing keys , no need to guard each step.
 
 ### Boolean default
 

@@ -15,11 +15,11 @@ Methods for date / datetime datapills.
 
 ### `+ N.unit` / `- N.unit`
 
-Units: `seconds`, `minutes`, `hours`, `days`, `weeks`, `months`, `years`. Chainable.
+Units: `.seconds`, `.minutes`, `.hours`, `.days`, `.weeks`, `.months`, `.years`. Called on integers to define a `unit_of_time`, chainable.
 
-- `"2020-01-01".to_date + 2.days` → `"2020-01-03"`
-- `"2020-01-01".to_date - 2.months` → `"2019-11-01"`
-- `now + 8.hours + 2.days` → chained offset
+- `"2020-01-01".to_date + 2.days` -> `"2020-01-03"`
+- `"2020-01-01".to_date - 2.months` -> `"2019-11-01"`
+- `now + 8.hours + 2.days` -> chained offset
 
 ### `N.unit.from_now` / `N.unit.ago`
 
@@ -100,7 +100,18 @@ Convert to a named timezone (IANA). No arg → Pacific; `nil` → UTC.
 
 True if the datetime falls inside daylight savings.
 
-- `today.in_time_zone("America/New_York").dst?` → `true` in summer
+- `today.in_time_zone("America/New_York").dst?` -> `true` in summer
+
+### `.utc`
+
+Converts a datetime to UTC. For date inputs, convert with `.to_time` first.
+
+- **Operand types**: date_time
+- `now.utc` -> current time in UTC
+- `"2020-06-22T10:51:49-07:00".to_time.utc` -> `"2020-06-22 17:51:49 UTC"`
+- `"2020-06-22".to_time.utc` -> `"2020-06-22 00:00:00 UTC"`
+
+[Docs](https://docs.workato.com/formulas/date-formulas.html)
 
 ## Parsing
 

@@ -4,7 +4,7 @@ Methods that work on integer and float datapills.
 
 ## Arithmetic operators
 
-`+`, `-`, `*`, `/`, `**`, `%` — result type follows the most precise operand.
+`+`, `-`, `*`, `/`, `**`, `%` (see `operators-and-comparison.md`). Result type follows the most precise operand.
 
 - `4 + 7` → `11` (Fixnum)
 - `4.0 + 7` → `11.0` (Float)
@@ -13,7 +13,7 @@ Methods that work on integer and float datapills.
 - `5 ** 3` → `125`
 - `7 % 4` → `3`
 
-**Gotcha**: integer/integer is integer division — cast one side with `.to_f` for decimal results.
+**Gotcha**: integer/integer is integer division: cast one side with `.to_f` for decimal results.
 
 ## Absolute value / sign
 
@@ -68,7 +68,7 @@ Convert to float / integer. Non-numeric strings return `0`, not an error.
 - `"123".to_i` → `123`
 - `"Workato".to_i` → `0`
 
-**Gotcha**: silent `0` fallback hides parse errors — validate with `.match?(/^\d+(\.\d+)?$/)` if you need detection.
+**Gotcha**: silent `0` fallback hides parse errors: validate with `.match?(/^\d+(\.\d+)?$/)` if you need detection.
 
 ### `.to_s(format=nil)`
 
@@ -81,7 +81,7 @@ String form. For datetimes (not numbers) accepts `:short`, `:long`.
 
 ### `.to_currency(opts)`
 
-See string-formulas.md — same options. Works directly on numbers.
+See string-formulas.md (same options). Works directly on numbers.
 
 - `345.60.to_currency` → `"$345.60"`
 - `345.60.to_currency(unit: "€", precision: 2)` → `"€345.60"`
