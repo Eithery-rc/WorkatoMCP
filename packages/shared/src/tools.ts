@@ -2179,13 +2179,13 @@ export const TOOL_SCHEMAS: Tool[] = [
       'recipes as templates. workato_adapter_meta says what a field is called and what it ' +
       'accepts; it cannot say what a working value looks like: which datapill shape the team ' +
       'uses, which optional fields they always set, how they format an internal id. That only ' +
-      'exists in the recipes already running here, and this replaces the manual ' +
-      'search_recipes -> pull_recipe -> scroll loop. ' +
+      'exists in the recipes already running here. ' +
       'Scans the recipe list (every item already carries trigger_application and ' +
       'action_applications, so candidates are found without opening them), reads the code of the ' +
       'matches, and walks the tree at any depth so steps nested inside if / repeat_each / try ' +
-      'blocks are found too. Scope it with folder_ids (a list scan per folder, not recursive) or ' +
-      'skip the listing with recipe_ids; input_query keeps only steps whose serialized input ' +
+      'blocks are found too. Scope it with folder_ids (exact folder membership via the ' +
+      "dependency-graph listing, because Workato's recipe list ignores folder_id) or skip the " +
+      'listing with recipe_ids; input_query keeps only steps whose serialized input ' +
       'matches. Returns per hit: recipe_id, recipe_name, step_number, keyword, name, `as` anchor, ' +
       'description and the `input` block, or input_preview + input_chars past preview_chars. ' +
       'Connection secrets are stripped. `coverage` says whether the scan finished: a failed page, ' +
@@ -2214,8 +2214,9 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'array',
           items: { type: 'number' },
           description:
-            'Folders to scan, each non-recursive (Workato folder_id is exact). Omit to scan the ' +
-            'workspace list. Cannot be combined with recipe_ids.',
+            'Folders to scan, each non-recursive. Exact folder membership via the ' +
+            "dependency-graph listing; Workato's recipe list endpoint ignores folder_id. Omit to " +
+            'scan the workspace list. Cannot be combined with recipe_ids.',
         },
         recipe_ids: {
           type: 'array',
@@ -2282,7 +2283,9 @@ export const TOOL_SCHEMAS: Tool[] = [
       "'jobs' reads calling_recipe_id off recent jobs of this recipe, which is observed " +
       'EXECUTION HISTORY, never a complete dependency list. Default sources: graph + code. ' +
       "The code scan covers the recipe's own folder unless folder_ids, project_id or " +
-      "scope:'workspace' is given, and walks every page of every folder it scans. " +
+      "scope:'workspace' is given, and walks every page of the candidate list. A folder scope " +
+      "is exact: membership comes from Workato's dependency-graph listing, because the recipe " +
+      'list endpoint ignores folder_id. ' +
       'Returns callers[] (recipe_id, name, running, folder_id, step, sources, observed_at), ' +
       'callees, connections, lookup_tables, lcap_pages, unresolved_dynamic_targets, ' +
       "failed_reads, scope, freshness and completeness 'complete' | 'partial' with reasons. " +
@@ -2305,7 +2308,8 @@ export const TOOL_SCHEMAS: Tool[] = [
           items: { type: 'number' },
           description:
             'Folders the code scan reads (non-recursive per folder, so list subfolders too). ' +
-            'From workato_list_folders. Implies scope "folders".',
+            'From workato_list_folders. Implies scope "folders". Exact folder membership via the ' +
+            "dependency-graph listing; Workato's recipe list endpoint ignores folder_id.",
         },
         project_id: {
           type: 'string',
@@ -2414,12 +2418,16 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description:
             'Instead of a list: discover the callers in this folder with workato_recipe_callers ' +
-            '(dependency graph plus a paged code scan) and use them as the dependents.',
+            '(dependency graph plus a paged code scan) and use them as the dependents. Exact ' +
+            "folder membership via the dependency-graph listing; Workato's recipe list endpoint " +
+            'ignores folder_id.',
         },
         scan_folder_ids: {
           type: 'array',
           items: { type: 'number' },
-          description: 'Several folders to discover callers in. Same discovery as scan_folder_id.',
+          description:
+            'Several folders to discover callers in. Same discovery as scan_folder_id, same exact ' +
+            'folder membership.',
         },
         scan_project_id: {
           type: 'string',
@@ -3156,7 +3164,9 @@ export const TOOL_SCHEMAS: Tool[] = [
       'name_exact / name_regex, which walk pages and filter client-side, so bound them with ' +
       'folder_id, app or max_pages. Filters: app (adapter technical name; one name uses the ' +
       "server's adapters= filter, several are ANDed client-side), running (client-side; Workato " +
-      'ignores the server param), folder_id (exact folder, not recursive). Walks up to max_pages ' +
+      'ignores the server param), folder_id (exact folder, not recursive; membership comes from ' +
+      'the dependency-graph listing and the filter is client-side, because the list endpoint ' +
+      'ignores folder_id). Walks up to max_pages ' +
       '(default 5, max 50) of 20 and returns `coverage` {pages_scanned, recipes_scanned, matched, ' +
       'complete, next_page}: an incomplete scan says so instead of implying nothing else exists. ' +
       '`limit` caps the recipes returned (default 20). full=true returns the raw items. Requires ' +
@@ -3197,7 +3207,10 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         folder_id: {
           type: 'number',
-          description: 'Numeric folder id to scope the search. Exact folder, not recursive.',
+          description:
+            'Numeric folder id to scope the search. Exact folder, not recursive. Membership comes ' +
+            'from the dependency-graph listing and the filter is applied client-side, because ' +
+            "Workato's recipe list endpoint ignores folder_id.",
         },
         page: {
           type: 'number',

@@ -138,6 +138,12 @@ describe('searchRecipesInPage', () => {
       'fetch',
       vi.fn((url: string) => {
         urls.push(url);
+        if (url.startsWith('/dependency_graphs.json')) {
+          return Promise.resolve({
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify({ result: [[82145141, 'x']] })),
+          });
+        }
         return Promise.resolve({ status: 200, text: () => Promise.resolve(body([item()])) });
       }),
     );
@@ -150,11 +156,101 @@ describe('searchRecipesInPage', () => {
         keepHighlights: true,
       }),
     );
-    expect(urls[0]).toContain('asset_type=recipe');
-    expect(urls[0]).toContain('sort_term=relevance');
-    expect(urls[0]).toContain('text=ECO');
-    expect(urls[0]).toContain('folder_id=30945905');
-    expect(urls[0]).toContain('adapters=workato_recipe_function');
+    // The membership listing comes first; the recipe list follows it.
+    expect(urls[0]).toBe('/dependency_graphs.json?asset_type=recipe&folder_id=30945905');
+    expect(urls[1]).toContain('asset_type=recipe');
+    expect(urls[1]).toContain('sort_term=relevance');
+    expect(urls[1]).toContain('text=ECO');
+    expect(urls[1]).toContain('folder_id=30945905');
+    expect(urls[1]).toContain('adapters=workato_recipe_function');
+  });
+
+  it('keeps only the folder members the dependency-graph listing named', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        urls.push(url);
+        if (url.startsWith('/dependency_graphs.json')) {
+          return Promise.resolve({
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify({ result: [[82145141, 'In the folder']] })),
+          });
+        }
+        // Workato ignores folder_id here and answers with the workspace list.
+        return Promise.resolve({
+          status: 200,
+          text: () =>
+            Promise.resolve(
+              body([item(), item({ id: 77777777, name: 'Elsewhere', folder_id: 30573643 })]),
+            ),
+        });
+      }),
+    );
+
+    const result = await searchRecipesInPage(options({ folderId: 30945905 }));
+
+    expect(result.folder_filter).toBe('dependency_graph');
+    expect(result.folder_members).toBe(1);
+    expect(result.scanned_before_filter).toBe(2);
+    expect((result.items ?? []).map((i) => (i as Record<string, unknown>).id)).toEqual([82145141]);
+  });
+
+  it('stops the walk once every folder member has been seen', async () => {
+    const full = Array.from({ length: 20 }, (_, i) => item({ id: 1000 + i, folder_id: 30945905 }));
+    let listCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/dependency_graphs.json')) {
+          return Promise.resolve({
+            status: 200,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  result: [
+                    [1000, 'One'],
+                    [1001, 'Two'],
+                  ],
+                }),
+              ),
+          });
+        }
+        listCalls += 1;
+        return Promise.resolve({ status: 200, text: () => Promise.resolve(body(full, 200)) });
+      }),
+    );
+
+    const result = await searchRecipesInPage(options({ folderId: 30945905, maxPages: 50 }));
+
+    expect(listCalls).toBe(1);
+    expect(result.end_of_list).toBe(true);
+    expect(result.folder_members_seen).toBe(2);
+    expect((result.items ?? []).length).toBe(2);
+  });
+
+  it('falls back to item.folder_id when the membership listing cannot be read', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/dependency_graphs.json')) {
+          return Promise.resolve({ status: 500, text: () => Promise.resolve('boom') });
+        }
+        return Promise.resolve({
+          status: 200,
+          text: () =>
+            Promise.resolve(
+              body([item(), item({ id: 77777777, name: 'Elsewhere', folder_id: 30573643 })]),
+            ),
+        });
+      }),
+    );
+
+    const result = await searchRecipesInPage(options({ folderId: 30945905 }));
+
+    expect(result.folder_filter).toBe('item_folder_id');
+    expect(result.folder_membership_error).toMatch(/HTTP 500/);
+    expect((result.items ?? []).map((i) => (i as Record<string, unknown>).id)).toEqual([82145141]);
   });
 
   it('drops the per-character highlight noise when there is no text', async () => {

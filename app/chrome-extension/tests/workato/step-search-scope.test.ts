@@ -109,22 +109,85 @@ describe('fetchStepCandidatesInPage scope', () => {
     expect(result.candidates?.map((c) => c.recipe_id)).toEqual([101]);
   });
 
-  it('loops the folders it was given, one list scan each', async () => {
+  it('resolves each folder through the dependency-graph listing, never the recipe list', async () => {
     const { urls } = stubRoutes([
-      [/folder_id=30945905/, () => ({ status: 200, body: listBody([listItem(101)]) })],
-      [/folder_id=30573643/, () => ({ status: 200, body: listBody([listItem(202)]) })],
+      [
+        /dependency_graphs\.json\?asset_type=recipe&folder_id=30945905/,
+        () => ({ status: 200, body: JSON.stringify({ result: [[101, 'Recipe 101']] }) }),
+      ],
+      [
+        /dependency_graphs\.json\?asset_type=recipe&folder_id=30573643/,
+        () => ({ status: 200, body: JSON.stringify({ result: [[202, 'Recipe 202']] }) }),
+      ],
       [/code\.json/, () => ({ status: 200, body: codeBody(101) })],
     ]);
 
     const result = await fetchStepCandidatesInPage(options({ folderIds: [30945905, 30573643] }));
 
-    const listUrls = urls.filter((u) => u.includes('mixed_assets'));
-    expect(listUrls).toHaveLength(2);
-    expect(listUrls[0]).toContain('folder_id=30945905');
-    expect(listUrls[1]).toContain('folder_id=30573643');
+    const graphUrls = urls.filter((u) => u.includes('dependency_graphs.json'));
+    expect(graphUrls).toHaveLength(2);
+    expect(graphUrls[0]).toContain('folder_id=30945905');
+    expect(graphUrls[1]).toContain('folder_id=30573643');
+    // mixed_assets ignores folder_id, so a folder scope must not use it at all.
+    expect(urls.some((u) => u.includes('mixed_assets'))).toBe(false);
+    expect(result.membership_source).toBe('dependency_graph');
     expect(result.folders_scanned).toBe(2);
-    expect(result.pages_scanned).toBe(2);
-    expect(result.flagged).toBe(2);
+    expect(result.pages_scanned).toBe(0);
+    expect(result.folder_members).toBe(2);
+    expect(result.candidates?.map((c) => c.recipe_id)).toEqual([101, 202]);
+    expect(result.candidates?.map((c) => c.folder_id)).toEqual([30945905, 30573643]);
+  });
+
+  it('leaves out a recipe the folder-blind recipe list would have offered', async () => {
+    const { urls } = stubRoutes([
+      [
+        /dependency_graphs\.json/,
+        () => ({ status: 200, body: JSON.stringify({ result: [[101, 'Recipe 101']] }) }),
+      ],
+      // Workato answers folder_id=30573643 with recipes from four folders.
+      [
+        /mixed_assets/,
+        () => ({
+          status: 200,
+          body: listBody([listItem(101), listItem(777, { folder_id: 30945905 })]),
+        }),
+      ],
+      [/code\.json/, () => ({ status: 200, body: codeBody(101) })],
+    ]);
+
+    const result = await fetchStepCandidatesInPage(options({ folderIds: [30573643] }));
+
+    expect(urls.some((u) => u.includes('mixed_assets'))).toBe(false);
+    expect(result.candidates?.map((c) => c.recipe_id)).toEqual([101]);
+    expect(result.candidates?.map((c) => c.recipe_id)).not.toContain(777);
+  });
+
+  it('reports a folder whose membership listing failed as incomplete', async () => {
+    stubRoutes([
+      [
+        /dependency_graphs\.json\?asset_type=recipe&folder_id=30945905/,
+        () => ({ status: 200, body: JSON.stringify({ result: [[101, 'Recipe 101']] }) }),
+      ],
+      [/dependency_graphs\.json/, () => ({ status: 502, body: 'bad gateway' })],
+      [/code\.json/, () => ({ status: 200, body: codeBody(101) })],
+    ]);
+
+    const result = await fetchStepCandidatesInPage(options({ folderIds: [30945905, 30573643] }));
+
+    expect(result.ok).toBe(true);
+    expect(result.incomplete).toBe(true);
+    expect(result.incomplete_reason).toMatch(/HTTP 502/);
+    expect(result.candidates?.map((c) => c.recipe_id)).toEqual([101]);
+  });
+
+  it('fails outright when no folder membership could be listed at all', async () => {
+    stubRoutes([[/dependency_graphs\.json/, () => ({ status: 500, body: 'boom' })]]);
+
+    const result = await fetchStepCandidatesInPage(options({ folderIds: [30945905] }));
+
+    expect(result.ok).toBe(false);
+    expect(result.failure?.stage).toBe('list');
+    expect(result.failure?.message).toMatch(/HTTP 500/);
   });
 
   it('reads recipe_ids directly and never touches the recipe list', async () => {

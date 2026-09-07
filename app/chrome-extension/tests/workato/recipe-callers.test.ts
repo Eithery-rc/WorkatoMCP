@@ -31,6 +31,8 @@ import {
 } from '@/entrypoints/background/tools/workato/recipe-callers';
 
 const CALLEE = 999;
+/** A recipe in a folder that is NOT in scope, listed by the folder-blind endpoint. */
+const FOREIGN = 401;
 
 /** A call_recipe step, in the shape /recipes/<id>/code.json returns. */
 function callStep(
@@ -70,6 +72,7 @@ const CODE: Record<number, Record<string, unknown>> = {
   201: nestedRecipe(callStep(String(CALLEE), 'dddd4444', 1, true)),
   202: nestedRecipe(callStep(String(CALLEE), 'eeee5555', 4)),
   301: nestedRecipe(callStep(String(CALLEE), 'ffff6666', 1)),
+  [FOREIGN]: nestedRecipe(callStep(String(CALLEE), 'ffff7777', 1)),
   [CALLEE]: nestedRecipe(callStep('888', '11112222', 5)),
 };
 
@@ -80,14 +83,44 @@ const NAMES: Record<number, string> = {
   201: 'Process time entries',
   202: 'Nightly reconciliation',
   301: 'Payment milestone sync',
+  [FOREIGN]: 'Caller in another folder',
   [CALLEE]: 'Time Journal Engine (callable)',
 };
 
-/** folder -> pages of recipe ids, per_page 2 so page 2 is reachable in a fixture. */
-const FOLDER_PAGES: Record<number, number[][]> = {
-  10: [[101, 102], [103]],
-  20: [[201, 202]],
-  30: [[301, CALLEE]],
+/**
+ * Exact folder membership, as GET
+ * /dependency_graphs.json?asset_type=recipe&folder_id=<id> reports it. This is
+ * the ONLY endpoint that scopes by folder: mixed_assets.json accepts folder_id
+ * and ignores it, which is why the workspace listing below is folder-blind.
+ */
+const FOLDER_MEMBERS: Record<number, number[]> = {
+  10: [101, 102, 103],
+  20: [201, 202],
+  30: [301, CALLEE],
+  40: [FOREIGN],
+};
+
+/**
+ * The workspace recipe listing, per_page 2, exactly as Workato answers it for
+ * any folder_id: every recipe-function recipe of the workspace, including
+ * FOREIGN, which lives in folder 40 and calls the callee but is out of scope.
+ */
+const WORKSPACE_PAGES: number[][] = [
+  [101, 102],
+  [103, 201],
+  [202, 301],
+  [CALLEE, FOREIGN],
+];
+
+const FOLDER_OF: Record<number, number> = {
+  101: 10,
+  102: 10,
+  103: 10,
+  201: 20,
+  202: 20,
+  301: 30,
+  [CALLEE]: 30,
+  [FOREIGN]: 40,
 };
 
 function listItem(id: number, folderId: number): Record<string, unknown> {
@@ -156,6 +189,8 @@ interface StubOptions {
   codeStatus?: Record<number, number>;
   graphStatus?: number;
   jobs?: Array<Record<string, unknown>>;
+  /** HTTP status for the folder membership listing, to prove a failure is reported. */
+  membershipStatus?: number;
 }
 
 function stubFetch(options: StubOptions = {}) {
@@ -175,13 +210,22 @@ function stubFetch(options: StubOptions = {}) {
       return respond(200, { result: GRAPH });
     }
 
-    if (url.startsWith('/web_api/mixed_assets.json')) {
+    if (url.startsWith('/dependency_graphs.json')) {
+      if (options.membershipStatus && options.membershipStatus >= 300) {
+        return respond(options.membershipStatus, '{"error":"nope"}');
+      }
       const params = new URLSearchParams(url.slice(url.indexOf('?') + 1));
       const folderId = Number(params.get('folder_id'));
+      const members = FOLDER_MEMBERS[folderId] ?? [];
+      return respond(200, { result: members.map((id) => [id, NAMES[id]]) });
+    }
+
+    if (url.startsWith('/web_api/mixed_assets.json')) {
+      // Workato ignores folder_id here: every page is the workspace list.
+      const params = new URLSearchParams(url.slice(url.indexOf('?') + 1));
       const page = Number(params.get('page'));
-      const pages = FOLDER_PAGES[folderId] ?? [];
-      const items = (pages[page - 1] ?? []).map((id) => listItem(id, folderId));
-      const count = pages.reduce((total, p) => total + p.length, 0);
+      const items = (WORKSPACE_PAGES[page - 1] ?? []).map((id) => listItem(id, FOLDER_OF[id]));
+      const count = WORKSPACE_PAGES.reduce((total, p) => total + p.length, 0);
       return respond(200, { result: { items, count, page, per_page: 2 } });
     }
 
@@ -262,7 +306,7 @@ afterEach(() => {
 });
 
 describe('fetchCallerScanInPage', () => {
-  it('walks every page of every folder, reaching the caller on page 2', async () => {
+  it('walks every page of the listing, reaching the caller on page 2', async () => {
     const { scan, urls } = await scanAndRead();
 
     expect(scan.ok).toBe(true);
@@ -276,13 +320,41 @@ describe('fetchCallerScanInPage', () => {
       301,
       CALLEE,
     ]);
-    // Folder 10 has three recipes at per_page 2: page 1 is not the end of it.
-    expect(urls).toContain(
-      '/web_api/mixed_assets.json?asset_type=recipe&adapters=workato_recipe_function' +
-        '&sort_term=name&per_page=20&page=2&folder_id=10',
-    );
-    // A folder whose count is satisfied on page 1 is not paged again.
-    expect(urls.some((u) => u.includes('page=2&folder_id=20'))).toBe(false);
+    // 103 is only on page 2: a scan that stops at page 1 loses that caller.
+    expect(urls.some((u) => u.includes('mixed_assets.json') && u.includes('page=2'))).toBe(true);
+  });
+
+  it('resolves folder membership through the dependency-graph listing', async () => {
+    const { scan, urls } = await scanAndRead();
+
+    expect(scan.membership_source).toBe('dependency_graph');
+    expect(scan.folder_members).toBe(7);
+    for (const folderId of [10, 20, 30]) {
+      expect(urls).toContain(`/dependency_graphs.json?asset_type=recipe&folder_id=${folderId}`);
+    }
+    // folder_id on the recipe list endpoint is ignored by Workato, so it is
+    // not sent: sending it would imply a scope the response does not have.
+    const listings = urls.filter((u) => u.startsWith('/web_api/mixed_assets.json'));
+    expect(listings.length).toBeGreaterThan(0);
+    for (const url of listings) expect(url).not.toContain('folder_id=');
+  });
+
+  it('drops a listed recipe that belongs to a folder outside the scope', async () => {
+    const { scan, candidates } = await scanAndRead();
+
+    // FOREIGN calls the callee and the folder-blind listing returns it, but it
+    // lives in folder 40, which the scope never asked for.
+    expect(WORKSPACE_PAGES.flat()).toContain(FOREIGN);
+    expect(candidates.map((c) => c.id)).not.toContain(FOREIGN);
+    expect(scan.recipes_listed).toBe(7);
+  });
+
+  it('reports a folder whose membership could not be listed', async () => {
+    const { scan } = await scanAndRead({ membershipStatus: 500 });
+    expect(scan.ok).toBe(true);
+    expect(scan.listing_complete).toBe(false);
+    expect((scan.listing_errors ?? []).join(' ')).toMatch(/HTTP 500/);
+    expect(scan.candidates).toEqual([]);
   });
 
   it('filters the listing to recipe-function recipes server-side', async () => {

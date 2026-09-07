@@ -22,9 +22,17 @@ import { stripConnectionSecrets } from './strip-secrets';
  * the full list — so the filter is applied client-side against those fields,
  * which is exact.)
  *
- * Scope: workspace-wide by default, one or more folders with folder_ids
- * (server-supported and non-recursive), or an explicit recipe_ids list that
- * skips the listing entirely.
+ * Scope: workspace-wide by default, one or more folders with folder_ids, or an
+ * explicit recipe_ids list that skips the listing entirely.
+ *
+ * FOLDER SCOPE IS NOT SERVER-SIDE. /web_api/mixed_assets.json silently ignores
+ * folder_id (verified 2026-09-07: folder_id=30573643 answered with 20 recipes
+ * spread over four folders), and so do folder_ids[], fid and project_id. The
+ * only exact membership list is GET
+ * /dependency_graphs.json?asset_type=recipe&folder_id=<id>, which answers
+ * {"result":[[recipe_id,"name"], ...]}. A folder scope therefore resolves
+ * membership there and reads the code of exactly those recipes; the provider
+ * filter is then the code read itself, not the list's app metadata.
  *
  * Returned `input` blocks are templates, not values to copy blindly: they
  * carry datapills bound to THAT recipe's steps. Connection secrets are
@@ -36,7 +44,7 @@ interface StepSearchArgs {
   provider: string;
   /** Optional action/trigger name, e.g. "send_mail". Matches step.name exactly (case-insensitive). */
   action?: string;
-  /** Folders to scan, non-recursive. Omit to scan the workspace list. */
+  /** Folders to scan, non-recursive. Membership comes from the dependency-graph listing. */
   folder_ids?: number[];
   /** Read exactly these recipes and skip the listing entirely. */
   recipe_ids?: number[];
@@ -91,6 +99,14 @@ export interface StepSearchWalkResult {
   incomplete_reason?: string;
   /** True when max_pages stopped a scope while its list still had full pages. */
   pages_truncated?: boolean;
+  /** True when max_recipes stopped the code reads with candidates still queued. */
+  recipes_capped?: boolean;
+  /** How the candidate set was decided. */
+  membership_source?: 'dependency_graph' | 'workspace_list' | 'recipe_ids';
+  /** Recipes the dependency-graph listing reported for the scoped folders. */
+  folder_members?: number;
+  /** Per folder, why its membership listing could not be read. */
+  membership_errors?: string[];
   failure?: { stage: 'list' | 'code' | 'shape'; status?: number; message: string };
 }
 
@@ -121,8 +137,77 @@ export function fetchStepCandidatesInPage(
     pages: 0,
     incomplete: false,
     pagesTruncated: false,
+    recipesCapped: false,
     reason: undefined as string | undefined,
   };
+
+  /**
+   * Exact membership of one folder.
+   *
+   * The recipe list endpoint ignores folder_id, so this top-level dependency
+   * graph listing is the only answer to "which recipes live in this folder".
+   * It needs the XMLHttpRequest header and answers
+   * {"result":[[recipe_id,"name"], ...]}.
+   */
+  function folderMembers(
+    folderId: number,
+  ): Promise<{ rows: Record<string, unknown>[]; error?: string }> {
+    const url = `/dependency_graphs.json?asset_type=recipe&folder_id=${folderId}`;
+    return fetch(url, fetchOpts).then(
+      (r) =>
+        r.text().then((body) => {
+          if (r.status < 200 || r.status >= 300) {
+            return { rows: [], error: `GET ${url} returned HTTP ${r.status}` };
+          }
+          try {
+            const json = JSON.parse(body) as { result?: unknown };
+            const list = Array.isArray(json.result) ? json.result : [];
+            const rows: Record<string, unknown>[] = [];
+            for (let i = 0; i < list.length; i++) {
+              const row = list[i];
+              if (!Array.isArray(row)) continue;
+              const id = Number(row[0]);
+              if (!Number.isFinite(id)) continue;
+              rows.push({
+                id: id,
+                name: row[1] == null ? '' : String(row[1]),
+                folder_id: folderId,
+              });
+            }
+            return { rows: rows };
+          } catch (e) {
+            return {
+              rows: [],
+              error: `GET ${url}: JSON.parse failed: ${e instanceof Error ? e.message : String(e)}`,
+            };
+          }
+        }),
+      (e) => ({
+        rows: [],
+        error: `GET ${url} failed: ${e instanceof Error ? e.message : String(e)}`,
+      }),
+    );
+  }
+
+  /** Union of the membership of every scoped folder, de-duplicated by recipe id. */
+  function collectMembers(
+    index: number,
+    acc: Record<string, unknown>[],
+    seen: Record<string, boolean>,
+    errors: string[],
+  ): Promise<{ members: Record<string, unknown>[]; errors: string[] }> {
+    if (index >= folderIds.length) return Promise.resolve({ members: acc, errors: errors });
+    return folderMembers(folderIds[index]).then((res) => {
+      if (res.error) errors.push(res.error);
+      for (let i = 0; i < res.rows.length; i++) {
+        const key = String(res.rows[i].id);
+        if (seen[key]) continue;
+        seen[key] = true;
+        acc.push(res.rows[i]);
+      }
+      return collectMembers(index + 1, acc, seen, errors);
+    });
+  }
 
   function listPage(
     page: number,
@@ -186,21 +271,13 @@ export function fetchStepCandidatesInPage(
     });
   }
 
-  function collectScopes(
-    index: number,
-    flagged: Record<string, unknown>[],
-  ): Promise<{ flagged: Record<string, unknown>[]; fatal?: string }> {
-    if (folderIds.length === 0) {
-      return collectFolderPages(1, 0, null, flagged).then((res) => ({
-        flagged: flagged,
-        fatal: res.fatal,
-      }));
-    }
-    if (index >= folderIds.length) return Promise.resolve({ flagged: flagged });
-    return collectFolderPages(1, 0, folderIds[index], flagged).then((res) => {
-      if (res.fatal) return { flagged: flagged, fatal: res.fatal };
-      return collectScopes(index + 1, flagged);
-    });
+  /** Workspace scope only: the list's own app metadata is the candidate filter. */
+  function collectWorkspace(): Promise<{ flagged: Record<string, unknown>[]; fatal?: string }> {
+    const flagged: Record<string, unknown>[] = [];
+    return collectFolderPages(1, 0, null, flagged).then((res) => ({
+      flagged: flagged,
+      fatal: res.fatal,
+    }));
   }
 
   function fetchCode(item: Record<string, unknown>): Promise<CandidateCode | null> {
@@ -262,7 +339,11 @@ export function fetchStepCandidatesInPage(
     index: number,
     acc: CandidateCode[],
   ): Promise<CandidateCode[]> {
-    if (index >= queue.length || acc.length >= maxRecipes) return Promise.resolve(acc);
+    if (acc.length >= maxRecipes) {
+      if (index < queue.length) state.recipesCapped = true;
+      return Promise.resolve(acc);
+    }
+    if (index >= queue.length) return Promise.resolve(acc);
     return fetchCode(queue[index]).then((hit) => {
       if (hit) acc.push(hit);
       return walkCandidates(queue, index + 1, acc);
@@ -287,10 +368,39 @@ export function fetchStepCandidatesInPage(
       pages_scanned: 0,
       recipes_requested: recipeIds.length,
       incomplete: false,
+      membership_source: 'recipe_ids' as const,
     }));
   }
 
-  return collectScopes(0, []).then((listed) => {
+  if (folderIds.length > 0) {
+    return collectMembers(0, [], {}, []).then((listed) => {
+      if (listed.members.length === 0 && listed.errors.length > 0) {
+        return {
+          ok: false,
+          failure: { stage: 'list' as const, message: listed.errors.join('; ') },
+        };
+      }
+      return walkCandidates(listed.members, 0, []).then((candidates) => ({
+        ok: true,
+        candidates: candidates,
+        flagged: listed.members.length,
+        folder_members: listed.members.length,
+        pages_scanned: 0,
+        folders_scanned: folderIds.length,
+        incomplete: listed.errors.length > 0,
+        incomplete_reason:
+          listed.errors.length > 0
+            ? `folder membership could not be listed for every folder: ${listed.errors.join('; ')}`
+            : undefined,
+        pages_truncated: false,
+        recipes_capped: state.recipesCapped,
+        membership_source: 'dependency_graph' as const,
+        membership_errors: listed.errors,
+      }));
+    });
+  }
+
+  return collectWorkspace().then((listed) => {
     if (listed.fatal && listed.flagged.length === 0) {
       return { ok: false, failure: { stage: 'list' as const, message: listed.fatal } };
     }
@@ -299,10 +409,12 @@ export function fetchStepCandidatesInPage(
       candidates: candidates,
       flagged: listed.flagged.length,
       pages_scanned: state.pages,
-      folders_scanned: folderIds.length,
+      folders_scanned: 0,
       incomplete: state.incomplete,
       incomplete_reason: state.reason,
       pages_truncated: state.pagesTruncated,
+      recipes_capped: state.recipesCapped,
+      membership_source: 'workspace_list' as const,
     }));
   });
 }
@@ -580,8 +692,9 @@ class WorkatoRecipeStepSearchTool extends BaseBrowserToolExecutor {
       }
 
       const flagged = result.flagged ?? 0;
-      const truncatedByMaxRecipes = recipeIds.length === 0 && flagged > candidates.length;
+      const truncatedByMaxRecipes = result.recipes_capped === true;
       const pagesTruncated = result.pages_truncated === true;
+      const membershipSource = result.membership_source ?? 'workspace_list';
       const payload: Record<string, unknown> = {
         provider,
         ...(action === null ? {} : { action }),
@@ -593,10 +706,15 @@ class WorkatoRecipeStepSearchTool extends BaseBrowserToolExecutor {
         pages_scanned: result.pages_scanned ?? 0,
         scope:
           recipeIds.length > 0
-            ? { recipe_ids: recipeIds }
+            ? { recipe_ids: recipeIds, membership: membershipSource }
             : folderIds.length > 0
-              ? { folder_ids: folderIds, recursive: false }
-              : { workspace: true },
+              ? {
+                  folder_ids: folderIds,
+                  recursive: false,
+                  membership: membershipSource,
+                  folder_members: result.folder_members ?? 0,
+                }
+              : { workspace: true, membership: membershipSource },
         coverage: {
           complete:
             result.incomplete !== true &&
@@ -608,26 +726,45 @@ class WorkatoRecipeStepSearchTool extends BaseBrowserToolExecutor {
             : pagesTruncated
               ? `max_pages=${maxPages} stopped the list scan before the end of the list`
               : truncatedByMaxRecipes
-                ? `max_recipes=${maxRecipes} stopped the read after ${candidates.length} of ${flagged} flagged recipes`
+                ? `max_recipes=${maxRecipes} stopped the read after ${candidates.length} of ${flagged} candidate recipes`
                 : hits.length >= limit
                   ? `limit=${limit} was filled; more steps may exist`
                   : undefined,
+          ...(folderIds.length > 0
+            ? {
+                folder_membership:
+                  'Workato ignores folder_id on /web_api/mixed_assets.json, so folder membership ' +
+                  'came from GET /dependency_graphs.json?asset_type=recipe&folder_id=<id> and the ' +
+                  'provider filter was applied by reading each member recipe.',
+              }
+            : {}),
         },
         steps: hits,
       };
 
       if (hits.length === 0) {
+        const scannedLabel =
+          folderIds.length > 0
+            ? `the ${result.folder_members ?? 0} recipe(s) of folder(s) ${folderIds.join(', ')}`
+            : recipeIds.length > 0
+              ? `the ${recipeIds.length} recipe(s) requested`
+              : `the ${result.pages_scanned ?? 0} page(s) scanned`;
         payload.hint =
           flagged === 0
-            ? `No recipe in the ${result.pages_scanned ?? 0} page(s) scanned uses ` +
-              `"${provider}". This connector may simply never have been used here — that is not an ` +
+            ? `No recipe in ${scannedLabel} uses ` +
+              `"${provider}". This connector may simply never have been used here, that is not an ` +
               'error, and workato_adapter_meta still describes it in full. Raise max_pages, or ' +
               'widen folder_ids, if the scope scanned was smaller than the workspace.'
-            : `${flagged} recipe(s) are tagged with "${provider}" but no step matched` +
-              (action === null
-                ? '. The tag can come from the trigger app alone.'
-                : ` action "${action}". Call again without [action] to see which of its operations ARE used here.`) +
-              (inputQuery === null ? '' : ` input_query "${inputQuery}" also had to match.`);
+            : folderIds.length > 0
+              ? `${flagged} recipe(s) live in folder(s) ${folderIds.join(', ')} but none has a ` +
+                `step for "${provider}"` +
+                (action === null ? '.' : ` with action "${action}".`) +
+                (inputQuery === null ? '' : ` input_query "${inputQuery}" also had to match.`)
+              : `${flagged} recipe(s) are tagged with "${provider}" but no step matched` +
+                (action === null
+                  ? '. The tag can come from the trigger app alone.'
+                  : ` action "${action}". Call again without [action] to see which of its operations ARE used here.`) +
+                (inputQuery === null ? '' : ` input_query "${inputQuery}" also had to match.`);
       }
 
       return { content: [{ type: 'text', text: JSON.stringify(payload) }], isError: false };
