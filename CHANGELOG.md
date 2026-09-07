@@ -38,6 +38,9 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 - **Every list has a limit, a total and a cursor.** `max_items` (default 60, hard maximum 500) and `budget_chars` (default 12000 for a step view, 60000 for compact and outline) apply to every list in the response, including the compact step tree. A list cut by either is cut at an item boundary, says `truncated: true`, and carries a `next_cursor` that continues without repeats. Exact `paths` reads are exempt: a lossless read stays lossless.
 - **A version-pinned snapshot cache in the service worker.** Metadata is fetched first and the code is then requested for that exact version (`code.json?mode=view&version_no=<n>`), so the two halves of the answer describe the same snapshot. A second read of the same version skips the code fetch and reports `cache_hit: true`. The cache is bounded (32 entries, 20 MB) and keyed by tab host, recipe and version, so a stale entry cannot be served: its key simply stops matching. `invalidateRecipeSnapshot(recipeId)` drops a recipe eagerly from a write path.
 
+- **A generic `out_file` and an auto-file mode for large read results.** Only `workato_pull_recipe`, `workato_lcap_page_get`, `workato_api_request` and `workato_adapter_meta` had a way out of the context: everything else returned its whole payload, so a broad job trace or step search was paid for in tokens. Every Workato read tool (jobs, traces, recipe and step search, callers, grep, connections, apps, pick lists, queries, actions, lookup and data tables) plus `chrome_screenshot` now serves `out_file`, `auto_file` and `auto_file_threshold_chars`. With `out_file` the full text goes to that path; with `auto_file` (on by default for read tools) it goes to a per-session file under the temp directory once the result passes 60,000 characters. What comes back is a summary: `saved_to`, `bytes`, `content_type`, `version_no`, the top-level keys, the item count of each array, and any truncation flags the payload carried, copied verbatim so a partial result cannot read as complete. Nothing is written for a failed call, and the four tools that already own an `out_file` hook keep their exact behaviour.
+- **`chrome_screenshot(out_file)`** writes the decoded image bytes to a path of your choosing, unlike `savePng` which can only reach Chrome's Downloads folder. The image block still comes back inline unless `no_inline` is set.
+
 ### Changed
 
 - **`workato_start_recipe` and `workato_stop_recipe` report how far the call got.** Every response carries `outcome`: `state_reached` when the recipe reports the state that was asked for, `accepted` when Workato took the request and the end state is NOT verified, `failed` when Workato refused to activate the recipe. A start that never reached running used to come back as a success with `state_flipped: false` buried in the JSON, which reads as restored to anything checking `isError` alone.
@@ -88,6 +91,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 
 - **A `foreach` no longer disappears from the datapills a step may reference.** `collectUpstreamDatapills` required a `provider`, and a loop node has none, so the current loop item, the pill most often needed inside the loop, was never offered. Loop nodes now contribute `foreach.<as>`. Visibility is also structural rather than numeric when the target step is known: ancestors and their earlier siblings are upstream, later siblings and other branches are not.
+
+
+
+
+- **A screenshot is returned as an image, not as base64 inside a text block.** `storeBase64: true` used to serialize the whole capture into JSON text: expensive to carry, and no client renders it. `chrome_screenshot` and `chrome_computer` (`screenshot` and `zoom`) now return an MCP `image` block plus a small metadata block (tabId, url, name, width, height, mimeType, bytes, fileSaved, fullPath); the base64 payload never appears in text. The record-replay screenshot node and action handler read the image block.
+- **`storeBase64` and `savePng` compose.** `storeBase64: true` returned before the save branch, so a caller who asked for both got only the image and a `fileSaved: false` that was not true of the request. The schema also claimed `fullPage` defaults to true while the handler defaults it to false, and implied the two output flags were independent when they were not. Both descriptions now match the code.
 
 
 ## bridge 1.5.0 · shared 1.2.0 (2026-08-26)
