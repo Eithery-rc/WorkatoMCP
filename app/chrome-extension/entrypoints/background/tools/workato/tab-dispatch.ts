@@ -97,7 +97,25 @@ function toWorkatoTabInfo(tab: ScriptableTab): WorkatoTabInfo {
   return { tabId: tab.id, host: url.host, origin: url.origin };
 }
 
-export async function findWorkatoTab(tabId?: number): Promise<WorkatoTabInfo> {
+/** Extra ways of narrowing the search when no explicit `tabId` is given. */
+export interface FindWorkatoTabOptions {
+  /**
+   * Restrict discovery to one Chrome window. Used by callers that were handed
+   * a windowId instead of a tabId: without it a two-window session picks the
+   * first Workato tab Chrome reports, which may be the wrong workspace.
+   *
+   * An explicit `tabId` always wins. When a windowId is given and that window
+   * holds no logged-in Workato app tab, this THROWS rather than falling back
+   * to another window: silently retargeting is the drift this whole guard
+   * exists to prevent.
+   */
+  windowId?: number;
+}
+
+export async function findWorkatoTab(
+  tabId?: number,
+  options: FindWorkatoTabOptions = {},
+): Promise<WorkatoTabInfo> {
   if (typeof tabId === 'number') {
     let tab: chrome.tabs.Tab;
     try {
@@ -132,6 +150,26 @@ export async function findWorkatoTab(tabId?: number): Promise<WorkatoTabInfo> {
     }
 
     return toWorkatoTabInfo(tab);
+  }
+
+  if (typeof options.windowId === 'number') {
+    const windowTabs = await chrome.tabs.query({
+      windowId: options.windowId,
+      url: WORKATO_URL_PATTERNS,
+    });
+    const match = windowTabs
+      .filter(isScriptableTab)
+      .find((t) => isWorkatoAppHost(new URL(t.url).host));
+    if (!match) {
+      throw new WorkatoDispatchError(
+        'TabNotFound',
+        `No logged-in Workato app tab in window ${options.windowId}. Open https://app.workato.com there, ` +
+          'or pass tabId.',
+        { windowId: options.windowId },
+      );
+    }
+    // Re-resolve through the tabId branch so the same validation runs.
+    return findWorkatoTab(match.id);
   }
 
   const tabs = await chrome.tabs.query({ url: WORKATO_URL_PATTERNS });
