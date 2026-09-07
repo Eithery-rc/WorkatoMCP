@@ -199,8 +199,19 @@ export function prepareWorkatoCall(name: string, rawArgs: Record<string, unknown
     }
     const args: Record<string, unknown> = { ...rawArgs };
     delete args.out_file;
+    // The file gets the whole lossless tree, so every projection param would
+    // either be ignored or cut what is written. Drop them all rather than
+    // writing a partial recipe under a name that reads as complete.
     delete args.step;
+    delete args.steps;
     delete args.field_query;
+    delete args.fields;
+    delete args.include;
+    delete args.paths;
+    delete args.max_items;
+    delete args.budget_chars;
+    delete args.cursor;
+    delete args.if_version;
     args.view = 'full'; // need the lossless tree to write the file
     return { args, pullOutFile: outFile };
   }
