@@ -2,9 +2,11 @@ import { describe, expect, test } from '@jest/globals';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import {
+  describeDependentCountMismatch,
   handleWorkatoSaveWithDependentsCall,
   isWorkatoSaveWithDependentsTool,
   parseActiveDependentCount,
+  readScanScope,
   treeCallsRecipe,
 } from './workato-save-dependents';
 
@@ -108,6 +110,58 @@ describe('parseActiveDependentCount', () => {
   });
 });
 
+describe('readScanScope', () => {
+  test('keeps the original single-folder argument working', () => {
+    expect(readScanScope({ scan_folder_id: 30573643 })).toEqual({
+      folder_ids: [30573643],
+      project_id: undefined,
+      scope: undefined,
+    });
+  });
+
+  test('merges scan_folder_id into scan_folder_ids without duplicating it', () => {
+    expect(readScanScope({ scan_folder_id: 10, scan_folder_ids: [10, 20] })?.folder_ids).toEqual([
+      10, 20,
+    ]);
+  });
+
+  test('accepts a project or workspace scope on its own', () => {
+    expect(readScanScope({ scan_project_id: '15842038' })).toEqual({
+      folder_ids: [],
+      project_id: '15842038',
+      scope: undefined,
+    });
+    expect(readScanScope({ scan_scope: 'workspace' })?.scope).toBe('workspace');
+  });
+
+  test('is null when no scope was asked for', () => {
+    expect(readScanScope({ recipe_id: 1 })).toBeNull();
+    expect(readScanScope({ scan_scope: 'nonsense' })).toBeNull();
+  });
+});
+
+describe('describeDependentCountMismatch', () => {
+  test('warns when Workato counts more active dependents than were discovered', () => {
+    const note = describeDependentCountMismatch(
+      'Workato: {"active_dependent_recipes_count":[3]}',
+      [111],
+      1,
+      'recipe_callers:folders(30573643):complete',
+    );
+    expect(note).toMatch(/WARNING/);
+    expect(note).toMatch(/3 dependent recipe\(s\) still ACTIVE/);
+    expect(note).toMatch(/discovered 1 caller\(s\) \(\[111\]\)/);
+    expect(note).toMatch(/recipe_callers:folders\(30573643\):complete/);
+  });
+
+  test('says nothing when Workato reported no count', () => {
+    expect(describeDependentCountMismatch('some other error', [111], 1, 'explicit')).toBe('');
+    expect(
+      describeDependentCountMismatch('active_dependent_recipes_count: 0', [111], 1, 'explicit'),
+    ).toBe('');
+  });
+});
+
 describe('handleWorkatoSaveWithDependentsCall', () => {
   test('stops running dependents, saves, and restores prior state', async () => {
     const wk = makeWorkato({ running: { 111: true, 222: false } });
@@ -141,6 +195,8 @@ describe('handleWorkatoSaveWithDependentsCall', () => {
     expect(text).toMatch(/no way to determine which recipes call 999/);
     expect(text).toMatch(/dependent_recipe_ids/);
     expect(text).toMatch(/scan_folder_id/);
+    expect(text).toMatch(/scan_scope/);
+    expect(text).toMatch(/workato_recipe_callers/);
     // Nothing was saved on the refusal path.
     expect(wk.calls.some((c) => c.name === 'workato_ui_save_recipe_code')).toBe(false);
   });
@@ -158,7 +214,10 @@ describe('handleWorkatoSaveWithDependentsCall', () => {
 
     expect(result.isError).toBe(true);
     const text = (result.content[0] as any).text;
-    expect(text).toMatch(/2 dependent recipe\(s\) still ACTIVE, but only 1 were known/);
+    expect(text).toMatch(/WARNING: Workato reports 2 dependent recipe\(s\) still ACTIVE/);
+    expect(text).toMatch(
+      /discovered 1 caller\(s\) \(\[111\]\) and stopped the 1 that were running/,
+    );
     expect(wk.running[111]).toBe(true); // put back
   });
 
@@ -187,47 +246,172 @@ describe('handleWorkatoSaveWithDependentsCall', () => {
     expect((result.content[0] as any).text).toMatch(/could not read status of dependent 111/);
   });
 
-  test('discovers dependents by folder scan when asked', async () => {
+  /**
+   * The discovery fixture is the real workato_recipe_callers response shape:
+   * a summary line, then the payload with `callers`, `scope` and
+   * `completeness`. The old fixture stubbed workato_search_recipes with an
+   * `items[]` key the slim tool never returned.
+   */
+  function makeDiscovering(
+    callers: any[],
+    completeness: 'complete' | 'partial' = 'complete',
+    reasons: string[] = [],
+    scope: any = { mode: 'folders', folder_ids: [30573643], complete: completeness === 'complete' },
+  ) {
     const calls: Array<{ name: string; args: any }> = [];
+    const running: Record<number, boolean> = {};
+    for (const caller of callers) running[caller.recipe_id] = caller.running === true;
+
     const call = async (name: string, args: any): Promise<CallToolResult> => {
       calls.push({ name, args });
-      if (name === 'workato_search_recipes') {
-        return okText({ items: [{ id: 111 }, { id: 222 }, { id: 999 }] });
+      if (name === 'workato_recipe_callers') {
+        return {
+          isError: false,
+          content: [
+            {
+              type: 'text',
+              text:
+                `${callers.length} caller(s) of recipe ${args.recipe_id}\n` +
+                JSON.stringify({
+                  recipe_id: args.recipe_id,
+                  sources: ['graph', 'code'],
+                  callers,
+                  unresolved_dynamic_targets: [],
+                  failed_reads: [],
+                  scope,
+                  completeness,
+                  completeness_reasons: reasons,
+                }),
+            },
+          ],
+        };
       }
-      if (name === 'workato_pull_recipe') {
-        const callsTarget = args.recipe_id === 111;
+      if (name === 'workato_recipe_status') {
         return okText({
-          code: callsTarget
-            ? {
-                keyword: 'action',
-                provider: 'workato_recipe_function',
-                name: 'call_recipe',
-                input: { flow_id: '999' },
-              }
-            : { keyword: 'action', provider: 'salesforce', name: 'search' },
+          recipe_id: args.recipe_id,
+          name: `recipe ${args.recipe_id}`,
+          running: running[args.recipe_id] === true,
+          version_no: 3,
         });
       }
-      if (name === 'workato_recipe_status') return okText({ running: false, name: 'r' });
+      if (name === 'workato_stop_recipe') {
+        running[args.recipe_id] = false;
+        return okText({ recipe_id: args.recipe_id, action: 'stop' });
+      }
+      if (name === 'workato_start_recipe') {
+        running[args.recipe_id] = true;
+        return okText({ recipe_id: args.recipe_id, action: 'start' });
+      }
       if (name === 'workato_ui_save_recipe_code') {
         return okText({ recipe_id: 999, version_no: 2, code_errors: [] });
       }
       return okText({});
     };
+    return { call, calls, running };
+  }
+
+  test('discovers dependents through workato_recipe_callers when a folder is given', async () => {
+    const wk = makeDiscovering([
+      { recipe_id: 111, name: 'Get Time Entries', running: true, sources: ['graph', 'code'] },
+      { recipe_id: 222, name: 'Export time entries', running: false, sources: ['code'] },
+    ]);
 
     const result = await handleWorkatoSaveWithDependentsCall(
       'workato_recipe_save_with_dependents',
       { recipe_id: 999, code: {}, scan_folder_id: 30573643 },
-      call,
+      wk.call,
     );
 
     expect(result.isError).toBe(false);
     const payload = parse(result);
-    expect(payload.discovery).toBe('folder_scan:30573643');
-    expect(payload.dependents.map((d: any) => d.id)).toEqual([111]);
-    // The callee itself is never treated as its own dependent.
-    expect(
-      calls.filter((c) => c.name === 'workato_pull_recipe').map((c) => c.args.recipe_id),
-    ).toEqual([111, 222]);
+    expect(payload.discovery).toBe('recipe_callers:folders(30573643):complete');
+    expect(payload.discovery_completeness).toBe('complete');
+    expect(payload.dependents.map((d: any) => d.id)).toEqual([111, 222]);
+    // One discovery call, not one pull per recipe in the folder.
+    const discoveryCalls = wk.calls.filter((c) => c.name === 'workato_recipe_callers');
+    expect(discoveryCalls).toHaveLength(1);
+    expect(discoveryCalls[0].args.folder_ids).toEqual([30573643]);
+    expect(wk.calls.some((c) => c.name === 'workato_pull_recipe')).toBe(false);
+    // Prior state is restored: 111 was running, 222 was not.
+    expect(wk.running[111]).toBe(true);
+    expect(wk.running[222]).toBe(false);
+  });
+
+  test('maps the wider scan arguments onto the discovery call', async () => {
+    const wk = makeDiscovering([], 'complete', [], {
+      mode: 'workspace',
+      folder_ids: [],
+      complete: true,
+    });
+    await handleWorkatoSaveWithDependentsCall(
+      'workato_recipe_save_with_dependents',
+      {
+        recipe_id: 999,
+        code: {},
+        scan_folder_ids: [10, 20],
+        scan_project_id: '15842038',
+        scan_scope: 'workspace',
+      },
+      wk.call,
+    );
+    const args = wk.calls.find((c) => c.name === 'workato_recipe_callers')!.args;
+    expect(args.folder_ids).toEqual([10, 20]);
+    expect(args.project_id).toBe('15842038');
+    expect(args.scope).toBe('workspace');
+    expect(args.sources).toEqual(['graph', 'code']);
+  });
+
+  test('a partial discovery is reported as a warning, not smoothed over', async () => {
+    const wk = makeDiscovering(
+      [{ recipe_id: 111, name: 'Get Time Entries', running: true, sources: ['graph'] }],
+      'partial',
+      ['2 recipe(s) could not be read'],
+    );
+
+    const result = await handleWorkatoSaveWithDependentsCall(
+      'workato_recipe_save_with_dependents',
+      { recipe_id: 999, code: {}, scan_folder_id: 30573643 },
+      wk.call,
+    );
+
+    expect(result.isError).toBe(false);
+    const text = (result.content[0] as any).text;
+    expect(text).toMatch(/caller discovery was PARTIAL/);
+    const payload = parse(result);
+    expect(payload.discovery_completeness).toBe('partial');
+    expect(payload.discovery_reasons).toEqual(['2 recipe(s) could not be read']);
+  });
+
+  test('a discovery failure aborts instead of saving as if there were no callers', async () => {
+    const calls: Array<{ name: string; args: any }> = [];
+    const call = async (name: string, args: any): Promise<CallToolResult> => {
+      calls.push({ name, args });
+      if (name === 'workato_recipe_callers') return errText('TabNotFound: no Workato tab');
+      return okText({});
+    };
+
+    const result = await handleWorkatoSaveWithDependentsCall(
+      'workato_recipe_save_with_dependents',
+      { recipe_id: 999, code: {}, scan_scope: 'workspace' },
+      call,
+    );
+
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as any).text).toMatch(/TabNotFound/);
+    expect(calls.some((c) => c.name === 'workato_ui_save_recipe_code')).toBe(false);
+  });
+
+  test('the callee is never treated as its own dependent', async () => {
+    const wk = makeDiscovering([
+      { recipe_id: 999, name: 'itself', running: true, sources: ['graph'] },
+      { recipe_id: 111, name: 'Get Time Entries', running: false, sources: ['code'] },
+    ]);
+    const result = await handleWorkatoSaveWithDependentsCall(
+      'workato_recipe_save_with_dependents',
+      { recipe_id: 999, code: {}, scan_folder_id: 30573643 },
+      wk.call,
+    );
+    expect(parse(result).dependents.map((d: any) => d.id)).toEqual([111]);
   });
 
   test('requires a code payload and a numeric recipe id', async () => {
