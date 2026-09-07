@@ -41,6 +41,9 @@ const EXECUTE_SCRIPT_TIMEOUT_MS = 30_000;
  *   - 'UnexpectedShape' — in-page script returned a value whose JSON shape
  *     does not match what the tool expected. Throw from the tool layer after
  *     inspecting the in-page result. Not thrown by this module.
+ *   - 'ContextMismatch': the tab is a valid Workato app tab, but its session
+ *     resolves to a different workspace/environment than the call expects.
+ *     Thrown by assertTabContext (session-context.ts). Not thrown here.
  */
 export class WorkatoDispatchError extends Error {
   constructor(
@@ -48,7 +51,8 @@ export class WorkatoDispatchError extends Error {
       | 'TabNotFound'
       | 'MultipleWorkatoHosts'
       | 'ScriptExecutionFailed'
-      | 'UnexpectedShape',
+      | 'UnexpectedShape'
+      | 'ContextMismatch',
     message: string,
     public details?: Record<string, unknown>,
   ) {
