@@ -12,6 +12,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import { compilePythonSource, describePyEvalFailure } from './workato-pyeval-lint';
 import { handleWorkatoRecipeApplyCall, isRecipeApplyTool } from './workato-recipe-apply';
+import { handleWorkatoRecipeValidateCall, isRecipeValidateTool } from './workato-recipe-validate';
 import {
   applyDeleteInput,
   applySetExtendedSchema,
@@ -102,6 +103,11 @@ export async function handleWorkatoRecipeMutatorCall(
   // The batch tool and the three legacy names share one implementation.
   if (isRecipeApplyTool(name)) {
     return handleWorkatoRecipeApplyCall(name, args, callExtension);
+  }
+  // Routed through the same branch because it needs the engine and the
+  // filesystem, but it reads only: no save tool is ever called from here.
+  if (isRecipeValidateTool(name)) {
+    return handleWorkatoRecipeValidateCall(name, args, callExtension);
   }
 
   try {
