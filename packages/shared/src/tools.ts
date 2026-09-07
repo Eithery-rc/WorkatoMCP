@@ -64,6 +64,7 @@ export const TOOL_NAMES = {
     VERSION_DIFF: 'workato_recipe_version_diff',
     JOB_TRACE: 'workato_job_trace',
     REPEAT_JOB: 'workato_repeat_job',
+    TEST_RECIPE: 'workato_test_recipe',
     SEARCH_RECIPES: 'workato_search_recipes',
     SEARCH_CONNECTIONS: 'workato_search_connections',
     GET_CONNECTION: 'workato_get_connection',
@@ -2923,6 +2924,74 @@ export const TOOL_SCHEMAS: Tool[] = [
     },
   },
   {
+    name: TOOL_NAMES.WORKATO.TEST_RECIPE,
+    description:
+      'Run a Workato recipe Test, with trigger input where Workato supports it. The supported ' +
+      'alternative to a throwaway recipe plus the browser Test button. The mode ' +
+      'comes from the trigger: input (workato_recipe_function: trigger_input becomes ' +
+      "trigger_event.parameters and is checked against the trigger's declared parameters), " +
+      'immediate (clock/scheduler, takes no trigger_input), waiting (webhook or ' +
+      "workato_pub_sub: the test arms and waits for a real event; end it with action:'stop'), " +
+      'unsupported (any other trigger; nothing is sent). A test EXECUTES the real steps, so ' +
+      'allow_writes:true is required when the recipe binds a connection-backed provider (a ' +
+      'config entry with account_id); connectionless recipes (logger, workato_variable, ' +
+      'workato_pub_sub, clock, py_eval) run without it. The recipe is not started and stays ' +
+      'stopped (stop_reason test_run_stop). Workato returns no job id, so this polls the ' +
+      'test-job list: with wait (default true) it returns the finished job, or status ' +
+      '"pending" with the elapsed time when the wait runs out, never a guessed result. Read ' +
+      'the job with workato_job_trace(recipe_id, job_id). Publishing to an Event Streams topic ' +
+      'has no API: the only supported path is test-running a recipe with a workato_pub_sub ' +
+      'publish_to_topic step, input {topic_id, message} plus a matching extended_input_schema. ' +
+      'workato_call_action cannot run a connectionless adapter: its endpoint needs a real ' +
+      "connection id. action:'status' reports flow.testing and the newest test job.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: {
+          type: 'number',
+          description: 'Numeric Workato recipe id to test.',
+        },
+        action: {
+          type: 'string',
+          enum: ['run', 'stop', 'status'],
+          description:
+            "'run' (default) starts one test, 'stop' ends a waiting webhook/pub_sub test, 'status' reads flow.testing and the newest test job.",
+          default: 'run',
+        },
+        trigger_input: {
+          type: 'object',
+          description:
+            "Trigger data for a workato_recipe_function trigger; sent as trigger_event.parameters. Keys must match the trigger's parameters_schema_json (unknown or missing required keys are refused before anything is sent). Rejected for every other trigger type.",
+        },
+        allow_writes: {
+          type: 'boolean',
+          description:
+            'Required (true) when the recipe binds any connection-backed provider, because the test executes its real steps against those systems. Default false.',
+          default: false,
+        },
+        wait: {
+          type: 'boolean',
+          description:
+            'Poll the test-job list until the job finishes. Default true. Ignored for a waiting trigger, which produces no job until a real event arrives.',
+          default: true,
+        },
+        wait_timeout_ms: {
+          type: 'number',
+          description:
+            'Max time to wait for the test job to finish. Default 60000, clamped 2000 to 110000. On timeout the response carries status "pending" and the elapsed time.',
+          minimum: 2000,
+          maximum: 110000,
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['recipe_id'],
+    },
+  },
+  {
     name: TOOL_NAMES.WORKATO.RUN_QUERY,
     description:
       'Run a SQL-style query (SOQL, SuiteQL, or SQL) against any Workato ' +
@@ -3009,7 +3078,11 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Omitting output_schema/limit makes Workato introspect the full object ' +
       'schema and the call usually times out (which looks like a wrong input ' +
       'shape but is not). Prefer workato_run_query(type:"soql") when you just ' +
-      'need rows; call_action is for when you need the raw action behavior.',
+      'need rows; call_action is for when you need the raw action behavior.' +
+      '\n\nconnection_id must be a real connection id: an adapter name (logger, ' +
+      'workato_pub_sub) is rejected by the endpoint, so a connectionless step ' +
+      'can only be executed by test-running a recipe that contains it, via ' +
+      'workato_test_recipe.',
     inputSchema: {
       type: 'object',
       properties: {
