@@ -1,6 +1,6 @@
 # Tool reference
 
-94 Workato tools, plus the 32 browser-automation tools inherited from the upstream project: 126 schemas in total.
+95 Workato tools, plus the 32 browser-automation tools inherited from the upstream project: 127 schemas in total.
 
 The authoritative definitions live in [`packages/shared/src/tools.ts`](../packages/shared/src/tools.ts). This document is written from them. If the two ever disagree, the schema wins. `workato_bridge_info` reports the `tool_count` and `schema_revision` the running build actually serves, which is the way to tell a stale install from a documentation error.
 
@@ -18,6 +18,7 @@ Everything else is covered by unit tests only. Where a specific claim was not re
 - [Search and connections](#search-and-connections)
 - [Connector execution and discovery](#connector-execution-and-discovery)
 - [Projects and folders](#projects-and-folders)
+- [Properties](#properties)
 - [Code-side recipe editing](#code-side-recipe-editing)
 - [Recipe editor UI](#recipe-editor-ui)
 - [Lookup tables](#lookup-tables)
@@ -462,6 +463,28 @@ The escape hatch for endpoints no dedicated tool covers. Same-origin only: `path
 Note the asymmetry: `workato_update_project` takes the project's **`folder_id`**, not its `project_id` (the endpoint is `/web_api/projects/f<folder_id>.json`).
 
 Deleting a folder removes everything inside it. There is no undo.
+
+## Properties
+
+Account (environment) and project properties: the named configuration values a recipe resolves at job start, under `Recipe data > Properties`.
+
+| Tool                 | Required | Optional                                                                                             | Description                             |
+| -------------------- | -------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `workato_properties` | none     | `action`, `scope`, `project_id`, `name`, `value`, `rename_to`, `expected_version_no`, `id`, `reveal` | List, set (upsert) or delete a property |
+
+`action` is `list` (default, read-only), `set` or `delete`. `scope` is `account` (the whole environment, default) or `project`, which requires `project_id`.
+
+**`project_id` is the PROJECT id, not the folder id.** `workato_list_folders` reports both on a project root: the `project_id` field is the one this tool wants, while `id` is the folder. A folder id here is not an error on Workato's side; it simply lists nothing, so an empty project scope is worth a second look.
+
+**`set` is an upsert by name.** It lists first, then PUTs `/account_properties/<id>.json` when the name already exists and POSTs `/account_properties.json` when it does not. Retrying a `set` is therefore safe: a second call updates instead of creating a twin. `rename_to` renames the property found under `name`. Rows are append-only, so a successful update issues a **new `id` and `version_no`** and the response carries `previous: {id, version_no}`. The write sends `last_version_no`; pass `expected_version_no` to make that check yours, and a mismatch comes back as a version conflict naming both versions rather than as a silent overwrite.
+
+**Values are stored in the clear.** Workato flags a property `sensitive` when its name contains `password`, `key` or `secret`, but its JSON API returns the value in plain text either way: the `XXXXXXXXXX123` mask in the UI is presentation only. This tool applies the same mask (last three characters kept) and sets `value_masked: true`; `reveal: true` returns the real value.
+
+**`delete` resolves by exact `name`** and refuses when the name matches nothing or more than one; pass `id` instead to be unambiguous. Ids move on every update, so one from an earlier read may already be stale.
+
+Both `set` and `delete` write workspace configuration that running recipes read. A job that has already started keeps the value it resolved; the next one picks up the change.
+
+The endpoints behind this are recorded in [`skills/workato-recipes/platform-endpoints.md`](../skills/workato-recipes/platform-endpoints.md) and in full in [`docs/design/specs/2026-09-08-account-project-properties-endpoints.md`](design/specs/2026-09-08-account-project-properties-endpoints.md).
 
 ## Code-side recipe editing
 

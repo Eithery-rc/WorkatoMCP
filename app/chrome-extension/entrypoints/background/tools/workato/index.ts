@@ -23,6 +23,7 @@ export {
   workatoUpdateFolderTool,
   workatoDeleteFolderTool,
 } from './folders';
+export { workatoPropertiesTool } from './properties';
 export { workatoMoveRecipeTool } from './move-recipe';
 export { workatoCopyRecipeTool } from './copy-recipe';
 export { workatoDeleteRecipeTool } from './delete-recipe';

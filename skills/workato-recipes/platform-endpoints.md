@@ -17,6 +17,7 @@ Two path shapes coexist. `/web_api/...` is the app's own JSON API; a 404 there u
 - [Test execution](#test-execution)
 - [Connections](#connections)
 - [Event Streams (pub/sub) topics](#event-streams-pubsub-topics)
+- [Account and project properties](#account-and-project-properties)
 - [Activity and queue](#activity-and-queue)
 - [Routes that do not exist](#routes-that-do-not-exist)
 
@@ -440,6 +441,42 @@ Ready to paste:
 ```
 
 `allow_writes: true` is required on the POST and the DELETE, not on the reads.
+
+## Account and project properties
+
+Captured live **2026-09-08** (Development environment). Full capture in `docs/design/specs/2026-09-08-account-project-properties-endpoints.md`.
+
+One controller serves both scopes. A project property is the same route with `?project_id=<id>` appended:
+
+```
+GET    /account_properties.json[?project_id=<project id>]        -> {"result": [record, ...]}
+POST   /account_properties.json[?project_id=<project id>]        -> {"result": record}
+PUT    /account_properties/<id>.json[?project_id=<project id>]   -> {"result": record}
+DELETE /account_properties/<id>.json[?project_id=<project id>]   -> {"result": record}
+```
+
+A record is `{id, name, value, version_no, sensitive}`. `version_no` is a string (`"1788860207.51103"`), not a number.
+
+Headers: `x-requested-with: XMLHttpRequest` on every call, `content-type: application/json` on POST and PUT, `x-csrf-token` from the `XSRF-TOKEN-V2` cookie on POST, PUT and DELETE.
+
+Bodies:
+
+```json
+POST { "account_property": { "name": "mcp_probe_alpha", "value": "probe_value_alpha" } }
+PUT  { "account_property": { "name": "mcp_probe_beta", "value": "updated", "last_version_no": "1788860207.51103" } }
+```
+
+Five things the capture established:
+
+1. **`project_id` is the PROJECT id, not the folder id.** `workato_list_folders` reports both on a project root: `project_id` is the one this route wants. A folder id is not rejected, it simply returns `{"result": []}`.
+2. **`last_version_no` is mandatory on PUT** and must equal the current `version_no`. Omitted, outdated or mismatched, the write is refused.
+3. **A successful PUT issues a NEW `id`** and a new `version_no`: rows are append-only. Every id from an earlier list is stale after an update.
+4. **Errors come back as HTTP 200**, not 4xx: `{"error": {"details": {"name": ["has already been taken"]}}}` on a duplicate name, `{"error": {"details": {"base": ["can't update a stale row"]}}}` on a version mismatch. A status check alone reads both as success.
+5. **Sensitive masking is UI only.** Workato sets `"sensitive": true` when the name contains `password`, `key` or `secret` (case-insensitive), and then returns the value in the CLEAR anyway. The `XXXXXXXXXX123` mask exists in the browser, not in the API.
+
+Also verified: the list ignores every pagination and search parameter (`page`, `per_page`, `search`, `q`) and returns everything, so filtering is client-side; an empty `value` string is accepted; a project property and an account property may share a name, and neither shadows the other (both appear in the recipe data tree, under `Properties > Project properties` and `Properties > Environment properties`). Values are frozen at job start: changing one does not affect a running job. Limits: 1,000 properties per environment and per project, 100 characters of name, 1,024 of value.
+
+**Tool.** `workato_properties` wraps all four verbs: `action: "list" | "set" | "delete"`, `scope: "account" | "project"` plus `project_id`. `set` is an upsert by name (list, then PUT or POST), sends `last_version_no` for you, accepts `expected_version_no` to make the concurrency check yours, and takes `rename_to`. Sensitive values come back masked unless `reveal: true`. There is no reason to reach for `workato_api_request` here.
 
 ## Activity and queue
 
