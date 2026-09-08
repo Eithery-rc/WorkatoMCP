@@ -89,6 +89,7 @@ export const TOOL_NAMES = {
     ADAPTER_META: 'workato_adapter_meta',
     APPS_LIST: 'workato_apps_list',
     PICK_LIST: 'workato_pick_list',
+    STEP_SCHEMA: 'workato_step_schema',
     RECIPE_STEP_SEARCH: 'workato_recipe_step_search',
     RECIPE_CALLERS: 'workato_recipe_callers',
     SAVE_WITH_DEPENDENTS: 'workato_recipe_save_with_dependents',
@@ -1974,15 +1975,17 @@ export const TOOL_SCHEMAS: Tool[] = [
       'Per adapter it returns title / aliases / categories, which confirm a GUESSED name is the ' +
       'right app, and connection_required, where false means the connector needs no connection at all ' +
       '(Email by Workato, logger, py_eval) and its step carries no account_id. ' +
-      'Resolves any standard adapter whether or not this workspace has a connection to it, and ' +
-      'the array form reports unknown names under not_found, which makes it the way to test a ' +
-      'guess. For the apps this workspace HAS, use workato_apps_list; for how a connector is ' +
-      'actually used here, workato_recipe_step_search. ' +
-      '`depends_on` is how you learn a step takes its schema from another step (e.g. ' +
-      "return_result's fields come from the recipe-function trigger's result_schema_json). " +
-      'PAYLOAD: a bare call returns only the operation INDEX (names + titles) because some ' +
-      'adapters are hundreds of KB; pass operation to get one operation in full, or field_grep ' +
-      'to find fields by name/label across all of them. Read-only. Requires an open Workato tab.',
+      'Resolves any standard adapter whether or not this workspace has a connection to it; the ' +
+      'array form reports unknown names under not_found. To find an adapter, use ' +
+      'workato_apps_list; for how a connector is used here, workato_recipe_step_search. ' +
+      '`depends_on` says a step takes its schema from another step (return_result from the ' +
+      "recipe-function trigger's result_schema_json). " +
+      'PAYLOAD: a bare call returns only the operation INDEX (names, titles, title_hint, ' +
+      'aliases, field counts), deprecated operations hidden as the editor hides them ' +
+      '(deprecated_hidden counts them; include_deprecated lists them); pass operation for one ' +
+      'operation in full, or field_grep to find fields by name/label across all of them. When ' +
+      'an operation has extends_input_schema / extends_output_schema, its real schema comes ' +
+      'from workato_step_schema. Read-only. Requires an open Workato tab.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1992,7 +1995,13 @@ export const TOOL_SCHEMAS: Tool[] = [
             'Adapter name or names, e.g. "workato_recipe_function", "salesforce", ' +
             '["workato_recipe_function","workato_workflow_task"]. A custom connector uses its ' +
             'generated name (e.g. "netsuite_rest_connector_5105163_1745592003"): read it off ' +
-            "a recipe step's `provider` field.",
+            "a recipe step's `provider` field, or find it with workato_apps_list.",
+        },
+        include_deprecated: {
+          type: 'boolean',
+          description:
+            'Index mode: list operations Workato marks deprecated too. Default false. Detail ' +
+            'and grep modes always answer for the name or field asked.',
         },
         operation: {
           type: 'string',
@@ -2039,48 +2048,67 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.WORKATO.APPS_LIST,
     description:
-      'List the apps this workspace can build recipe steps with, and their TECHNICAL adapter ' +
-      'names. The step BEFORE workato_adapter_meta, which describes one connector in full but ' +
-      'only once its name is known, and the name is what cannot be guessed for a custom ' +
-      'connector ("netsuite_rest_connector_5105163_1745592003"). Merges five read-only sources ' +
-      'by adapter name and marks each app with where it came from: "connection" (a real ' +
-      'connection exists here, with its ids and authorization status), "recipes" (already used ' +
-      'by a recipe here, so workato_recipe_step_search finds live examples), "builtin" ' +
-      '(Workato\'s own, always available), "custom" (this workspace\'s SDK connector), ' +
-      '"certified" (catalogue, not installed here). Usable apps sort first. ' +
+      'THE FIRST CALL when a recipe needs an app: which connectors exist and what each is ' +
+      "called technically (step.provider). Reads Workato's complete standard-connector " +
+      'catalogue (338 adapters, from the app config every page preloads) plus this ' +
+      "workspace's connections, SDK connectors, adapters used in recipes and, with a query, " +
+      'the certified community catalogue. Each app carries source: "connection" (usable now, ' +
+      'with connection ids and status), "recipes" (live examples for ' +
+      'workato_recipe_step_search), "builtin" (Workato\'s own tools), "custom" (this ' +
+      'workspace\'s SDK connector), "standard" (in the catalogue, no connection here), ' +
+      '"certified" (not installed). Also title, aliases, categories, connection_required, ' +
+      'actions_count, triggers_count. Usable apps sort first; deprecated connectors are hidden ' +
+      'unless in use here or include_deprecated. A bare call returns a SUMMARY (connected, ' +
+      'custom, category counts), not 338 rows: narrow with query (name, title, alias or ' +
+      'category substring: "sheet", "python", "CRM") or category. ' +
       'NO CONNECTION MEANS STOP AND ASK THE USER: these tools cannot create one, and a step ' +
-      'needs its provider account_id in the recipe config, which does not exist until the ' +
-      'connection does. An app listed WITHOUT a "connection" source, or with one whose ' +
-      'authorization_status is not "success", is a blocker to raise before writing the step. ' +
-      'The exception is a "builtin" whose connection_required is false (email, logger, ' +
-      'py_eval, clock and the rest of the Workato tools), which needs nothing. ' +
-      "WORKATO'S OWN CONNECTORS ARE NAMED NOTHING LIKE THEY ARE CALLED: HTTP is `rest`, Workato " +
-      'Event Streams is `workato_pub_sub`, Scheduler is `clock`, Python snippets is `py_eval`, ' +
-      'Workflow apps is `workato_workflow_task`. Guessing from the display name returns an EMPTY ' +
-      'meta document, indistinguishable from "no such app"; titles and aliases are read live, ' +
-      'so searching "event stream" or "approval" lands on the right adapter. ' +
-      'KNOWN LIMIT, also in the response: Workato serves NO catalogue of its ~1000 standard ' +
-      'connectors, so an app missing here is not proof it does not exist; pass the guessed ' +
-      'name(s) to workato_adapter_meta, which takes an array and reports misses under ' +
-      'not_found. Read-only. Requires an open Workato tab.',
+      'needs its provider account_id in the recipe config. An app with connection_required ' +
+      'true and no "connection" source, or one whose status is not "success", is a blocker to ' +
+      'raise before writing the step; "success" alone does not prove the connection works ' +
+      '(workato_step_schema with input {} is the probe). Workato tools with ' +
+      'connection_required false (email, logger, py_eval, clock) need nothing. ' +
+      "WORKATO'S OWN TOOLS ARE NAMED NOTHING LIKE THEY ARE CALLED: HTTP is `rest`, Event " +
+      'Streams is `workato_pub_sub`, Scheduler is `clock`, Python is `py_eval`; search by what ' +
+      'it is called and read the name. An app in neither catalogue is NOT available as a ' +
+      'connector: say so and offer `rest` or an SDK connector rather than guess a name ' +
+      '(workato_adapter_meta takes an array and reports misses under not_found). ' +
+      'Read-only. Requires an open Workato tab.',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
           description:
-            'Case-insensitive substring matched against adapter name, title and aliases, ' +
-            'e.g. "sales", "netsuite", "email".',
+            'Case-insensitive substring matched against adapter name, title, aliases and ' +
+            'categories, e.g. "sales", "sheet", "python", "CRM".',
+        },
+        category: {
+          type: 'string',
+          description:
+            'Case-insensitive exact category, e.g. "CRM", "Database", "Recipe Tools". The bare ' +
+            'call lists every category with counts.',
+        },
+        include_deprecated: {
+          type: 'boolean',
+          description:
+            'List connectors Workato marks deprecated too. Default false; one this workspace ' +
+            'connected or built with is always listed.',
+        },
+        only_connected: {
+          type: 'boolean',
+          description: 'Only apps with a connection in this workspace, as a plain list.',
         },
         include_certified: {
           type: 'boolean',
           description:
             "Search Workato's certified community catalogue too (~70 KB raw). Defaults to " +
-            'true when query is set (the filter keeps it small), false otherwise.',
+            'true when query or category is set, false otherwise.',
         },
         limit: {
           type: 'number',
-          description: 'Max apps returned. Default 200, clamped 1-1000.',
+          description:
+            'Max apps returned. Default 50 when query, category or only_connected is set, 200 ' +
+            'otherwise, clamped 1-1000.',
         },
         timeout_ms: {
           type: 'number',
@@ -2171,6 +2199,97 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['connection_id', 'field'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.STEP_SCHEMA,
+    description:
+      "Generate a step's extended_input_schema and extended_output_schema from the adapter, " +
+      'the way the recipe editor does (POST extended_schema.json), instead of writing them by ' +
+      'hand. Workato saves a step without them with code_errors [] and then silently DROPS ' +
+      'structured input on readback (declare_list list_items, call_recipe parameters, clock ' +
+      'trigger_every) or fails a downstream datapill with "Unknown data field"; this call ' +
+      'returns the exact arrays the step needs. Pass adapter + operation + the input as it ' +
+      'would be saved. connection_id is required when the adapter needs a connection ' +
+      '(workato_apps_list says); Workato tools such as workato_variable, clock, logger need ' +
+      'none. Fields whose value drives the schema (schema_drivers, e.g. sobject_name, ' +
+      'list_item_schema_json) must be in input, else both arrays come back empty and note says ' +
+      'which are missing. dynamicPickListSelection is derived from input for pick-list fields. ' +
+      'Returns input_schema, output_schema, counts, and apply_ops ready for ' +
+      'workato_recipe_apply; or pass apply_to {recipe_id, step} to WRITE both schemas onto the ' +
+      'step in one saved version (that path saves a recipe version). An error naming "HTTP ' +
+      'status code 4xx" or invalid_grant means the CONNECTION failed the call even if its ' +
+      'authorization_status reads success; with input {} this is the cheap liveness probe for ' +
+      'a connection. Read-only without apply_to. Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        adapter: {
+          type: 'string',
+          description:
+            'Technical adapter name, e.g. "salesforce", "workato_variable", or a custom ' +
+            'connector generated name. Find it with workato_apps_list(query).',
+        },
+        operation: {
+          type: 'string',
+          description:
+            'Trigger or action name, e.g. "search_sobjects", "declare_list". ' +
+            'workato_adapter_meta lists them.',
+        },
+        connection_id: {
+          type: 'number',
+          description:
+            'Numeric connection id. Required when the adapter needs a connection; omitted for ' +
+            'Workato tools (the adapter name is used instead).',
+        },
+        input: {
+          type: 'object',
+          description:
+            'The step input as it would be saved, e.g. {"sobject_name":"Account"} or ' +
+            '{"name":"orders","list_item_schema_json":"[...]"}. Default {}.',
+        },
+        dynamic_pick_list_selection: {
+          type: 'object',
+          description:
+            'Explicit dynamicPickListSelection. Omit to derive it from input for every field ' +
+            'that has a dynamic pick list.',
+        },
+        flow_id: { type: 'number', description: 'Recipe id, forwarded as flow_id. Optional.' },
+        only: {
+          type: 'array',
+          items: { type: 'string', enum: ['input', 'output'] },
+          description: 'Which schemas to compute. Default both.',
+        },
+        apply_to: {
+          type: 'object',
+          description:
+            'Write the generated schemas onto a step: {recipe_id, step (number, as anchor or ' +
+            'uuid), comment?, expected_base_version_no?, dry_run?, verify_readback?, ' +
+            'restart_if_running?, ensure_running?}. Both non-empty arrays land in ONE version; ' +
+            'an empty array is never written. Omit to only generate.',
+          properties: {
+            recipe_id: { type: 'number' },
+            step: { oneOf: [{ type: 'string' }, { type: 'number' }] },
+            comment: { type: 'string' },
+            expected_base_version_no: { type: 'number' },
+            dry_run: { type: 'boolean' },
+            verify_readback: { type: 'boolean' },
+            restart_if_running: { type: 'boolean' },
+            ensure_running: { type: 'boolean' },
+          },
+          required: ['recipe_id', 'step'],
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'In-page fetch timeout. Default 45000, clamped 10000-110000.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['adapter', 'operation'],
     },
   },
   {

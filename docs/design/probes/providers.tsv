@@ -1,0 +1,339 @@
+name	title	actions	triggers	conn	deprecated	required_feature
+active_directory	Active Directory	15	3			
+active_reg_online	RegOnline® by Lanyon	6	3			
+adobe_experience_manager	Adobe Experience Manager	10	2			
+adp7	ADP Workforce Now	2	2			
+air_regi	AirREGI	0	2			
+airbrake	Airbrake	1	0			
+airtable	Airtable	10	2			
+amazon_lex_nlu	Amazon Lex	0	0			
+amazon_s3	Amazon S3	10	4			
+amazon_s3_secondary	Amazon S3 secondary	10	4			
+amazon_ses	Amazon SES	8	0			
+amcards	AMcards	1	0			
+anaplan	Anaplan	8	0			
+api_ai_nlu	Google Dialogflow	0	0			
+apttus	Apttus	5	3			
+apttus_intelligent_cloud	Apttus Intelligent Cloud	3	2			
+ariba	Ariba	1	2		deprecated	
+asana	Asana	31	3			
+ascent_erp	AscentERP	5	3			
+aws_cognito	Amazon Cognito	3	0			
+aws_lambda	AWS Lambda	3	1			
+aws_sns	Amazon SNS	1	1			
+aws_sqs	Amazon SQS	5	2			
+azure_blob_storage	Azure Blob Storage	10	2			
+azure_blob_storage_secondary	Azure Blob Storage secondary	10	2			
+azure_key_vault	Azure Key Vault	0	0			
+azure_monitor	Azure Monitor	2	0			
+azure_open_ai	Azure OpenAI	12	0			
+bamboohr	BambooHR	14	5			
+basecamp	Basecamp 2	9	9			
+bigtincan	Bigtincan	12	2			
+bill	BILL	15	4			
+bim360	BIM 360	24	5			
+bitbucket	Bitbucket	8	3			
+box	Box	31	10			
+braintree	Braintree	0	0			data_pipeline
+brick_ftp	BrickFTP	0	1			
+business_central	Microsoft Dynamics Business Central	6	2			data_pipeline
+bynder	Bynder	13	2			
+byollm	Custom LLM For Workato Genie	0	0			
+capsulecrm	Capsule CRM	8	4		deprecated	
+celonis	Celonis	0	1			
+chargify	Maxio	8	3			
+cisco_spark	Cisco Webex Teams	10	2			
+clearbit	Clearbit	2	0			
+clock	Scheduler by Workato	4	3	no-conn		
+cloud_watch	Cloud Watch	3	1			
+coda	Coda	7	0		deprecated	
+codeship	Codeship	2	0			
+concur	SAP Concur	37	9			
+confluence	Confluence	13	0			
+confluence_secondary	Confluence secondary	13	0			
+confluent_cloud	Confluent Cloud	2	2			
+connector_4me	4me	4	1			
+cornerstone_ondemand	Cornerstone OnDemand	0	0			data_pipeline
+coupa	Coupa	13	1			
+csv_parser	CSV tools by Workato	2	0	no-conn		
+cxml	cXML	1	1			
+cyberark_conjur	Cyberark Conjur	0	0			
+data_pipelines	PipelineOps by Workato	0	1			data_pipeline
+data_pipelines_oracle_ebs	Oracle E-Business Suite (Data Pipelines)	0	0			data_pipeline
+databricks	Databricks	8	3			
+db2	IBM Db2	7	0			
+deputy	Deputy	13	3			
+docparser	docparser	2	1			
+docusign	DocuSign	14	4			
+docusign_secondary	DocuSign secondary	14	4			
+dropbox	Dropbox	21	6			
+edi_parser	EDI tools by Workato	4	0	no-conn		
+egnyte	Egnyte	9	1			
+eleven_labs	ElevenLabs	7	0			
+ellucian_banner	Ellucian Banner	0	0			data_pipeline
+eloqua	Eloqua	6	2			
+email	Email by Workato	1	0	no-conn		
+enterprise_context	Enterprise context by Workato	6	0	no-conn		workato_genie
+etapestry	eTapestry	5	2			
+event_brite	Eventbrite	5	7			
+everydayhero	everydayhero	0	2			
+excel	Excel	11	0			
+expensify	Expensify	8	1			
+facebook	Facebook	6	0			
+facebook_lead_ads	Facebook Lead Ads	1	1			
+fairsail	Fairsail	5	3			
+feedly	Feedly	0	1			
+file_connector	File tools by Workato	5	0	no-conn		
+financialforce	FinancialForce	5	3			
+forcecom	Force.com	5	3			
+fresh_books	FreshBooks	11	4			
+fresh_desk	Freshdesk	19	6		deprecated	
+ftps	FTP/FTPS	7	2			
+ftps_secondary	FTP/FTPS secondary	7	2			
+fullcontact	FullContact	2	0			
+funraise	Funraise	0	1			
+github	GitHub	7	7			
+gmail	Gmail	4	1			
+gong	Gong.io	13	1			
+google_analytics	Google Analytics	0	0			data_pipeline
+google_big_query	Google BigQuery	14	4			google_big_query_adapter
+google_calendar	Google Calendar	14	4			
+google_cloud_storage	Google Cloud Storage	12	0			
+google_contacts	Google Contacts	3	2			
+google_docs	Google Docs	3	0			
+google_drive	Google Drive	15	4			
+google_people	Google People	7	2			
+google_secret_manager	Google Secret Manager	0	0			
+google_sheets	Google Sheets	12	9			
+google_slides	Google Slides	11	0			
+google_speech_to_text	Google Speech to Text	2	0			
+google_tasks	Google Tasks	9	0			
+google_text_to_speech	Google Text to Speech	2	0			
+google_translate	Google Translate	2	0			
+google_vision	Google Vision	2	0			
+google_workspace	Google Workspace	9	3			
+goombal	Goombal	2	1			
+goto_webinar	GotoWebinar	3	1			
+graphs_and_charts	Charts by Workato	2	0	no-conn	deprecated	
+greenhouse	Greenhouse	16	5			
+hashi_corp_vault	HashiCorp Vault	0	0			
+hibob	HiBob	0	0			data_pipeline
+hipchat	HipChat	7	0			
+hive	Hive	7	1			
+hubspot	HubSpot	39	14			
+ibm_workspace	IBM Watson Workspace	3	1		deprecated	
+infusionsoft	Infusionsoft	37	16			
+insightly	Insightly	12	5			
+instagram	Instagram	0	3			
+intacct	Sage Intacct	51	19			
+intercom	Intercom	12	7			
+jdbc	JDBC	8	5			
+jdbc_secondary	JDBC secondary	8	5			
+jenkins	Jenkins	2	0			
+jira	Jira	18	14			
+jira_secondary	Jira secondary	18	14			
+jira_service_desk	JIRA Service Desk	9	1			
+jms	JMS tools by Workato	3	2			
+jobscience	JobScience	5	3			
+jobvite	Jobvite	0	1			
+js_eval	JavaScript snippets by Workato	1	0	no-conn		
+json_parser	JSON tools by Workato	2	0	no-conn		
+jump_cloud	JumpCloud	17	1			
+jwt	JWT tools by Workato	2	0			
+kafka	Apache Kafka	2	4			
+kenandy	Kenandy	5	3			
+kizen	Kizen	3	1			
+knack	Knack	4	1			
+librato	Librato	4	1			
+linkedin	LinkedIn	5	1			
+logger	Logger by Workato	1	0	no-conn		
+lookup_table	Lookup tables by Workato	9	0	no-conn		
+magento	Magento 2	8	6			
+mailchimp	MailChimp	26	6			
+marketo	Marketo	48	8			
+marketo_secondary	Marketo secondary	48	8			
+mcp	MCP (Model Context Protocol)	0	0			
+mft_ops	MFTOps by Workato	0	4	no-conn		mft_ops_adapter
+microsoft_dynamics_crm	Microsoft Dynamics 365	9	13			
+microsoft_sharepoint	Microsoft Sharepoint	24	6			
+microsoft_teams	Microsoft Teams	14	0			
+microsoft_to_do	Microsoft To Do	7	0			
+miro_board	Miro	22	0			
+mixpanel	Mixpanel	5	0			
+mongo	MongoDB Atlas	5	0			preview_adapter
+mssql	SQL Server	19	7			
+mssql_secondary	SQL Server secondary	19	7			
+mysql	MySQL	13	5			
+mysql_secondary	MySQL secondary	13	5			
+namely	Namely	6	4			
+nasuni_management	Nasuni Management Console	25	1			
+nationbuilder	NationBuilder	0	1			
+netsuite	NetSuite SOAP	44	24			
+netsuite2	NetSuite2	0	0			data_pipeline
+netsuite_rest	NetSuite REST	20	5			
+netsuite_secondary	NetSuite SOAP secondary	44	24			
+new_relic	New Relic	2	0			
+nimblecrm	Nimble CRM	1	1			
+okta	Okta	22	3			
+okta_secondary	Okta secondary	22	3			
+onedrive	OneDrive	13	5			
+onprem_command_line_scripts	On-prem command-line scripts	1	0			
+onprem_files	On-prem files	16	5			
+onprem_files_secondary	On-prem files secondary	16	5			
+open_ai	OpenAI	17	0			
+open_ai_utility	AI by Workato	8	0	no-conn		ai_adapter
+oracle	Oracle	17	4			
+oracle_ebs	Oracle E-Business Suite	1	2			
+oracle_fusion_cloud	Oracle Fusion Cloud	28	7			
+oracle_secondary	Oracle secondary	17	4			
+out_systems	OutSystems	6	4			
+outlook	Outlook	19	8			
+outreach	Outreach	8	3			
+pagerduty	Pagerduty	7	2			
+parsehub	ParseHub	3	0			
+pdf_tools	PDF tools by Workato	5	0	no-conn		
+percolate	Percolate	11	3			
+pgp	PGP tools by Workato	5	0			
+pingdom	Pingdom	1	1			
+pipedrive	Pipedrive	18	6			
+pivotal_tracker	Pivotal Tracker	10	1			
+plan_grid	PlanGrid	8	2			
+podio	Citrix Podio	4	4			
+postgresql	PostgreSQL	11	4			
+postgresql_secondary	PostgreSQL secondary	11	4			
+postman	Postman	0	0			
+powerpoint	Microsoft PowerPoint	11	0			
+prontoforms	Prontoforms	1	1			
+propel	Propel	5	3			
+py_eval	Python snippets by Workato	1	0	no-conn		
+quickbase	Quickbase	11	9			
+quickbase_secondary	Quickbase secondary	11	9			
+quickbooks	QuickBooks Online	110	29			
+quip	Quip	4	1			
+raisers_edge	Raiser's Edge NXT	37	15			
+redshift	Redshift	12	6			restricted_adapter
+redshift_data_api	Amazon Redshift Data API	0	0			data_pipeline
+redshift_secondary	Redshift secondary	12	6			restricted_adapter
+relateiq	SalesforceIQ	2	0			
+replicon	Replicon	49	7			
+rest	HTTP	3	2			
+rest_oauth	HTTP (OAuth2)	3	2		deprecated	
+rest_secondary	HTTP secondary	3	2			
+revel_systems	Revel Systems	7	6			
+ringcentral	RingCentral	4	6			
+rollbar	Rollbar	2	2	no-conn		
+row_share	RowShare	7	1			
+s3_iceberg	S3 Iceberg	0	0			data_pipeline
+sagelive	Sage Live	5	3			
+salesforce	Salesforce	60	36			
+salesforce_chatter	Chatter	1	0			
+salesforce_marketing_cloud	Salesforce Marketing Cloud	10	1			
+salesforce_secondary	Salesforce secondary	60	36			
+sap	SAP RFC	8	2			
+sap_s4_hana_cloud	SAP OData	9	2			
+sap_secondary	SAP RFC secondary	8	2			
+segment	Segment	3	0		deprecated	
+sendgrid	SendGrid	5	0			
+service_max	ServiceMax	5	3			
+service_now	ServiceNow	29	14			
+service_now_secondary	ServiceNow secondary	29	14			
+servicem8	ServiceM8	19	7			
+sftp	SFTP	12	2			
+sftp_secondary	SFTP secondary	12	2			
+shopify	Shopify	56	17			
+showpad	Showpad	5	0			
+skype_bot	Workbot for Microsoft Teams Old	2	1		deprecated	
+slack	Slack	17	2			
+slack_bot	Workbot  for  Slack	14	7			
+slack_secondary	Slack secondary	17	2			
+smartsheet	Smartsheet	5	3			
+smb	SMB	6	1			
+sms	SMS by Workato (deprecated)	1	0	no-conn	deprecated	
+sms_secondary	SMS by Workato	1	0	no-conn		sms_adapter
+snowflake	Snowflake	15	5			restricted_adapter
+snowflake_secondary	Snowflake secondary	15	5			restricted_adapter
+soap	SOAP tools by Workato	2	0	no-conn	deprecated	
+solace	Solace	5	2			solace_adapter
+splunk	Splunk	3	2		deprecated	
+square	Square	0	0			data_pipeline
+steelbrick	Salesforce CPQ	5	3			
+stripe	Stripe	12	4			
+success_factors	SAP SuccessFactors OData	10	2			
+surveymonkey	SurveyMonkey	27	2			
+syslog	Syslog	1	0			
+tango_card	Tango Card	5	0			
+taskray	TaskRay	5	3			
+teams_bot	Workbot for Microsoft Teams	11	5			
+trackvia	TrackVia	10	3			
+tradeshift	Tradeshift	11	2			
+trello	Trello	17	2			
+tsheets	TSheets	9	4			
+twilio	Twilio	5	1			
+twitter	X	4	1			
+two_checkout	2Checkout	0	3			
+unbounce	Unbounce	0	1			
+utility	Utilities	10	0	no-conn	deprecated	
+veeva	Veeva CRM	5	3			
+vend	Lightspeed Commerce	12	8			
+vlocity	Vlocity	5	3			
+watson_tone_analyzer	Watson Tone Analyzer	1	0			
+webmerge	Formstack Documents	2	0			
+woocommerce	WooCommerce	4	5			
+word	Microsoft Word	14	0			
+word_press	WordPress	33	3			
+workato_api_platform	API platform by Workato	2	2	no-conn		api_platform_adapter
+workato_app	RecipeOps by Workato	9	21			restricted_adapter
+workato_custom_code	Ruby snippets by Workato	1	0	no-conn		
+workato_db_table	Workato Data Tables	12	4	no-conn		
+workato_decision_engine	Decision Models by Workato	1	0	no-conn		
+workato_edi	Workato EDI	11	2			
+workato_expression_language	Workato Expression Language	1	0	no-conn		workato_expression_language_adapter
+workato_files	Workato FileStorage	10	3	no-conn		data_warehouse_adapters
+workato_genie	Workato Genie	7	1	no-conn		
+workato_genie_ms_teams	Workato Genie MS Teams	0	0			workato_genie
+workato_genie_slack	Workato Genie Slack	0	0			workato_genie
+workato_idp	IDP by Workato	2	0	no-conn		ai_adapter
+workato_json_transformations	JSON Transformations by Workato	1	0	no-conn		preview_adapter
+workato_list	Lists by Workato	2	0	no-conn	deprecated	
+workato_mapper	Mapper by Workato	1	0	no-conn		
+workato_pub_sub	Workato Event Streams	2	2	no-conn		topic
+workato_recipe_function	Recipe function by Workato	4	1	no-conn		
+workato_rpa	RPA by Workato	6	0			
+workato_service	Callable recipes by Workato	4	1	no-conn		
+workato_skill	Workato Skill	1	1	no-conn		
+workato_smart_list	SQL Collection by Workato	5	0	no-conn		restricted_adapter
+workato_template	Message template by Workato	1	0	no-conn		
+workato_transformations	SQL Transformations by Workato	2	0	no-conn		data_warehouse_adapters
+workato_variable	Variables by Workato	7	0	no-conn		
+workato_webhooks	Webhooks	0	1	no-conn		
+workato_workflow_task	Workflow apps by Workato	16	5	no-conn		preview_adapter
+workday	Workday	10	4			
+workday_oauth	Workday Web Services	4	2			
+workday_raas	Workday RaaS	10	4			data_pipeline
+workday_rest	Workday REST	23	1			
+workflow	People Task by Workato	1	0	no-conn	deprecated	
+workfront	Workfront	6	3			
+workfront_secondary	Workfront secondary	6	3			
+workplace_bot	Workbot for Workplace	6	1			
+wrike	Wrike	44	12			
+wrike_secondary	Wrike secondary	44	12			
+wufoo	Wufoo	0	1			
+xactly	Xactly	2	0			
+xero	Xero	54	10			
+xero_practice_manager	Xero Practice Manager	4	0			
+xml_parser	XML tools by Workato	7	0	no-conn		
+yaml_parser	YAML tools by Workato	1	0	no-conn		
+you_tube	YouTube	11	0			
+zendesk	Zendesk	38	12			
+zendesk_conversations	Zendesk Conversations	1	0			
+zendesk_demo	Zendesk Demo	6	0	no-conn		preview_adapter
+zendesk_secondary	Zendesk secondary	38	12			
+zendesk_sunshine	Zendesk Sunshine	38	12		deprecated	
+zenefits	Zenefits	3	2			
+zoho_invoice	Zoho Invoice	4	2			
+zohocrm	Zoho CRM	45	19			
+zonebilling	ZoneBilling for NetSuite	14	0		deprecated	
+zoom	Zoom	21	1			
+zoom_info	ZoomInfo	17	1			
+zuora	Zuora	12	2			
+zuora_forcecom	Zuora for Salesforce	5	3			

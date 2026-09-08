@@ -37,6 +37,7 @@ import {
 import { handleWorkatoDatapillCall, isWorkatoDatapillTool } from './workato-datapill';
 import { handleWorkatoOperationCall, isWorkatoOperationTool } from './workato-operation-status';
 import { handleWorkatoBridgeInfoCall, isWorkatoBridgeInfoTool } from './workato-bridge-info';
+import { handleWorkatoStepSchemaApplyCall, isStepSchemaApplyCall } from './workato-step-schema';
 import {
   applyAutoFile,
   prepareAutoFileCall,
@@ -741,7 +742,8 @@ export function createToolRouter(): ToolRouter {
         isWorkatoRecipeMutatorTool(name) ||
         isWorkatoCallableTool(name) ||
         isWorkatoSaveWithDependentsTool(name) ||
-        isWorkatoOperationTool(name)
+        isWorkatoOperationTool(name) ||
+        isStepSchemaApplyCall(name, effectiveArgs)
       ) {
         const callExtension = async (
           toolName: string,
@@ -785,6 +787,11 @@ export function createToolRouter(): ToolRouter {
 
         if (isWorkatoRecipeMutatorTool(name)) {
           return handleWorkatoRecipeMutatorCall(name, effectiveArgs || {}, callExtension);
+        }
+        // workato_step_schema(apply_to): generate in the extension, then write
+        // both schemas onto the step in one saved version.
+        if (isStepSchemaApplyCall(name, effectiveArgs)) {
+          return handleWorkatoStepSchemaApplyCall(name, effectiveArgs || {}, callExtension);
         }
         if (isWorkatoCallableTool(name)) {
           return handleWorkatoCallableCall(name, effectiveArgs || {}, callExtension);

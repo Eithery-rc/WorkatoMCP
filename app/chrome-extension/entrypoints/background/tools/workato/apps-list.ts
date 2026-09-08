@@ -4,51 +4,57 @@ import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';
 
 /**
- * workato_apps_list — "which apps can I build a step with here, and what are
- * they called?"
+ * workato_apps_list: "which apps can I build a step with, and what are they
+ * called technically?"
  *
  * workato_adapter_meta answers everything about ONE connector, but only once
  * its technical name is known, and that name is the part nobody can guess for
- * a custom connector (`netsuite_rest_connector_5105163_1745592003`) or a
- * renamed one. This tool is the step before it.
+ * a custom connector (`netsuite_rest_connector_5105163_1745592003`), for a
+ * Workato tool ("HTTP" is `rest`, "Scheduler" is `clock`) or for a standard
+ * connector the workspace has never connected. This tool is the step before it.
  *
- * Four sources, all read-only, merged by adapter name:
- *   /web_api/mixed_assets.json?asset_type=connection  — apps with a real
- *       connection, i.e. the ones a step can actually authenticate as.
- *   /web_api/mixed_assets/adapters.json               — adapters already used
- *       by recipes here. Tiny, and the fastest read of "what is built with".
- *   /web_api/published_custom_adapters.json           — this workspace's own
- *       SDK connectors: title -> generated name.
- *   /web_api/certified_custom_adapters.json           — Workato's certified
- *       community catalogue (~70 KB), searched only when asked.
+ * Sources, all read-only, merged by adapter name:
+ *   /web_api/dynamic_app_config/<sha256>.js          The catalogue. Every app
+ *       page embeds this script; it sets window.Workato.config whose
+ *       `providers` map holds all 338 standard connectors with title, aliases,
+ *       categories, counts and whether a connection is needed. The hash is per
+ *       Workato deployment (identical across workspaces), so it doubles as the
+ *       cache key: the HTML of "/" is re-read on every call, the 320 KB file
+ *       only when the hash changed. Captured 2026-09-08.
+ *   /web_api/mixed_assets.json?asset_type=connection  Apps with a real
+ *       connection, i.e. the ones a step can authenticate as today.
+ *   /web_api/mixed_assets/adapters.json               Adapters already used by
+ *       recipes here. Tiny, and the fastest read of "what is built with".
+ *   /web_api/published_custom_adapters.json           This workspace's own SDK
+ *       connectors: title -> generated name.
+ *   /web_api/certified_custom_adapters.json           Workato's certified
+ *       community catalogue (178 entries, ~70 KB), searched when asked.
  *
- * A fifth source is Workato's own built-in connectors, seeded from a fixed
- * list of NAMES and enriched live from /integrations/meta. Those are the ones
- * whose name nobody can derive from what a person calls them: "HTTP" is `rest`,
- * "Workato Event Streams" is `workato_pub_sub`, "Scheduler" is `clock`.
- *
- * KNOWN LIMIT, stated in the response rather than hidden: Workato serves no
- * catalogue of its ~1000 STANDARD connectors. The recipe editor's app picker
- * issues no network request at all — the list is compiled into its bundle, and
- * the DOM carries titles without technical names. So a standard app that has
- * no connection here cannot be enumerated. It can still be resolved in one
- * call: /integrations/meta accepts a comma-separated list and omits names it
- * does not know, which is what workato_adapter_meta's array form does.
+ * Before the catalogue was found this tool seeded 18 hard-coded built-in names
+ * and told the caller that Workato serves no catalogue. That was wrong; the
+ * recipe editor's app picker issues no request because the list is preloaded,
+ * not because it does not exist.
  */
 
 interface AppsListArgs {
-  /** Case-insensitive substring matched against adapter name, title and aliases. */
+  /** Case-insensitive substring matched against adapter name, title, aliases and categories. */
   query?: string;
+  /** Case-insensitive exact match on one category, e.g. "CRM". */
+  category?: string;
+  /** Show catalogue entries Workato marks deprecated. Default false. */
+  include_deprecated?: boolean;
+  /** Only apps with a connection in this workspace. Default false. */
+  only_connected?: boolean;
   /** Search the certified community catalogue too. Defaults to true when `query` is set. */
   include_certified?: boolean;
-  /** Max apps returned. Default 200, clamped 1–1000. */
+  /** Max apps returned. Default 50 when narrowed, 200 otherwise, clamped 1..1000. */
   limit?: number;
-  /** In-page fetch timeout. Default 30000, clamped 10000–110000. */
+  /** In-page fetch timeout. Default 30000, clamped 10000..110000. */
   timeout_ms?: number;
   tabId?: number;
 }
 
-/** One source's outcome — a failed optional source must not sink the whole call. */
+/** One source's outcome: a failed optional source must not sink the whole call. */
 interface SourceResult {
   ok: boolean;
   status?: number;
@@ -56,24 +62,48 @@ interface SourceResult {
   message?: string;
 }
 
+/** A catalogue entry as reduced in page. The 320 KB document never leaves the tab. */
+export interface CatalogueEntry {
+  name: string;
+  title?: string;
+  aliases?: string[];
+  categories?: string[];
+  connection_required?: boolean;
+  actions_count?: number;
+  triggers_count?: number;
+  deprecated_actions_count?: number;
+  deprecated_triggers_count?: number;
+  deprecated?: boolean;
+  secondary?: boolean;
+  required_feature?: string;
+  url_name?: string;
+}
+
+interface CatalogueSource extends SourceResult {
+  /** The sha256 from the script tag; the deployment's version of the catalogue. */
+  hash?: string;
+  /** True when the page still names the hash the caller already holds. */
+  unchanged?: boolean;
+  entries?: CatalogueEntry[];
+}
+
 interface InPageResult {
   connections: SourceResult;
   usedAdapters: SourceResult;
   custom: SourceResult;
   certified: SourceResult;
-  /** Built-in connectors, already reduced in-page to name/title/aliases/categories. */
-  builtins: SourceResult;
+  catalogue: CatalogueSource;
 }
 
 /**
- * Runs in the Workato tab's MAIN world. Self-contained, promise-chain based —
+ * Runs in the Workato tab's MAIN world. Self-contained, promise-chain based.
  * DO NOT add async/await (WXT/Vite rewrites it into a hoisted helper that does
  * not survive Function.prototype.toString; see pull-recipe.ts).
  */
 function fetchAppSourcesInPage(
   includeCertified: boolean,
   connectionPages: number,
-  builtinNames: string[],
+  knownCatalogueHash: string | null,
 ): Promise<InPageResult> {
   const opts: RequestInit = {
     credentials: 'include',
@@ -123,33 +153,119 @@ function fetchAppSourcesInPage(
     });
   }
 
-  // Workato's own built-in connectors. Only the NAMES are known ahead of time;
-  // titles, aliases and categories are read live, so a renamed connector shows
-  // its current name rather than a stale copy. Reduced here rather than shipped
-  // whole: the response is one document per adapter.
-  function fetchBuiltins(): Promise<SourceResult> {
-    if (builtinNames.length === 0) return Promise.resolve({ ok: true, body: null });
-    return getJson(`/integrations/meta?name=${encodeURIComponent(builtinNames.join(','))}`).then(
-      (res) => {
-        if (!res.ok) return res;
-        const doc = res.body as Record<string, any> | null;
-        if (!doc || typeof doc !== 'object') return { ok: true, body: { result: [] } };
-        const slim = [];
-        for (const key of Object.keys(doc)) {
-          const a = doc[key];
-          if (!a || typeof a !== 'object') continue;
-          slim.push({
-            name: key,
-            title: typeof a.title === 'string' ? a.title : undefined,
-            aliases: Array.isArray(a.aliases) ? a.aliases : undefined,
-            categories: Array.isArray(a.categories) ? a.categories : undefined,
-            connection_required:
-              a.config && typeof a.config.required === 'boolean' ? a.config.required : undefined,
-          });
-        }
-        return { ok: true, body: { result: slim } };
-      },
-    );
+  // Reduce one providers entry to the fields a caller can act on.
+  function slimProvider(key: string, p: any): CatalogueEntry {
+    const out: CatalogueEntry = { name: key };
+    if (typeof p.title === 'string') out.title = p.title;
+    if (Array.isArray(p.aliases)) {
+      const aliases = p.aliases.filter((a: unknown) => typeof a === 'string');
+      if (aliases.length > 0) out.aliases = aliases;
+    }
+    if (Array.isArray(p.categories)) {
+      const categories = p.categories.filter((c: unknown) => typeof c === 'string');
+      if (categories.length > 0) out.categories = categories;
+    }
+    if (p.config && typeof p.config.required === 'boolean') {
+      out.connection_required = p.config.required;
+    }
+    if (typeof p.actions_count === 'number') out.actions_count = p.actions_count;
+    if (typeof p.triggers_count === 'number') out.triggers_count = p.triggers_count;
+    if (typeof p.deprecated_actions_count === 'number') {
+      out.deprecated_actions_count = p.deprecated_actions_count;
+    }
+    if (typeof p.deprecated_triggers_count === 'number') {
+      out.deprecated_triggers_count = p.deprecated_triggers_count;
+    }
+    if (p.deprecated === true) out.deprecated = true;
+    if (p.secondary === true) out.secondary = true;
+    if (typeof p.required_feature === 'string') out.required_feature = p.required_feature;
+    if (typeof p.url_name === 'string' && p.url_name !== key) out.url_name = p.url_name;
+    return out;
+  }
+
+  // The catalogue: hash from the HTML of "/", then the config script.
+  function fetchCatalogue(): Promise<CatalogueSource> {
+    return fetch('/', { credentials: 'include', headers: { accept: 'text/html' } })
+      .then((r) =>
+        r.text().then((html) => {
+          if (r.status < 200 || r.status >= 300) {
+            return {
+              ok: false,
+              status: r.status,
+              message: `GET / returned HTTP ${r.status}; the catalogue hash could not be read`,
+            } as CatalogueSource;
+          }
+          const m = /dynamic_app_config\/([0-9a-f]{64})\.js/.exec(html);
+          if (!m) {
+            return {
+              ok: false,
+              message:
+                'The HTML of / names no dynamic_app_config script; Workato may have moved the ' +
+                'catalogue. Falling back to the workspace sources only.',
+            } as CatalogueSource;
+          }
+          const hash = m[1];
+          if (knownCatalogueHash !== null && knownCatalogueHash === hash) {
+            return { ok: true, hash: hash, unchanged: true } as CatalogueSource;
+          }
+          const url = `/web_api/dynamic_app_config/${hash}.js`;
+          return fetch(url, { credentials: 'include' }).then((cr) =>
+            cr.text().then((js) => {
+              if (cr.status < 200 || cr.status >= 300) {
+                return {
+                  ok: false,
+                  status: cr.status,
+                  hash: hash,
+                  message: `GET ${url} returned HTTP ${cr.status}`,
+                } as CatalogueSource;
+              }
+              const startMarker = 'window.Workato.config = ';
+              const start = js.indexOf(startMarker);
+              const end = js.indexOf('};\nvar providers');
+              if (start < 0 || end < 0) {
+                return {
+                  ok: false,
+                  hash: hash,
+                  message: `${url}: the window.Workato.config assignment was not where expected`,
+                } as CatalogueSource;
+              }
+              let config: any = null;
+              try {
+                config = JSON.parse(js.slice(start + startMarker.length, end + 1));
+              } catch (e) {
+                return {
+                  ok: false,
+                  hash: hash,
+                  message: `${url}: JSON.parse failed: ${e instanceof Error ? e.message : String(e)}`,
+                } as CatalogueSource;
+              }
+              const providers = config && config.providers;
+              if (!providers || typeof providers !== 'object') {
+                return {
+                  ok: false,
+                  hash: hash,
+                  message: `${url}: no providers map in window.Workato.config`,
+                } as CatalogueSource;
+              }
+              const entries: CatalogueEntry[] = [];
+              const keys = Object.keys(providers);
+              for (let i = 0; i < keys.length; i++) {
+                const p = providers[keys[i]];
+                if (p && typeof p === 'object') entries.push(slimProvider(keys[i], p));
+              }
+              return { ok: true, hash: hash, entries: entries } as CatalogueSource;
+            }),
+          );
+        }),
+      )
+      .then(
+        (res) => res,
+        (e) =>
+          ({
+            ok: false,
+            message: `catalogue fetch failed: ${e instanceof Error ? e.message : String(e)}`,
+          }) as CatalogueSource,
+      );
   }
 
   return Promise.all([
@@ -159,18 +275,18 @@ function fetchAppSourcesInPage(
     includeCertified
       ? getJson('/web_api/certified_custom_adapters.json')
       : Promise.resolve({ ok: true, body: null } as SourceResult),
-    fetchBuiltins(),
+    fetchCatalogue(),
   ]).then((r) => ({
     connections: r[0],
     usedAdapters: r[1],
     custom: r[2],
     certified: r[3],
-    builtins: r[4],
+    catalogue: r[4],
   }));
 }
 
 // ---------------------------------------------------------------------------
-// Pure shaping helpers. Exported for unit tests — no browser needed.
+// Pure shaping helpers. Exported for unit tests, no browser needed.
 // ---------------------------------------------------------------------------
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -181,40 +297,81 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export interface AppConnection {
   id: number;
   name: string;
-  /** Workato's authorization_status, e.g. "success". Anything else means the step will fail. */
+  /**
+   * Workato's authorization_status, e.g. "success". Anything else means the
+   * step will fail; "success" does NOT prove the connection works (two
+   * Salesforce connections reported success and answered every call with
+   * HTTP 420 on 2026-09-08). workato_step_schema with an empty input is the
+   * cheap liveness probe.
+   */
   status?: string;
 }
 
+export type AppSource = 'connection' | 'recipes' | 'builtin' | 'custom' | 'standard' | 'certified';
+
 export interface AppEntry {
-  /** The technical adapter name — what goes into step.provider. */
+  /** The technical adapter name: what goes into step.provider. */
   name: string;
   title?: string;
   aliases?: string[];
   /**
    * Where this app was seen. Order of usefulness:
-   *   connection — has a working connection here, usable right now
-   *   recipes    — already used by a recipe here, so there are live examples
-   *   builtin    — one of Workato's own connectors, always available
-   *   custom     — this workspace's own SDK connector
-   *   certified  — in Workato's certified catalogue, not installed here
+   *   connection  has a connection here, usable right now
+   *   recipes     already used by a recipe here, so there are live examples
+   *   builtin     one of Workato's own tools (categories Workato / Recipe Tools)
+   *   custom      this workspace's own SDK connector
+   *   standard    in Workato's standard catalogue, no connection here yet
+   *   certified   in Workato's certified community catalogue, not installed here
    */
-  source: ('connection' | 'recipes' | 'builtin' | 'custom' | 'certified')[];
+  source: AppSource[];
   connections?: AppConnection[];
   categories?: string[];
   /** False = no connection needed, and no `account_id` in the recipe config entry. */
   connection_required?: boolean;
   triggers_count?: number;
   actions_count?: number;
+  deprecated_actions_count?: number;
+  deprecated_triggers_count?: number;
+  /** Workato marks the whole connector deprecated. Hidden unless asked for or in use here. */
+  deprecated?: boolean;
+  /** A "secondary" variant (a second connection of the same app in one recipe). */
+  secondary?: boolean;
+  /** Feature gate the workspace must have for this connector. */
+  required_feature?: string;
 }
 
-/** Build the case-insensitive name/title/alias matcher. */
+/** Categories Workato puts its own tools under. Those entries are `builtin`. */
+const WORKATO_TOOL_CATEGORIES = new Set(['Workato', 'Recipe Tools']);
+
+/** Build the case-insensitive name/title/alias/category matcher. */
 export function buildAppMatcher(query: string): (app: AppEntry) => boolean {
   const needle = query.trim().toLowerCase();
   if (needle.length === 0) return () => true;
   return (app) =>
     app.name.toLowerCase().includes(needle) ||
     (app.title?.toLowerCase().includes(needle) ?? false) ||
-    (app.aliases?.some((a) => a.toLowerCase().includes(needle)) ?? false);
+    (app.aliases?.some((a) => a.toLowerCase().includes(needle)) ?? false) ||
+    (app.categories?.some((c) => c.toLowerCase().includes(needle)) ?? false);
+}
+
+/** Exact, case-insensitive category filter. */
+export function buildCategoryMatcher(category: string): (app: AppEntry) => boolean {
+  const wanted = category.trim().toLowerCase();
+  if (wanted.length === 0) return () => true;
+  return (app) => app.categories?.some((c) => c.toLowerCase() === wanted) ?? false;
+}
+
+/**
+ * Whether a deprecated catalogue entry should still be listed.
+ *
+ * A connector Workato retired is noise in a search for something to build
+ * with, unless this workspace already connected it or built with it: then it
+ * is a fact about the workspace, and hiding it would hide a running recipe's
+ * provider.
+ */
+export function isVisibleApp(app: AppEntry, includeDeprecated: boolean): boolean {
+  if (includeDeprecated || app.deprecated !== true) return true;
+  return app.source.includes('connection') || app.source.includes('recipes');
 }
 
 function upsert(map: Map<string, AppEntry>, name: string): AppEntry {
@@ -225,7 +382,7 @@ function upsert(map: Map<string, AppEntry>, name: string): AppEntry {
   return created;
 }
 
-function markSource(app: AppEntry, source: AppEntry['source'][number]): void {
+function markSource(app: AppEntry, source: AppSource): void {
   if (!app.source.includes(source)) app.source.push(source);
 }
 
@@ -235,23 +392,48 @@ function applyAdapterConfig(app: AppEntry, config: unknown): void {
   if (typeof config.title === 'string' && !app.title) app.title = config.title;
   if (Array.isArray(config.aliases)) {
     const aliases = config.aliases.filter((a): a is string => typeof a === 'string');
-    if (aliases.length > 0) app.aliases = aliases;
+    if (aliases.length > 0 && !app.aliases) app.aliases = aliases;
   }
-  if (typeof config.triggers_count === 'number') app.triggers_count = config.triggers_count;
-  if (typeof config.actions_count === 'number') app.actions_count = config.actions_count;
+  if (typeof config.triggers_count === 'number' && app.triggers_count === undefined) {
+    app.triggers_count = config.triggers_count;
+  }
+  if (typeof config.actions_count === 'number' && app.actions_count === undefined) {
+    app.actions_count = config.actions_count;
+  }
+}
+
+function applyCatalogueEntry(app: AppEntry, raw: CatalogueEntry): void {
+  if (raw.title && !app.title) app.title = raw.title;
+  if (raw.aliases && raw.aliases.length > 0) app.aliases = raw.aliases;
+  if (raw.categories && raw.categories.length > 0) app.categories = raw.categories;
+  if (typeof raw.connection_required === 'boolean')
+    app.connection_required = raw.connection_required;
+  if (typeof raw.actions_count === 'number') app.actions_count = raw.actions_count;
+  if (typeof raw.triggers_count === 'number') app.triggers_count = raw.triggers_count;
+  if (typeof raw.deprecated_actions_count === 'number') {
+    app.deprecated_actions_count = raw.deprecated_actions_count;
+  }
+  if (typeof raw.deprecated_triggers_count === 'number') {
+    app.deprecated_triggers_count = raw.deprecated_triggers_count;
+  }
+  if (raw.deprecated === true) app.deprecated = true;
+  if (raw.secondary === true) app.secondary = true;
+  if (typeof raw.required_feature === 'string') app.required_feature = raw.required_feature;
 }
 
 /**
- * Merge the four raw source bodies into one adapter-name-keyed list.
+ * Merge the raw source bodies into one adapter-name-keyed list.
  *
  * Sorted so the immediately usable apps come first: connected, then used in
- * recipes, then the rest alphabetically. An agent that reads only the head of
- * a long list still gets the ones it can actually build against.
+ * recipes, then Workato's own tools, then this workspace's SDK connectors,
+ * then the standard catalogue, then the certified catalogue, alphabetical
+ * within each band. An agent that reads only the head of a long list still
+ * gets the ones it can actually build against.
  */
 export function mergeAppSources(sources: {
   connections?: unknown;
   usedAdapters?: unknown;
-  builtins?: unknown;
+  catalogue?: CatalogueEntry[];
   custom?: unknown;
   certified?: unknown;
 }): AppEntry[] {
@@ -284,24 +466,13 @@ export function mergeAppSources(sources: {
     }
   }
 
-  const builtins = isRecord(sources.builtins) ? sources.builtins.result : undefined;
-  if (Array.isArray(builtins)) {
-    for (const raw of builtins) {
-      if (!isRecord(raw)) continue;
-      const name = typeof raw.name === 'string' ? raw.name : '';
-      if (!name) continue;
-      const app = upsert(map, name);
-      markSource(app, 'builtin');
-      // Applied the same way as a custom adapter's config block, plus the two
-      // fields only the built-ins carry here.
-      applyAdapterConfig(app, raw);
-      if (Array.isArray(raw.categories)) {
-        const categories = raw.categories.filter((c): c is string => typeof c === 'string');
-        if (categories.length > 0) app.categories = categories;
-      }
-      if (typeof raw.connection_required === 'boolean') {
-        app.connection_required = raw.connection_required;
-      }
+  if (Array.isArray(sources.catalogue)) {
+    for (const raw of sources.catalogue) {
+      if (!isRecord(raw) || typeof raw.name !== 'string' || raw.name.length === 0) continue;
+      const app = upsert(map, raw.name);
+      const isTool = raw.categories?.some((c) => WORKATO_TOOL_CATEGORIES.has(c)) ?? false;
+      markSource(app, isTool ? 'builtin' : 'standard');
+      applyCatalogueEntry(app, raw);
     }
   }
 
@@ -334,55 +505,84 @@ export function mergeAppSources(sources: {
     if (app.source.includes('recipes')) return 1;
     if (app.source.includes('builtin')) return 2;
     if (app.source.includes('custom')) return 3;
-    return 4;
+    if (app.source.includes('standard')) return 4;
+    return 5;
   };
   return [...map.values()].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+}
+
+export interface CatalogueSummary {
+  standard: number;
+  builtin: number;
+  certified: number;
+  deprecated_hidden: number;
+  /** Category -> number of visible catalogue apps in it, largest first. */
+  categories: Record<string, number>;
+}
+
+/**
+ * The bare-call view: what this workspace has, plus the catalogue by the
+ * numbers. 338 rows nobody asked for is not an answer; the categories are the
+ * index a caller narrows with.
+ */
+export function summariseApps(
+  all: AppEntry[],
+  includeDeprecated: boolean,
+): {
+  connected: AppEntry[];
+  custom: AppEntry[];
+  used_in_recipes: string[];
+  catalogue: CatalogueSummary;
+} {
+  const connected = all.filter((a) => a.source.includes('connection'));
+  const custom = all.filter((a) => a.source.includes('custom') && !a.source.includes('connection'));
+  const used = all.filter((a) => a.source.includes('recipes')).map((a) => a.name);
+
+  const counts: Record<string, number> = {};
+  let standard = 0;
+  let builtin = 0;
+  let certified = 0;
+  let hidden = 0;
+  for (const app of all) {
+    const visible = isVisibleApp(app, includeDeprecated);
+    if (!visible) {
+      hidden++;
+      continue;
+    }
+    if (app.source.includes('standard')) standard++;
+    if (app.source.includes('builtin')) builtin++;
+    if (app.source.includes('certified')) certified++;
+    for (const c of app.categories ?? []) counts[c] = (counts[c] ?? 0) + 1;
+  }
+  const categories: Record<string, number> = {};
+  for (const [name, n] of Object.entries(counts).sort(
+    (x, y) => y[1] - x[1] || x[0].localeCompare(y[0]),
+  )) {
+    categories[name] = n;
+  }
+  return {
+    connected,
+    custom,
+    used_in_recipes: used,
+    catalogue: { standard, builtin, certified, deprecated_hidden: hidden, categories },
+  };
 }
 
 /** Pages of connections to walk. 20 per page, so this covers 200 connections. */
 const CONNECTION_PAGES = 10;
 
 /**
- * Workato's own built-in connectors, by adapter name.
- *
- * These are the ones whose technical name cannot be derived from what a person
- * calls them, which is the case this list exists for. Verified live 2026-08-26:
- *
- *   rest                  -> "HTTP"
- *   workato_pub_sub       -> "Workato Event Streams"
- *   clock                 -> "Scheduler by Workato"
- *   py_eval               -> "Python snippets by Workato"
- *   csv_parser            -> "CSV tools by Workato"
- *   workato_workflow_task -> "Workflow apps by Workato"
- *   workato_app           -> "RecipeOps by Workato"
- *   workato_files         -> "Workato FileStorage"
- *
- * Only the NAMES are fixed here. Title, aliases, categories and
- * connection_required are read live from /integrations/meta on every call, so
- * the searchable text is never a stale copy. A connector Workato adds later is
- * simply absent until this list grows, which degrades to the behaviour that
- * existed before it: guess the name and confirm with workato_adapter_meta.
+ * Service-worker cache of the reduced catalogue, keyed by the deployment hash.
+ * The in-page function is told the hash we hold and skips the 320 KB fetch
+ * when the page still names it, so a rename or a new connector shows up on the
+ * next Workato deploy and never later.
  */
-const BUILTIN_ADAPTERS = [
-  'clock',
-  'csv_parser',
-  'email',
-  'ftps',
-  'json_parser',
-  'logger',
-  'lookup_table',
-  'py_eval',
-  'rest',
-  'sftp',
-  'workato_api_platform',
-  'workato_app',
-  'workato_files',
-  'workato_pub_sub',
-  'workato_recipe_function',
-  'workato_variable',
-  'workato_workflow_task',
-  'xml_parser',
-];
+let catalogueCache: { hash: string; entries: CatalogueEntry[]; fetchedAt: number } | null = null;
+
+/** Exposed for tests. */
+export function resetCatalogueCache(): void {
+  catalogueCache = null;
+}
 
 class WorkatoAppsListTool extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.WORKATO.APPS_LIST;
@@ -392,18 +592,25 @@ class WorkatoAppsListTool extends BaseBrowserToolExecutor {
       if (args?.query != null && typeof args.query !== 'string') {
         return createErrorResponse('Param [query] must be a string');
       }
+      if (args?.category != null && typeof args.category !== 'string') {
+        return createErrorResponse('Param [category] must be a string');
+      }
       const query = args?.query?.trim() ?? '';
+      const category = args?.category?.trim() ?? '';
+      const onlyConnected = args?.only_connected === true;
+      const includeDeprecated = args?.include_deprecated === true;
+      const narrowed = query.length > 0 || category.length > 0 || onlyConnected;
       // The certified catalogue is ~70 KB raw. Free to include once a query
       // narrows it; opt-in otherwise, so a bare call stays small.
-      const includeCertified = args?.include_certified ?? query.length > 0;
-      const limit = Math.min(Math.max(args?.limit ?? 200, 1), 1000);
+      const includeCertified = args?.include_certified ?? (query.length > 0 || category.length > 0);
+      const limit = Math.min(Math.max(args?.limit ?? (narrowed ? 50 : 200), 1), 1000);
       const timeoutMs = Math.min(Math.max(args?.timeout_ms ?? 30_000, 10_000), 110_000);
 
       const tab = await findWorkatoTab(args?.tabId);
       const raw = await runInWorkatoTab(
         tab.tabId,
         fetchAppSourcesInPage,
-        [includeCertified, CONNECTION_PAGES, BUILTIN_ADAPTERS],
+        [includeCertified, CONNECTION_PAGES, catalogueCache?.hash ?? null],
         { timeoutMs },
       );
 
@@ -414,21 +621,33 @@ class WorkatoAppsListTool extends BaseBrowserToolExecutor {
         );
       }
 
+      let catalogue: CatalogueEntry[] | undefined;
+      let catalogueHash: string | undefined;
+      if (raw.catalogue.ok && raw.catalogue.unchanged && catalogueCache) {
+        catalogue = catalogueCache.entries;
+        catalogueHash = catalogueCache.hash;
+      } else if (raw.catalogue.ok && Array.isArray(raw.catalogue.entries) && raw.catalogue.hash) {
+        catalogueCache = {
+          hash: raw.catalogue.hash,
+          entries: raw.catalogue.entries,
+          fetchedAt: Date.now(),
+        };
+        catalogue = raw.catalogue.entries;
+        catalogueHash = raw.catalogue.hash;
+      }
+
       const all = mergeAppSources({
         connections: raw.connections.body,
         usedAdapters: raw.usedAdapters.ok ? raw.usedAdapters.body : undefined,
-        builtins: raw.builtins.ok ? raw.builtins.body : undefined,
+        catalogue,
         custom: raw.custom.ok ? raw.custom.body : undefined,
         certified: raw.certified.ok ? raw.certified.body : undefined,
       });
 
-      const matched = query.length > 0 ? all.filter(buildAppMatcher(query)) : all;
-      const apps = matched.slice(0, limit);
-
       const degraded = (
         [
+          ['catalogue', raw.catalogue],
           ['used_in_recipes', raw.usedAdapters],
-          ['builtin_connectors', raw.builtins],
           ['custom_connectors', raw.custom],
           ['certified_catalogue', raw.certified],
         ] as const
@@ -436,19 +655,65 @@ class WorkatoAppsListTool extends BaseBrowserToolExecutor {
         .filter(([, res]) => !res.ok)
         .map(([label, res]) => `${label}: ${res.message}`);
 
-      const payload: Record<string, unknown> = {
-        count: apps.length,
-        total_matched: matched.length,
-        certified_included: includeCertified,
-        apps,
-        note:
-          'Workato serves no catalogue of its standard connectors — the recipe editor ships that ' +
-          'list in its own bundle. An app absent from this list is therefore NOT proof it does ' +
-          'not exist. To check one, pass the guessed name(s) to workato_adapter_meta: it accepts ' +
-          'an array, resolves any standard adapter whether or not this workspace has a ' +
-          'connection, and reports the misses under not_found.',
-      };
-      if (matched.length > apps.length) payload.truncated = matched.length - apps.length;
+      const catalogueNote = catalogue
+        ? `The catalogue is complete: ${catalogue.length} standard connectors from Workato's own ` +
+          `app config${includeCertified ? ' plus the certified community catalogue' : ''}. An app ` +
+          'absent from it is not available as a connector here; the honest options are the HTTP ' +
+          'connector `rest` or an SDK connector, and the user should be told that rather than ' +
+          'handed a guessed name. workato_adapter_meta accepts an array and reports misses under ' +
+          'not_found when a name still needs confirming.'
+        : 'The standard-connector catalogue could not be read this call (see sources_unavailable), ' +
+          'so only apps this workspace connected, built with or published are listed. Pass ' +
+          'guessed names to workato_adapter_meta, which reports misses under not_found.';
+
+      const payload: Record<string, unknown> = {};
+
+      if (!narrowed) {
+        const summary = summariseApps(all, includeDeprecated);
+        payload.summary = true;
+        payload.connected = summary.connected;
+        payload.custom = summary.custom;
+        payload.used_in_recipes = summary.used_in_recipes;
+        payload.catalogue = summary.catalogue;
+        payload.hint =
+          'This is the summary. Pass query (name, title, alias or category substring, e.g. ' +
+          '"sheet", "python", "CRM") or category (exact, e.g. "Database") for the matching ' +
+          'apps, include_deprecated:true to see retired connectors, only_connected:true for ' +
+          'the connected ones as a plain list.';
+      } else {
+        let matched = all.filter((a) => isVisibleApp(a, includeDeprecated));
+        if (query.length > 0) matched = matched.filter(buildAppMatcher(query));
+        if (category.length > 0) matched = matched.filter(buildCategoryMatcher(category));
+        if (onlyConnected) matched = matched.filter((a) => a.source.includes('connection'));
+        const apps = matched.slice(0, limit);
+        payload.count = apps.length;
+        payload.total_matched = matched.length;
+        payload.apps = apps;
+        if (matched.length > apps.length) payload.truncated = matched.length - apps.length;
+        if (matched.length === 0) {
+          const hiddenDeprecated = all.filter(
+            (a) =>
+              !isVisibleApp(a, includeDeprecated) &&
+              (query.length === 0 || buildAppMatcher(query)(a)) &&
+              (category.length === 0 || buildCategoryMatcher(category)(a)),
+          ).length;
+          payload.no_match_hint =
+            (hiddenDeprecated > 0
+              ? `${hiddenDeprecated} deprecated connector(s) matched but are hidden; pass ` +
+                'include_deprecated:true to see them. '
+              : '') +
+            'Try a shorter query or a category name; the bare call lists every category with counts.';
+        }
+      }
+
+      payload.certified_included = includeCertified;
+      if (catalogueHash) payload.catalogue_version = catalogueHash.slice(0, 12);
+      payload.note = catalogueNote;
+      payload.connection_note =
+        'NO CONNECTION MEANS STOP AND ASK THE USER: these tools cannot create one. An app with ' +
+        'connection_required true and no connections entry (or one whose status is not ' +
+        '"success") is a blocker to raise before writing the step. "success" alone does not ' +
+        'prove the connection works; workato_step_schema with an empty input is the cheap probe.';
       if (degraded.length > 0) payload.sources_unavailable = degraded;
 
       return { content: [{ type: 'text', text: JSON.stringify(payload) }], isError: false };

@@ -32,6 +32,8 @@ interface AdapterMetaArgs {
   field_grep?: string;
   /** Include each operation's help text. Default true. */
   include_help?: boolean;
+  /** Index mode: list operations Workato marks deprecated too. Default false. */
+  include_deprecated?: boolean;
   /** Return the raw meta document instead of the slim view (capped; prefer out_file). */
   raw?: boolean;
   /** In-page script timeout. Default 30000, clamped 10000–110000. */
@@ -92,6 +94,10 @@ export interface SlimOperation {
   name: string;
   kind: 'trigger' | 'action';
   title?: string;
+  /** The one-line purpose Workato shows under the title in the action picker. */
+  title_hint?: string;
+  /** Other names the picker's search matches this operation by. */
+  aliases?: string[];
   help?: string;
   input?: SlimField[];
   output?: SlimField[];
@@ -314,6 +320,16 @@ export function slimOperation(
   const src = isRecord(raw) ? raw : {};
   const op: SlimOperation = { name, kind };
   if (typeof src.title === 'string') op.title = src.title;
+  if (typeof src.title_hint === 'string' && src.title_hint.trim().length > 0) {
+    // Some hints carry the editor's <span class="provider"> markup; flatten it
+    // the same way help text is flattened.
+    const hint = slimHelp(src.title_hint);
+    if (hint) op.title_hint = hint;
+  }
+  if (Array.isArray(src.aliases)) {
+    const aliases = src.aliases.filter((a): a is string => typeof a === 'string' && a.length > 0);
+    if (aliases.length > 0) op.aliases = aliases;
+  }
   if (opts.includeHelp) {
     const help = slimHelp(src.help);
     if (help) op.help = help;
@@ -358,6 +374,8 @@ export interface AdapterMetaView {
   deprecated?: boolean;
   triggers?: SlimOperation[];
   actions?: SlimOperation[];
+  /** Index mode: operations Workato marks deprecated that were left out of the lists. */
+  deprecated_hidden?: number;
   /** Present in index mode: how to get the field lists. */
   hint?: string;
 }
@@ -374,7 +392,13 @@ export interface AdapterMetaView {
 export function buildAdapterView(
   adapter: string,
   meta: unknown,
-  opts: { operation?: string; fieldGrep?: string; includeHelp: boolean },
+  opts: {
+    operation?: string;
+    fieldGrep?: string;
+    includeHelp: boolean;
+    /** Index mode only: keep deprecated operations in the lists. Default false. */
+    includeDeprecated?: boolean;
+  },
 ): AdapterMetaView {
   const node = pickAdapterNode(meta, adapter);
   if (!node) return { adapter, found: false, mode: 'index' };
@@ -386,12 +410,22 @@ export function buildAdapterView(
       : 'index';
   const matcher = opts.fieldGrep ? buildFieldMatcher(opts.fieldGrep) : undefined;
   const wanted = opts.operation?.toLowerCase();
+  // The recipe editor's action picker hides deprecated operations; the index
+  // does the same unless asked, because a retired action is noise in a search
+  // for something to build with. Detail and grep modes never hide: a name the
+  // caller typed, or a field the caller searched for, is answered as asked.
+  const hideDeprecated = mode === 'index' && opts.includeDeprecated !== true;
+  let deprecatedHidden = 0;
 
   const collect = (kind: 'trigger' | 'action', bag: unknown): SlimOperation[] => {
     if (!isRecord(bag)) return [];
     const out: SlimOperation[] = [];
     for (const [name, raw] of Object.entries(bag)) {
       if (wanted !== undefined && name.toLowerCase() !== wanted) continue;
+      if (hideDeprecated && isRecord(raw) && raw.deprecated === true) {
+        deprecatedHidden++;
+        continue;
+      }
       const op = slimOperation(name, kind, raw, {
         detail: mode !== 'index',
         includeHelp: opts.includeHelp,
@@ -413,6 +447,7 @@ export function buildAdapterView(
     triggers: collect('trigger', node.triggers),
     actions: collect('action', node.actions),
   };
+  if (deprecatedHidden > 0) view.deprecated_hidden = deprecatedHidden;
 
   // Adapter-level identity. Tiny, and it is what turns a guessed name into a
   // confirmed one — so it is returned in every mode, index included.
@@ -433,7 +468,10 @@ export function buildAdapterView(
   if (mode === 'index') {
     view.hint =
       'Index only. Pass operation:"<name>" for that operation\'s full input/output field ' +
-      'lists, or field_grep:"schema" to find fields by name/label across every operation.';
+      'lists, or field_grep:"schema" to find fields by name/label across every operation.' +
+      (deprecatedHidden > 0
+        ? ` ${deprecatedHidden} deprecated operation(s) hidden; include_deprecated:true lists them.`
+        : '');
   }
   return view;
 }
@@ -541,6 +579,7 @@ class WorkatoAdapterMetaTool extends BaseBrowserToolExecutor {
           operation: args.operation,
           fieldGrep: args.field_grep,
           includeHelp,
+          includeDeprecated: args.include_deprecated === true,
         }),
       );
 
