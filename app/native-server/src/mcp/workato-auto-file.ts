@@ -53,6 +53,7 @@ export const READ_TOOLS = new Set<string>([
   'workato_recipe_status',
   'workato_apps_list',
   'workato_pick_list',
+  'workato_step_schema',
   'workato_run_query',
   'workato_call_action',
   'workato_lookup_tables_list',

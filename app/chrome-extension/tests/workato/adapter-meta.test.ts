@@ -173,13 +173,51 @@ describe('buildAdapterView', () => {
     });
     expect(view.mode).toBe('index');
     expect(view.triggers?.map((t) => t.name)).toEqual(['execute']);
+    // call_recipe_async is deprecated: hidden the way the editor's picker hides it.
+    expect(view.actions?.map((a) => a.name)).toEqual(['return_result', 'call_recipe']);
+    expect(view.deprecated_hidden).toBe(1);
+    expect(view.actions?.every((a) => a.input === undefined)).toBe(true);
+    expect(view.hint).toMatch(/operation:/);
+    expect(view.hint).toMatch(/1 deprecated operation\(s\) hidden/);
+  });
+
+  it('index mode lists deprecated operations when asked', () => {
+    const view = buildAdapterView('workato_recipe_function', RECIPE_FUNCTION_META, {
+      includeHelp: false,
+      includeDeprecated: true,
+    });
     expect(view.actions?.map((a) => a.name)).toEqual([
       'return_result',
       'call_recipe',
       'call_recipe_async',
     ]);
-    expect(view.actions?.every((a) => a.input === undefined)).toBe(true);
-    expect(view.hint).toMatch(/operation:/);
+    expect(view.actions?.[2].deprecated).toBe(true);
+    expect(view.deprecated_hidden).toBeUndefined();
+  });
+
+  it('index entries carry title_hint and aliases, the text the picker searches', () => {
+    const meta = {
+      salesforce: {
+        triggers: {},
+        actions: {
+          search_sobjects: {
+            title: 'Search records',
+            title_hint: 'Retrieve a list of standard or custom records',
+            aliases: ['find', 'query', ''],
+            input: [],
+          },
+          plain: { title: 'Plain', aliases: [], title_hint: '   ', input: [] },
+        },
+      },
+    };
+    const view = buildAdapterView('salesforce', meta, { includeHelp: false });
+    expect(view.actions?.[0]).toMatchObject({
+      name: 'search_sobjects',
+      title_hint: 'Retrieve a list of standard or custom records',
+      aliases: ['find', 'query'],
+    });
+    expect(view.actions?.[1].title_hint).toBeUndefined();
+    expect(view.actions?.[1].aliases).toBeUndefined();
   });
 
   it('detail mode returns just the named operation, in full', () => {
