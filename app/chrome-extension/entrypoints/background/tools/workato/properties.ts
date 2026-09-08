@@ -498,6 +498,13 @@ class WorkatoPropertiesTool extends BaseBrowserToolExecutor {
       null,
     ]);
     if (!result.ok || !result.properties) {
+      if (projectId !== null && result.failure?.stage === 'fetch' && result.failure.status === 404) {
+        throw new WorkatoDispatchError(
+          'ProjectNotFound',
+          `project_id ${projectId} returned HTTP 404: it is not a project id in this workspace ` +
+            '(a folder id gives 404 too). workato_list_folders reports the project_id on a project root.',
+        );
+      }
       throw new WorkatoDispatchError(
         'UnexpectedShape',
         `property list failed (${result.failure?.stage}): ${

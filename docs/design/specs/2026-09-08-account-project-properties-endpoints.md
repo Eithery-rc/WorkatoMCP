@@ -301,7 +301,7 @@ None.
 }
 ```
 
-When no project properties exist in the project, the response is:
+A folder id (for example the project root folder id) in place of the project id answers HTTP 404 (verified live 2026-09-08). When no project properties exist in the project, the response is:
 
 ```json
 {
