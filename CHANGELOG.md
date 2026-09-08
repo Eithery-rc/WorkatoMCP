@@ -6,6 +6,14 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+### Added
+
+- **`workato_properties`**: read and write Workato account (environment) and project properties, the named configuration values a recipe resolves at job start. One tool, three actions: `list` (read-only, with a client-side `name` filter because the endpoint ignores every search parameter), `set` (an upsert by name: PUT when the name exists, POST when it does not, with `rename_to` and `expected_version_no`) and `delete` (by exact `name` or by `id`). `scope: "project"` takes `project_id`, which is the PROJECT id reported by `workato_list_folders`, not the folder id.
+- Property writes carry the concurrency rules the endpoint actually enforces: `set` sends `last_version_no`, refuses a caller-supplied `expected_version_no` that no longer matches before anything is written, and reports Workato's `can't update a stale row` as a version conflict naming both versions. A successful update issues a NEW `id` and `version_no`, so the response also carries `previous: {id, version_no}`.
+- Validation failures on this endpoint arrive as HTTP 200 with an error envelope (`{"error": {"details": {"name": ["has already been taken"]}}}`), which a status check alone reads as success. The tool parses the envelope on every path and reports the duplicate-name and stale-row cases by name.
+- Sensitive property values are masked in the response (`XXXXXXXXXX` plus the last three characters, `value_masked: true`) unless `reveal: true` is passed. Workato flags a property sensitive when its name contains `password`, `key` or `secret`, but its JSON API returns the value in the clear regardless: the mask is this tool's, not the platform's.
+- Endpoint capture behind it: [`docs/design/specs/2026-09-08-account-project-properties-endpoints.md`](docs/design/specs/2026-09-08-account-project-properties-endpoints.md), summarised for authoring in [`skills/workato-recipes/platform-endpoints.md`](skills/workato-recipes/platform-endpoints.md).
+
 ## bridge 1.6.0 · shared 1.3.0 (2026-09-07)
 
 Recipe development efficiency: one guarded mutation engine, bounded reads, job and caller search that does not make an agent walk pages, recoverable multi-recipe saves, supported test execution, and a session that cannot silently change workspace. Implements [`docs/design/plans/2026-09-07-recipe-development-efficiency.md`](docs/design/plans/2026-09-07-recipe-development-efficiency.md); the endpoint captures behind it are in [`skills/workato-recipes/platform-endpoints.md`](skills/workato-recipes/platform-endpoints.md).

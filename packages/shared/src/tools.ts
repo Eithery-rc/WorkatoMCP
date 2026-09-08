@@ -80,6 +80,7 @@ export const TOOL_NAMES = {
     CREATE_FOLDER: 'workato_create_folder',
     UPDATE_FOLDER: 'workato_update_folder',
     DELETE_FOLDER: 'workato_delete_folder',
+    PROPERTIES: 'workato_properties',
     MOVE_RECIPE: 'workato_move_recipe',
     COPY_RECIPE: 'workato_copy_recipe',
     DELETE_RECIPE: 'workato_delete_recipe',
@@ -2891,6 +2892,91 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['folder_id'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.PROPERTIES,
+    description:
+      'Read and write Workato properties: the named configuration values recipes resolve at job ' +
+      'start (Recipe data > Properties). One controller, /account_properties.json. ' +
+      'action "list" (default) is read-only; action "set" (upsert by name: PUT when the name ' +
+      'exists, POST when it does not) and action "delete" WRITE workspace configuration that ' +
+      'running recipes read at job start, so the next job picks the change up. ' +
+      'scope "account" is the whole environment; scope "project" needs project_id, which is the ' +
+      'PROJECT id (the `project_id` field on a project root in workato_list_folders), NOT the ' +
+      'folder `id`. A project property and an account property may share a name and neither ' +
+      'shadows the other. Values are stored in the CLEAR on Workato, including the ones it flags ' +
+      'sensitive (any name containing password, key or secret); this tool masks a sensitive ' +
+      'value to XXXXXXXXXX plus its last 3 characters and sets value_masked, unless you pass ' +
+      'reveal:true. Every successful set issues a NEW id and version_no, so ids from an earlier ' +
+      'list go stale; set sends last_version_no and reports a mismatch as a version conflict, ' +
+      'and expected_version_no makes that check yours. delete takes name (exact, refused when it ' +
+      'matches nothing or more than one) or id. Requires an open Workato tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['list', 'set', 'delete'],
+          description:
+            'What to do: "list" (read, default), "set" (create or update by name), "delete".',
+          default: 'list',
+        },
+        scope: {
+          type: 'string',
+          enum: ['account', 'project'],
+          description:
+            'Property scope: "account" (environment-wide, default) or "project" (one project).',
+          default: 'account',
+        },
+        project_id: {
+          type: 'number',
+          description:
+            'Required for scope "project": the PROJECT id, reported as `project_id` on a project ' +
+            'root folder by workato_list_folders. A folder id here reads an empty list.',
+        },
+        name: {
+          type: 'string',
+          description:
+            'Property name. On "list" it filters client-side (exact match first, else ' +
+            'case-insensitive substring). Required on "set". On "delete" it must resolve to one.',
+        },
+        value: {
+          type: 'string',
+          description:
+            'Required on "set": the new value. An empty string is accepted and stores an empty ' +
+            'value. Max 1024 characters.',
+        },
+        rename_to: {
+          type: 'string',
+          description:
+            'On "set": rename the property found under name to this. Fails when name does not ' +
+            'exist yet, since there is nothing to rename.',
+        },
+        expected_version_no: {
+          type: 'string',
+          description:
+            'On "set": the version_no you expect the property to be at. A mismatch is refused as ' +
+            'a version conflict before anything is written. Omit to use the current one.',
+        },
+        id: {
+          type: 'number',
+          description:
+            'On "delete": the property id, as an alternative to name. Ids change on every update.',
+        },
+        reveal: {
+          type: 'boolean',
+          description:
+            'Return the real value of a sensitive property instead of the mask. Default false.',
+          default: false,
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: [],
     },
   },
   {

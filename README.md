@@ -19,7 +19,7 @@
 
 ## What it is
 
-WorkatoMCP is a Chrome extension plus a local MCP bridge. It exposes **94 Workato tools** (recipes, jobs, connections, folders and projects, lookup tables, data tables, workflow app pages, and the recipe editor itself) to any MCP client (Claude Code, Claude Desktop, Cursor, and others).
+WorkatoMCP is a Chrome extension plus a local MCP bridge. It exposes **95 Workato tools** (recipes, jobs, connections, folders and projects, lookup tables, data tables, workflow app pages, and the recipe editor itself) to any MCP client (Claude Code, Claude Desktop, Cursor, and others).
 
 Instead of asking you to mint API tokens, it borrows the authenticated Workato session already open in your browser. Every request goes out from a real Workato tab, with your cookies, your CSRF token, your permissions, and your environment. Nothing is stored, and nothing leaves the machine.
 
@@ -164,7 +164,7 @@ Open Workato in Chrome, sign in, leave the tab open, and call a tool. The bridge
 
 ## Tools
 
-94 Workato tools. Full signatures, parameters, and response shapes are in **[docs/TOOLS.md](docs/TOOLS.md)**.
+95 Workato tools. Full signatures, parameters, and response shapes are in **[docs/TOOLS.md](docs/TOOLS.md)**.
 
 | Family                                                                               | Count | Prefix                | What it covers                                                                                                      |
 | ------------------------------------------------------------------------------------ | ----: | --------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -174,6 +174,7 @@ Open Workato in Chrome, sign in, leave the tab open, and call a tool. The bridge
 | [Search and connections](docs/TOOLS.md#search-and-connections)                       |     4 | `workato_`            | Find recipes, steps and connections; inspect a connection (secrets stripped)                                        |
 | [Connector execution and discovery](docs/TOOLS.md#connector-execution-and-discovery) |     7 | `workato_`            | Adapter names and field surfaces, pick lists, datapills, queries, the gated action runner, the raw API escape hatch |
 | [Projects and folders](docs/TOOLS.md#projects-and-folders)                           |     7 | `workato_`            | Folder tree, folder CRUD, move recipe, project create/update                                                        |
+| [Properties](docs/TOOLS.md#properties)                                               |     1 | `workato_`            | List, upsert and delete account (environment) and project properties                                                |
 | [Code-side recipe editing](docs/TOOLS.md#code-side-recipe-editing)                   |    10 | `workato_recipe_`     | One guarded engine: batch apply with structural ops, nested inputs, datapills, Python, schemas, callable contracts  |
 | [Recipe editor UI](docs/TOOLS.md#recipe-editor-ui)                                   |    11 | `workato_ui_`         | Drive the live editor: open, edit mode, fields, datapills, save, save code tree                                     |
 | [Lookup tables](docs/TOOLS.md#lookup-tables)                                         |    12 | `workato_lookup_`     | Table and row CRUD, upsert, search, CSV bulk import                                                                 |
@@ -181,7 +182,7 @@ Open Workato in Chrome, sign in, leave the tab open, and call a tool. The bridge
 | [Workflow app pages](docs/TOOLS.md#workflow-app-pages)                               |     7 | `workato_lcap_`       | List apps, read, validate, save and patch page trees, create and delete pages                                       |
 | [Session and build identity](docs/TOOLS.md#session-and-build-identity)               |     5 | `workato_`            | Which workspace a call lands in, full profile, Chrome profiles, pinning, running build                              |
 
-Plus the inherited [browser tools](docs/TOOLS.md#inherited-browser-tools) (`chrome_*`, `get_windows_and_tabs`, `performance_*`), 126 schemas in total.
+Plus the inherited [browser tools](docs/TOOLS.md#inherited-browser-tools) (`chrome_*`, `get_windows_and_tabs`, `performance_*`), 127 schemas in total.
 
 **Picking a tool.** The MCP handshake carries a task-to-tool table in the server instructions, so a client with lazy tool discovery gets the routing before it fetches a single schema. The same table, with more detail, is at the top of the [recipe skill](skills/workato-recipes/SKILL.md) and in [docs/TOOLS.md](docs/TOOLS.md). `workato_bridge_info` reports the `tool_count` and `schema_revision` the running build actually serves, which is how to tell a stale install from a documentation error.
 
