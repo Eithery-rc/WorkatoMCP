@@ -6,6 +6,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+## bridge 1.6.1 · shared 1.4.0 (2026-09-08)
+
 ### Added
 
 - **`workato_properties`**: read and write Workato account (environment) and project properties, the named configuration values a recipe resolves at job start. One tool, three actions: `list` (read-only, with a client-side `name` filter because the endpoint ignores every search parameter), `set` (an upsert by name: PUT when the name exists, POST when it does not, with `rename_to` and `expected_version_no`) and `delete` (by exact `name` or by `id`). `scope: "project"` takes `project_id`, which is the PROJECT id reported by `workato_list_folders`, not the folder id.
