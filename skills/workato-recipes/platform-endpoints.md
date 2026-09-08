@@ -1,6 +1,6 @@
 # Workato platform endpoints (live-verified)
 
-Captured live on **2026-09-07** in a **Development environment** workspace, by four probe agents driving a logged-in browser session. Every request and response shape below was observed, not inferred from documentation. Workato publishes no contract for these routes; treat this file as the record of what the web app actually does, and re-probe before relying on anything marked unverified.
+Captured live on **2026-09-07** in a **Development environment** workspace, by four probe agents driving a logged-in browser session; the adapter catalogue, action list and schema generation section was added from a **2026-09-08** capture in the same workspace. Every request and response shape below was observed, not inferred from documentation. Workato publishes no contract for these routes; treat this file as the record of what the web app actually does, and re-probe before relying on anything marked unverified.
 
 **How to use it.** Most of these endpoints already have a tool, named in each section. Reach for `workato_api_request` only for the ones that do not. It is same-origin (a `path` on the Workato host, never a URL elsewhere), it sends `x-requested-with: XMLHttpRequest` on every call, and it attaches `x-csrf-token` from the `XSRF-TOKEN-V2` cookie on writes. Anything other than GET or HEAD needs `allow_writes: true`, and a non-GET call verifies the pinned workspace first.
 
@@ -16,6 +16,7 @@ Two path shapes coexist. `/web_api/...` is the app's own JSON API; a 404 there u
 - [Start and stop](#start-and-stop)
 - [Test execution](#test-execution)
 - [Connections](#connections)
+- [Adapter catalogue, action lists and schema generation](#adapter-catalogue-action-lists-and-schema-generation)
 - [Event Streams (pub/sub) topics](#event-streams-pubsub-topics)
 - [Account and project properties](#account-and-project-properties)
 - [Activity and queue](#activity-and-queue)
@@ -352,17 +353,17 @@ Header: `x-requested-with: XMLHttpRequest`. Top-level path: `/web_api/connection
 
 Response `result` carries, among others:
 
-| Field                                          | Use                                                             |
-| ---------------------------------------------- | --------------------------------------------------------------- |
-| `authorization_status`                         | The health signal. `success` is the only value observed healthy |
-| `authorization_error`                          | Why it is not authorized                                        |
-| `authorized_at`                                | When it last authorized                                         |
-| `connection_lost_at`, `connection_lost_reason` | Set when Workato noticed the connection break                   |
-| `warning`, `clobber_warning`                   | Advisory strings                                                |
-| `provider`, `name`, `identity`                 | Identity                                                        |
-| `recipe_count`, `running_recipe_count`         | Blast radius                                                    |
-| `folder_id`, `project_id`, `folders[]`         | Placement                                                       |
-| `input{...}`                                   | **Credential material. Never return it.**                       |
+| Field                                          | Use                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `authorization_status`                         | The health signal. `success` is the only value observed healthy, and it is NOT proof the connection works: on 2026-09-08 two Salesforce connections (17977571, 17973532) and one Google Sheets connection (18514516) all read `success` while every call through them failed (`HTTP status code 420`, `invalid_grant`). Probe with `workato_step_schema(input: {})`, see the next section |
+| `authorization_error`                          | Why it is not authorized                                                                                                                                                                                                                                                                                                                                                                  |
+| `authorized_at`                                | When it last authorized                                                                                                                                                                                                                                                                                                                                                                   |
+| `connection_lost_at`, `connection_lost_reason` | Set when Workato noticed the connection break                                                                                                                                                                                                                                                                                                                                             |
+| `warning`, `clobber_warning`                   | Advisory strings                                                                                                                                                                                                                                                                                                                                                                          |
+| `provider`, `name`, `identity`                 | Identity                                                                                                                                                                                                                                                                                                                                                                                  |
+| `recipe_count`, `running_recipe_count`         | Blast radius                                                                                                                                                                                                                                                                                                                                                                              |
+| `folder_id`, `project_id`, `folders[]`         | Placement                                                                                                                                                                                                                                                                                                                                                                                 |
+| `input{...}`                                   | **Credential material. Never return it.**                                                                                                                                                                                                                                                                                                                                                 |
 
 ```
 GET /connections.json?adapter[]=<provider>
@@ -372,7 +373,74 @@ Response: `{result: {items: [<same shape as above>, ...]}}`. This is what the re
 
 **Tool.** `workato_recipe_connections` does exactly that (config bindings, then each bound connection, then `/integrations/meta` for providers with no `account_id`), and returns a `{healthy, blocking, actions}` verdict with credentials stripped. A `config` entry whose provider no step in the recipe uses is reported as `status: "unused"` and does not block anything: it is left-over binding, not a break. `workato_get_connection` and `workato_search_connections` cover the single and list reads, both stripping secrets on every path.
 
-Caveat from the capture: no disconnected connection existed in the probed workspace, so a lost connection's live field values were never observed. The projection treats any `authorization_status` other than `success`, or a non-null `connection_lost_at`, as lost.
+Caveat from the capture: no disconnected connection existed in the probed workspace, so a lost connection's live field values were never observed. The projection treats any `authorization_status` other than `success`, or a non-null `connection_lost_at`, as lost. The reverse case was observed on 2026-09-08: connections that read healthy on every field and fail every call.
+
+---
+
+## Adapter catalogue, action lists and schema generation
+
+Captured **2026-09-08** by adding a Salesforce step in the recipe editor (recipe 69530013) and replaying each call. Tools: `workato_apps_list`, `workato_adapter_meta`, `workato_pick_list`, `workato_step_schema`.
+
+```
+GET /                                              (HTML; contains the catalogue script tag)
+GET /web_api/dynamic_app_config/<sha256>.js        (the catalogue)
+```
+
+Every app page embeds `<script src="/web_api/dynamic_app_config/<sha256>.js" defer>`. The hash on 2026-09-08 was `d47c2bc3066f9124a9361c5a8882784c81951cab033d8d96b31f09a75e44dff0`, identical on two unrelated workspaces, so the file is per Workato deployment and the hash is its version. Read it from the HTML with `dynamic_app_config/([0-9a-f]{64})\.js`; the path without a hash is 404. The file is 320 KB of `application/javascript`, served with or without a session, of the form `// VERSION: <token>` / `window.Workato = window.Workato || {};` / `window.Workato.config = {...};` / `var providers = window.Workato.config.providers;`. Parse the JSON between `window.Workato.config = ` and `};\nvar providers`.
+
+`config.providers` is keyed by technical adapter name, 338 entries. Per entry: `name`, `title`, `aliases[]`, `categories[]`, `color`, `actions_count`, `triggers_count`, `deprecated_actions_count`, `deprecated_triggers_count`, `required_feature` (null for 301; otherwise a plan gate such as `data_pipeline`, `restricted_adapter`, `preview_adapter`), `config {required, oauth, oauth_personalization, personalization, custom_oauth {schema, help_step_1, help_step_2}, secure_tunnel, secure_tunnel_required}`; optional `url_name`, `secondary` (28 entries), `deprecated` (17), `delist_excluded` (20), `release_type` (`partner`, `demo`), `partner_info {email, github_repo}`. 45 entries have `config.required: false`; 47 carry category `Workato` or `Recipe Tools` (Workato's own tools: `rest`, `clock`, `py_eval`, `workato_pub_sub`, `workato_variable`, ...). Other top-level keys: `system_providers` (`workato, foreach, clock, email, sms, workflow, utility`), `popularApps`, `firstOrderApps`, `jobContextSchema`, `catchSchema`, `forEachSchema`, `repeatSchema`.
+
+```
+GET /web_api/certified_custom_adapters.json
+```
+
+The certified community catalogue, separate from the above: 178 entries `{id, name, installed, config: {title, aliases, logo_url, triggers_count, actions_count, deprecated_triggers_count, deprecated_actions_count}}`. `logo_url` is the only place the `workato-assets.s3.us-west-2.amazonaws.com/adapters/logos/...` path appears; the bucket does not list (403 on `?list-type=2`). Standard adapter icons are inline SVG in `cdn.marie.awsprod.workato.com/assets/en/adapter-icons-<hash>.css` under `.appicon-<name>`.
+
+```
+GET /integrations/meta?name=<adapter>&cacheKey=<x-workato-version>_<locale>
+```
+
+What the editor's ACTION picker calls once an app is chosen (`cacheKey=c9bb9bbf26f_en` on 2026-09-08; response `cache-control: max-age=604800, public`). The picker shows `actions[]` with `deprecated: true` removed: Salesforce has 60 in meta, 27 deprecated, 33 shown. Per action: `name, title, description, title_hint, aliases, help, input[], output[], deprecated, batch, bulk, file, realtime, beta, extends_input_schema, extends_output_schema, has_sample_output, depends_on, init_connection, display_priority, action_billing_type, title_english`. The counts match the catalogue's `actions_count` exactly (netsuite 44, salesforce 60, slack 17, workato_variable 7). The RECOMMENDED block is `POST /recommendations/line_action` and mapping suggestions are `POST /recommendations/automaps`, both gzipped bodies, neither wrapped by a tool. The app picker itself issues no request: it reads the preloaded `providers` map.
+
+```
+GET /connections.json?adapter[]=<provider>
+```
+
+The Connection tab of the step. Same item shape as `GET /connections/<id>.json`.
+
+```
+POST /connections/<connection_id>/extended_schema.json
+POST /connections/<adapter_slug>/extended_schema.json      (connectionless adapters)
+```
+
+The SCHEMA GENERATOR: what the Setup panel calls after every input change, and what `workato_step_schema` wraps. Headers `x-csrf-token` (URL-decoded `XSRF-TOKEN-V2` cookie), `x-requested-with: XMLHttpRequest`, `content-type: application/json`. Body:
+
+```json
+{
+  "flow_id": 69530013,
+  "operation_name": "search_sobjects",
+  "input": { "sobject_name": "Account" },
+  "dynamic_pick_list_selection": { "sobject_name": "Account" },
+  "depends_on": {},
+  "list_schema": {},
+  "only": ["input", "output"]
+}
+```
+
+`flow_id`, `dynamic_pick_list_selection`, `depends_on`, `list_schema` and `only` may all be omitted. Response `{"result": {"input": [...], "output": [...], "title", "description", "help"}}`, where `result.input` and `result.output` are exactly a step's `extended_input_schema` and `extended_output_schema`. Nothing is saved. Verified:
+
+| Call                                                                                                                                                                          | Result                                                                                                                                                                                                                                           |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/connections/workato_variable/...`, `declare_list`, `input: {name: "orders", list_item_schema_json: "[{order_id string},{amount number}]"}`                                  | `input: [{name: "list_items", label: "Items", type: "array", of: "object", optional: true, properties: [order_id, amount]}]`, `output: [{name: "list_items", label: "orders", optional: false, same properties}]`, title `" Create orders list"` |
+| `/connections/clock/...`, `scheduled_event`, `input: {time_unit: "minutes"}`                                                                                                  | `input: [trigger_every (integer, default "5", suffix minutes, extends_schema), timezone (pick_list timezone_id_global_pick_list, pick_list_connection_less true), start_after (date_time)]`, `output: []`                                        |
+| Jira connection 16580119, `get_issue`, `input: {}`                                                                                                                            | `output`: the full issue schema, 14 396 bytes, custom fields flagged `custom: true`                                                                                                                                                              |
+| Custom connector `netsuite_rest_connector_5105163_1745592003`, connection 17241780, `run_suiteql`, `input: {sql_statement: "SELECT id, companyname FROM customer", limit: 5}` | `output: [items (array of object: id, name), count, hasMore, offset, totalResults, query_executed, error]`                                                                                                                                       |
+| Salesforce 17977571 or 17973532, `search_sobjects`, `input: {sobject_name: "Account"}`                                                                                        | HTTP 200 `{"error": "HTTP status code 420"}`; `pick_list.json` on the same connections fails the same way. With `input: {}` the call succeeds with `input: [], output: []`                                                                       |
+| Google Sheets 18514516, `pick_list.json`                                                                                                                                      | HTTP 200 `{"error": "invalid_grant", "error_description": "Bad Request"}`                                                                                                                                                                        |
+
+Failure is therefore always HTTP 200 with an `error` key, never a 4xx, and all three failing connections reported `authorization_status: "success"`. `input: {}` is a safe liveness probe.
+
+**The editor's toolbar "Refresh" button is not a probe.** It fires `extended_schema.json` per step and then `PUT /recipes/<id>.json`: it saves. Recipe 69530013 went from version 1 to version 2 that way, with a half-configured Salesforce step and a new `config` entry `{provider: "salesforce", account_id: 17977571}`.
 
 ## Event Streams (pub/sub) topics
 
@@ -507,14 +575,16 @@ Both have **no tool**. Ready to paste:
 
 Probed and confirmed 404, so that nobody spends another session looking:
 
-| Route                                                                                                                    | Result                                           |
-| ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
-| `/recipes/<id>/validate.json`, `/web_api/recipes/<id>/validate.json`, `/recipes/<id>/ready.json`                         | 404. **No pre-start validation endpoint exists** |
-| `/web_api/recipes/<id>.json`                                                                                             | 404. The recipe metadata route is top-level      |
-| `/web_api/recipes/<id>/{dependents,callers,usage,dependencies,dependent_recipes,active_dependents,versions,status}.json` | 404. Use the dependency graph                    |
-| `/web_api/connections/<id>.json`, `/web_api/shared_accounts/<id>.json`                                                   | 404. The connection route is top-level           |
-| `POST /web_api/pub_sub/topics/<id>/messages.json`                                                                        | 404. There is no publish API                     |
-| `POST /connections/<adapter_name>/test_action.json`                                                                      | 404. A real connection id is required            |
+| Route                                                                                                                    | Result                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| `/recipes/<id>/validate.json`, `/web_api/recipes/<id>/validate.json`, `/recipes/<id>/ready.json`                         | 404. **No pre-start validation endpoint exists**                           |
+| `/web_api/recipes/<id>.json`                                                                                             | 404. The recipe metadata route is top-level                                |
+| `/web_api/recipes/<id>/{dependents,callers,usage,dependencies,dependent_recipes,active_dependents,versions,status}.json` | 404. Use the dependency graph                                              |
+| `/web_api/connections/<id>.json`, `/web_api/shared_accounts/<id>.json`                                                   | 404. The connection route is top-level                                     |
+| `POST /web_api/pub_sub/topics/<id>/messages.json`                                                                        | 404. There is no publish API                                               |
+| `POST /connections/<adapter_name>/test_action.json`                                                                      | 404. A real connection id is required                                      |
+| `GET /web_api/dynamic_app_config.js`                                                                                     | 404. The catalogue needs its hash, read from the HTML of `/`               |
+| `GET https://workato-assets.s3.us-west-2.amazonaws.com/?list-type=2&prefix=adapters/`                                    | 403. The S3 bucket does not list; it only serves community-connector logos |
 
 ## Fixtures kept in the probe workspace
 

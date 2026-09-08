@@ -6,9 +6,9 @@ Most items come from real recipe-building sessions: the pattern that repeats oft
 
 ## Planned
 
-### `workato_recipe_refresh_schema`
+### `workato_recipe_refresh_schema`: delivered as `workato_step_schema`
 
-The recipe editor's schema-refresh button is backed by `POST /connections/<id>/extended_schema.json`. Wrapping it would let an agent re-derive a step's schema after a connector-side field change instead of hand-writing the array. The endpoint has been captured; reliability across connectors still needs checking, since it returned empty for `execute_suiteql` during earlier reconnaissance. Note that this is a different problem from `auto_schema`, which derives a schema from a declaration the step already carries and needs no connection at all.
+Shipped in the unreleased changes of 2026-09-08 under the name `workato_step_schema`, because the tool turned out to be about writing a NEW step's schemas at least as much as refreshing an old one. It wraps `POST /connections/<id or adapter slug>/extended_schema.json`, returns `input_schema` / `output_schema`, and `apply_to: {recipe_id, step}` writes both into a step in one version. The earlier "returned empty for `execute_suiteql`" worry was a driver problem, not an endpoint one: the endpoint returns two empty arrays whenever an input field flagged `extends_schema` is unset, and the tool now names the missing drivers. Verified across a connectionless adapter, the clock trigger, a standard connector through a connection and a custom SDK connector. Still open: a "refresh every step of this recipe" convenience that walks the tree and calls it per step, the way the editor's Refresh button does (minus the save that button performs).
 
 ### `workato_lookup_table_get_row`
 

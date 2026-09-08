@@ -2,19 +2,20 @@
 
 How to go from "the recipe should send an email" to a step that actually works, without an existing example to copy. This is the part that has no answer in `code-tree.md`: that file documents the shapes of connectors already known, this one is about finding the shape of one that is not.
 
-Everything below was verified against a live workspace on 2026-08-26. Where Workato offers nothing, this file says so rather than leaving a gap that reads like an oversight.
+Everything below was verified against a live workspace on 2026-08-26; the connector catalogue and the schema generator were captured on 2026-09-08. Where Workato offers nothing, this file says so rather than leaving a gap that reads like an oversight.
 
 ## The ladder
 
-Four questions, in order. Each one narrows the next.
+Six questions, in order. Each one narrows the next.
 
-| Question                                                            | Tool                                             |
-| ------------------------------------------------------------------- | ------------------------------------------------ |
-| Which apps can I use here, and what is each one called technically? | `workato_apps_list`                              |
-| What can this connector do?                                         | `workato_adapter_meta` (index mode: bare call)   |
-| What does this operation take?                                      | `workato_adapter_meta` with `operation:"<name>"` |
-| What values does this field accept, in THIS workspace?              | `workato_pick_list`                              |
-| What does a working call look like here?                            | `workato_recipe_step_search`                     |
+| Question                                                                        | Tool                                             |
+| ------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Which apps exist, what is each called technically, and which have a connection? | `workato_apps_list`                              |
+| What can this connector do?                                                     | `workato_adapter_meta` (index mode: bare call)   |
+| What does this operation take?                                                  | `workato_adapter_meta` with `operation:"<name>"` |
+| What values does this field accept, in THIS workspace?                          | `workato_pick_list`                              |
+| What are the step's real `extended_input_schema` and `extended_output_schema`?  | `workato_step_schema`                            |
+| What does a working call look like here?                                        | `workato_recipe_step_search`                     |
 
 Then write the step with `workato_recipe_add_step`. It now runs through the same guarded mutation engine as every other native write: it pulls once, applies the insert to a clone, mints the `as` anchor and the `uuid`, renumbers the **whole tree** (not just the block, which is what used to give a nested step and a top-level step the same number), validates locally, and **merges** the pulled `config` rather than rebuilding it, so existing `account_id` and `skip_validation` values survive and only a provider new to the recipe is appended. A new provider gets its `account_id` when you pass `connection_id`; without one the response reports `connection_binding: missing` rather than leaving a recipe that cannot start. Use `anchor` (`after` / `before` / `into` with `first` / `last`) to insert inside a `foreach`, `if` or `try` block, and `dry_run: true` to see the summary without saving.
 
@@ -31,13 +32,23 @@ netsuite_rest_connector_5105163_1745592003    title: "NetSuite REST v2"
 enerflo_connector_5105163_1744901872          title: "Enerflo"
 ```
 
-`workato_apps_list` maps titles to those names, and tags each app with where it was seen:
+`workato_apps_list` maps titles to those names. It reads Workato's own connector catalogue (see below) and merges it with what this workspace has, tagging each app with every place it was seen:
 
-- `connection` — a real connection exists here, so a step can authenticate today. The connection ids and `authorization_status` come with it; a `connection_lost` status is why an otherwise correct step fails at run time.
-- `recipes` — already used by a recipe here, so step 4 will find live examples.
-- `custom` — this workspace's own SDK connector.
-- `builtin` — one of Workato's own connectors, always available. See the table below: this is where the display name and the adapter name diverge hardest.
-- `certified` — in Workato's certified community catalogue, not installed here.
+- `connection`: a real connection exists here, so a step can authenticate today. The connection ids and `authorization_status` come with it; a `connection_lost` status is why an otherwise correct step fails at run time. `success` is necessary, not sufficient (see step 4).
+- `recipes`: already used by a recipe here, so step 5 will find live examples.
+- `custom`: this workspace's own SDK connector, with its generated name.
+- `builtin`: one of Workato's own tools (catalogue category `Workato` or `Recipe Tools`), always available. See the table below: this is where the display name and the adapter name diverge hardest.
+- `standard`: any other connector in Workato's catalogue, whether or not this workspace has a connection to it.
+- `certified`: in Workato's certified community catalogue, not installed here.
+
+How to call it:
+
+- `workato_apps_list(query: "sheet")` matches name, title, aliases AND categories, case-insensitively: `google_sheets`, `smartsheet`, `tsheets`, `docparser`. `query: "python"` lands on `py_eval`; `query: "approval"` on `workato_workflow_task`; `query: "teams"` on `microsoft_teams`, `teams_bot` and `cisco_spark`.
+- `category: "CRM"` filters on a catalogue category. `only_connected: true` keeps the apps a step can authenticate as right now.
+- A bare call returns a SUMMARY, not the whole catalogue: `connected` (full entries), `custom`, `used_in_recipes`, and `catalogue: {standard, builtin, certified, deprecated_hidden, categories: {name: count}}`, with `summary: true`. Query from there.
+- Deprecated catalogue entries (`ariba`, `coda`, `splunk`, `soap`, `workato_list`, 17 in all) are hidden unless `include_deprecated: true`, except when this workspace still has a connection to or a recipe using one.
+
+Each entry carries `actions_count`, `triggers_count`, `deprecated_actions_count`, `deprecated_triggers_count`, `connection_required` and, when set, `required_feature` (a plan gate such as `data_pipeline` or `restricted_adapter`, which means the app may not be enabled for this account even though it is in the catalogue).
 
 ### No connection: stop and ask the user
 
@@ -85,23 +96,27 @@ The worst offenders are Workato's own built-in connectors, where the display nam
 | Logger by Workato          | `logger`                                    | no          |
 | FTP/FTPS, SFTP             | `ftps`, `sftp`                              | yes         |
 
-`workato_apps_list` carries all of these and searches their live titles and aliases, so "event stream", "pub/sub", "scheduler", "python" and "approval" each resolve to the right adapter. Only the list of names is fixed in the tool; titles and aliases are read from `/integrations/meta` on every call, so a rename shows up immediately.
+`workato_apps_list` carries all of these as `builtin` (47 entries in the catalogue) and searches their titles and aliases, so "event stream", "pub/sub", "scheduler", "python" and "approval" each resolve to the right adapter. Nothing is hard-coded in the tool any more: the names, titles, aliases and categories come from the catalogue on every call, so a rename or a new tool shows up as soon as Workato ships it.
 
-### The one real gap
+### The catalogue (captured 2026-09-08)
 
-**Workato serves no catalogue of its standard connectors.** The recipe editor's app picker issues no network request at all: the list is compiled into its bundle, the DOM carries titles without technical names, and the list is virtual-scrolled. There is no endpoint to page through.
+The earlier claim that Workato serves no catalogue of its standard connectors was wrong. Every app.workato.com page embeds
 
-That leaves the third-party standard connectors. An app missing from `workato_apps_list` is _not_ proof it does not exist. Resolve it by guessing instead, which is cheap because `/integrations/meta` takes a comma-separated list and silently omits names it does not know:
-
-```
-workato_adapter_meta(adapter: ["slack", "gmail", "microsoft_teams"])
+```html
+<script src="/web_api/dynamic_app_config/<sha256>.js" defer></script>
 ```
 
-Names that resolved come back with `title`, `aliases` and `categories`, which is what confirms the guess landed on the right app. The rest are listed under `not_found`. A completely unknown name returns `{}` with HTTP 200, never a 404, so absence is the only signal.
+and that file sets `window.Workato.config`, whose `providers` map is keyed by technical adapter name: **338 standard connectors** on 2026-09-08, each with `title`, `aliases`, `categories`, `actions_count`, `triggers_count`, `deprecated_*_count`, `config.required` (false for 45 of them, so no connection and no `account_id`), `deprecated`, `secondary`, `required_feature`. The hash in the URL is the version: it was identical on two unrelated workspaces, so the catalogue is per Workato deployment, not per account, and the bare path without the hash is a 404. The recipe editor's app picker issues no network request because it reads this preloaded map; the action picker then calls `/integrations/meta` for the chosen adapter.
+
+The **certified community catalogue** is separate: `/web_api/certified_custom_adapters.json`, 178 entries on 2026-09-08 with `installed` and `config.title`. `workato_apps_list` reads both, plus this workspace's own SDK connectors and connections.
+
+Coverage check against a workspace with 68 connections: every standard provider in use (gmail, google_drive, hubspot, jira, linkedin, microsoft_sharepoint, netsuite, shopify, slack, twilio, workday, sap, stripe, docusign, asana, airtable, quickbooks, xero, bamboohr, greenhouse) is in the 338. `monday` exists only as a certified connector (`monday_connector_192478_1611837420`); `notion` exists in neither.
+
+**An app absent from both catalogues is not available as a connector.** Say so to the user, and name the two real options: the HTTP connector (`rest`, needs a connection holding the API credentials) or an SDK connector this workspace would have to build and publish. Do not guess adapter names: `/integrations/meta` returns `{}` with HTTP 200 for an unknown name, indistinguishable from a typo, which is exactly the loop the catalogue removes. The array form of `workato_adapter_meta` still reports misses under `not_found`, and it remains the right tool once a name is known.
 
 ## Step 2 — list the operations
 
-A bare `workato_adapter_meta(adapter: "email")` returns the index: operation names, titles, help, and field counts. This stays small on purpose — a large connector's full meta runs to hundreds of KB.
+A bare `workato_adapter_meta(adapter: "email")` returns the index: operation names, titles, `title_hint` and `aliases` where the connector sets them, help, and field counts. This stays small on purpose, a large connector's full meta runs to hundreds of KB. Operations flagged `deprecated: true` are hidden from the index, exactly as the editor's action picker hides them (Salesforce: 60 actions in meta, 27 deprecated, 33 shown), and the adapter reports `deprecated_hidden: 27`; pass `include_deprecated: true` to see them, or name one with `operation:` and it comes back marked. This is the same `/integrations/meta` document the editor fetches when an app is picked, so the index IS the action picker, minus the RECOMMENDED block, which comes from a separate recommendations endpoint.
 
 ```json
 {
@@ -225,7 +240,38 @@ versus a connection-based provider:
 
 Both shapes verified in one live recipe's `config`. This is the general rule behind the list of system providers in `code-tree.md`: read `connection_required` rather than trusting that list to be complete. Hunting for a connection that will never exist is a common dead end.
 
-## Step 4 — find how it is used here
+## Step 4: generate the step's schemas with `workato_step_schema`
+
+Meta describes the STATIC surface. When an operation carries `extends_input_schema: true` or `extends_output_schema: true`, the real schema depends on the connection and on what has been entered so far: the Salesforce object picked, the SuiteQL written, the list item schema declared. Those are the `extended_input_schema` and `extended_output_schema` arrays a saved step carries, and hand-writing them is where recipes break: Workato accepts a step without them, reports `code_errors: []`, then drops `declare_list.list_items` or `call_recipe.parameters` on readback, or fails the downstream datapill with `Unknown data field`.
+
+The editor never writes these by hand. Its Setup panel calls `POST /connections/<id>/extended_schema.json` with the current input, and `workato_step_schema` is that call:
+
+```
+workato_step_schema(adapter: "workato_variable", operation: "declare_list",
+  input: {name: "orders",
+          list_item_schema_json: "[{\"name\":\"order_id\",\"type\":\"string\",\"label\":\"Order ID\"},{\"name\":\"amount\",\"type\":\"number\",\"label\":\"Amount\"}]"})
+  -> input_schema:  [{name: "list_items", label: "Items", type: "array", of: "object", optional: true,
+                      properties: [{name: "order_id", type: "string", control_type: "text", label: "Order ID"},
+                                   {name: "amount", type: "number", control_type: "number", parse_output: "float_conversion", label: "Amount"}]}]
+     output_schema: [{name: "list_items", label: "orders", type: "array", of: "object", optional: false, properties: [same two]}]
+     title: " Create orders list"
+```
+
+Both arrays go into the step verbatim. Verified 2026-09-08 on a connectionless adapter (above), on the clock trigger (`adapter: "clock", operation: "scheduled_event", input: {time_unit: "minutes"}` returns `trigger_every` with default `"5"`, `timezone` and `start_after`), on a standard connector through a connection (Jira `get_issue` with `input: {}` returned the full 14 KB issue schema including custom fields) and on a custom SDK connector (`run_suiteql` with a query returned `items`, `count`, `hasMore`, `offset`, `totalResults`, `query_executed`, `error`).
+
+How to call it:
+
+- `adapter` and `operation` are required. `connection_id` is required when the adapter's `connection_required` is true, and the tool refuses before any call when it is missing. A connectionless adapter goes by slug, exactly as the editor does.
+- `input` is the step input as it would be saved. Fields marked `extends_schema: true` in meta are the ones that drive the result; the response lists them as `schema_drivers`. Empty `input_schema` and `output_schema` with drivers unfilled means "pick first", and the response `note` names the missing drivers: Salesforce `search_sobjects` with `input: {}` returns two empty arrays and no error.
+- `dynamic_pick_list_selection` is derived for you from `input` for every field whose meta `pick_list` is a string, mirroring what the editor sends; it comes back as `dynamic_pick_list_selection_used`. Pass it only to override.
+- `only: ["output"]` when the input side is not wanted. `flow_id` is the recipe id and is optional.
+- `apply_to: {recipe_id, step}` writes both arrays into that step in ONE version through the same engine as `workato_recipe_set_extended_schema`, with the usual save modifiers (`comment`, `expected_base_version_no`, `dry_run`, `verify_readback`, `restart_if_running`, `ensure_running`). Without it the response carries `apply_ops`, a ready `workato_recipe_apply` operations array with `step: "<as>"` left for you to fill.
+
+**The endpoint reports failure as HTTP 200 with an `error` key, never a 4xx.** `{"error": "HTTP status code 420"}` means the CONNECTION failed the call against the SaaS. Seen live on 2026-09-08 on both Salesforce connections of the probed workspace and, as `{"error": "invalid_grant"}`, on a Google Sheets connection, while all three reported `authorization_status: "success"`. So `success` is necessary, not sufficient. `workato_step_schema` with `input: {}` is the cheap liveness probe: it answers in under a second, saves nothing, and a healthy connection returns either a schema or two empty arrays without an `error`. When it fails, name the connection by id and ask the user to re-authorize it; do not build the step on it.
+
+Never use the editor's toolbar **Refresh** button as this probe: it fires `extended_schema` per step and then `PUT /recipes/<id>.json`. It saves the recipe (observed: recipe 69530013 went from version 1 to version 2 with a half-configured step).
+
+## Step 5: find how it is used here
 
 Meta says what a field is called and what it accepts. It cannot say what a working value looks like: which datapill shape the team uses, which optional fields they always set, how they format an internal id. That knowledge only exists in recipes already running in the workspace.
 
@@ -255,6 +301,7 @@ workato_adapter_meta(adapter: "email")
 workato_adapter_meta(adapter: "email", operation: "send_mail")
   → to, subject, body required; email_type optional, options plain_text|html, default html
   → attachments is an array of objects, items are file_name + (file_binary_content | file_url)
+  → extends_input_schema and extends_output_schema both absent: the static surface is the whole surface
 
 workato_recipe_add_step(
   recipe_id: <id>, after_step: 0,
@@ -264,17 +311,66 @@ workato_recipe_add_step(
 
 No dynamic pick list on this action, so no `dynamicPickListSelection`. An action like `salesforce.search_sobjects` would need one.
 
-No `account_id` in `config` for this provider, because `connection_required` was false.
+No `account_id` in `config` for this provider, because `connection_required` was false. No `workato_step_schema` call either, because neither `extends_*_schema` flag was set.
+
+## Worked example: a typed list filled from Salesforce, then a loop
+
+The case that used to need hand-written schemas. Recipe already open; the user asked for "a list, fill it from Salesforce accounts, log each one".
+
+```
+workato_pull_recipe(recipe_id: <id>)
+  → trigger and two empty steps; config has no salesforce entry
+
+workato_apps_list(query: "salesforce")
+  → salesforce, source ["connection", "standard"], connections [{id: 17977571, status: "success"}, ...]
+
+workato_step_schema(adapter: "salesforce", connection_id: 17977571,
+                    operation: "search_sobjects", input: {})
+  → ok, input_schema [], output_schema [], note: schema depends on sobject_name
+    (a healthy connection answers this way; {"error": "HTTP status code 420"} would mean stop and ask for re-authorization)
+
+workato_pick_list(connection_id: 17977571, adapter: "salesforce",
+                  operation: "search_sobjects", field: "sobject_name", query: "account")
+  → {value: "Account", label: "Account"}
+
+workato_step_schema(adapter: "salesforce", connection_id: 17977571,
+                    operation: "search_sobjects", input: {sobject_name: "Account"})
+  → output_schema: the Account fields; pick Id and Name for the list
+
+workato_step_schema(adapter: "workato_variable", operation: "declare_list",
+                    input: {name: "accounts",
+                            list_item_schema_json: "[{\"name\":\"Id\",\"type\":\"string\"},{\"name\":\"Name\",\"type\":\"string\"}]"})
+  → input_schema and output_schema for list_items, ready to write
+
+workato_recipe_apply(recipe_id: <id>, dry_run: true, changes: [
+  {op: "insert_step", ... provider: "workato_variable", name: "declare_list", as: "acclist",
+     input: {name: "accounts", list_item_schema_json: "..."},
+     extended_input_schema: <from step_schema>, extended_output_schema: <from step_schema>},
+  {op: "insert_step", ... provider: "salesforce", name: "search_sobjects", connection_id: 17977571,
+     input: {sobject_name: "Account", limit: "150"}, dynamicPickListSelection: {sobject_name: "Account"},
+     extended_output_schema: <from step_schema>},
+  {op: "insert_step", ... provider: "workato_variable", name: "insert_to_list_batch", ...},
+  {op: "insert_step", keyword: "foreach", source: <datapill on acclist list_items>, ...},
+  {op: "insert_step", anchor: {into: <foreach>, position: "last"}, provider: "logger", name: "log_message",
+     input: {message: <datapill on foreach current item Name>}}
+])
+  → summary, then the same call without dry_run
+```
+
+Then `workato_recipe_validate` and `workato_pull_recipe(step: "acclist")` to confirm `list_items` survived the save. The two `workato_step_schema` calls replace the two schema arrays an agent used to compose by hand, and the `input: {}` call is what caught the dead Salesforce connections in the probed workspace before a single step was written.
 
 ## Endpoint reference
 
 For `workato_api_request` when a tool does not cover something.
 
-| Endpoint                                       | Returns                                                                                                                                                                                                                                                                                       |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/integrations/meta?name=a,b,c`                | Full meta per adapter. Works for any standard connector with or without a connection here. Unknown names are omitted, HTTP 200, `{}` when none matched.                                                                                                                                       |
-| `/web_api/mixed_assets/adapters.json`          | Bare array of adapter names used by recipes in this workspace. Under 200 bytes.                                                                                                                                                                                                               |
-| `/web_api/published_custom_adapters.json`      | This workspace's SDK connectors: generated name, title, trigger/action counts, connection fields.                                                                                                                                                                                             |
-| `/web_api/certified_custom_adapters.json`      | Workato's certified community catalogue with `installed`. ~70 KB.                                                                                                                                                                                                                             |
-| `POST /connections/<id>/pick_list.json`        | Dynamic pick list values. Body is the FIELD DEFINITION from `/integrations/meta`, plus optional `flow_id` and `pick_list_params`. Returns `{result: [[label, value], ...]}`. Answers HTTP 200 with `{"error": ...}` for a bad body, never a 4xx, so the status alone is not a success check.  |
-| `/web_api/mixed_assets.json?asset_type=recipe` | Recipe list. Each item already carries `trigger_application` and `action_applications`, which is what makes finding examples cheap. No server-side adapter filter was found — five plausible parameter names all silently returned the full list — so filter on those two fields client-side. |
+| Endpoint                                                 | Returns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/web_api/dynamic_app_config/<sha256>.js`                | The standard-connector CATALOGUE, 338 adapters on 2026-09-08. The hash is read from the HTML of `/` (`dynamic_app_config/([0-9a-f]{64})\.js`); the path without it is 404. Sets `window.Workato.config`; parse the JSON between `window.Workato.config = ` and `};\nvar providers`. 320 KB, served without a session, per deployment not per workspace.                                                                                                                                                                                                                |
+| `/integrations/meta?name=a,b,c`                          | Full meta per adapter. Works for any standard connector with or without a connection here. Unknown names are omitted, HTTP 200, `{}` when none matched. The editor calls it with `&cacheKey=<x-workato-version>_<locale>` and shows `actions[]` minus `deprecated: true`.                                                                                                                                                                                                                                                                                              |
+| `GET /connections.json?adapter[]=<provider>`             | The connections for one adapter, what the editor's Connection tab calls.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `POST /connections/<id or adapter>/extended_schema.json` | The schema generator behind `workato_step_schema`. Body `{flow_id?, operation_name, input, dynamic_pick_list_selection?, depends_on?, list_schema?, only?: ["input","output"]}`; `<id>` is a connection id or, for a connectionless adapter, its slug. Returns `{result: {input: [...], output: [...], title, description, help}}`, the two arrays being the step's `extended_input_schema` and `extended_output_schema`. Saves nothing. Failure is HTTP 200 `{"error": "HTTP status code 420"}` (connection broken against the SaaS) or `{"error": "invalid_grant"}`. |
+| `/web_api/mixed_assets/adapters.json`                    | Bare array of adapter names used by recipes in this workspace. Under 200 bytes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `/web_api/published_custom_adapters.json`                | This workspace's SDK connectors: generated name, title, trigger/action counts, connection fields.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `/web_api/certified_custom_adapters.json`                | Workato's certified community catalogue with `installed`. ~70 KB.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `POST /connections/<id>/pick_list.json`                  | Dynamic pick list values. Body is the FIELD DEFINITION from `/integrations/meta`, plus optional `flow_id` and `pick_list_params`. Returns `{result: [[label, value], ...]}`. Answers HTTP 200 with `{"error": ...}` for a bad body, never a 4xx, so the status alone is not a success check.                                                                                                                                                                                                                                                                           |
+| `/web_api/mixed_assets.json?asset_type=recipe`           | Recipe list. Each item already carries `trigger_application` and `action_applications`, which is what makes finding examples cheap. No server-side adapter filter was found (five plausible parameter names all silently returned the full list), so filter on those two fields client-side.                                                                                                                                                                                                                                                                           |
