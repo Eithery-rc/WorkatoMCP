@@ -2933,7 +2933,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description:
             'Required for scope "project": the PROJECT id, reported as `project_id` on a project ' +
-            'root folder by workato_list_folders. A folder id here reads an empty list.',
+            'root folder by workato_list_folders. A folder id here is refused with HTTP 404.',
         },
         name: {
           type: 'string',

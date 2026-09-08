@@ -468,7 +468,7 @@ PUT  { "account_property": { "name": "mcp_probe_beta", "value": "updated", "last
 
 Five things the capture established:
 
-1. **`project_id` is the PROJECT id, not the folder id.** `workato_list_folders` reports both on a project root: `project_id` is the one this route wants. A folder id is not rejected, it simply returns `{"result": []}`.
+1. **`project_id` is the PROJECT id, not the folder id.** `workato_list_folders` reports both on a project root: `project_id` is the one this route wants. A folder id is rejected with HTTP 404 (verified live 2026-09-08); `workato_properties` reports it as ProjectNotFound.
 2. **`last_version_no` is mandatory on PUT** and must equal the current `version_no`. Omitted, outdated or mismatched, the write is refused.
 3. **A successful PUT issues a NEW `id`** and a new `version_no`: rows are append-only. Every id from an earlier list is stale after an update.
 4. **Errors come back as HTTP 200**, not 4xx: `{"error": {"details": {"name": ["has already been taken"]}}}` on a duplicate name, `{"error": {"details": {"base": ["can't update a stale row"]}}}` on a version mismatch. A status check alone reads both as success.
