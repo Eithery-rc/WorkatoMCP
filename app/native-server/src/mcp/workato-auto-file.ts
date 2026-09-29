@@ -62,6 +62,9 @@ export const READ_TOOLS = new Set<string>([
   'workato_data_tables_list',
   'workato_data_table_get',
   'workato_data_table_row_list',
+  'workato_deployments_list',
+  // Opens only a draft deployment; its step diffs can run to tens of KB.
+  'workato_deploy_plan',
 ]);
 
 /** Tools whose served schema gains the out_file / auto_file properties. */

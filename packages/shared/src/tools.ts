@@ -76,6 +76,10 @@ export const TOOL_NAMES = {
     LIST_PROFILES: 'workato_list_profiles',
     BRIDGE_INFO: 'workato_bridge_info',
     RELOAD_EXTENSION: 'workato_reload_extension',
+    SWITCH_ENVIRONMENT: 'workato_switch_environment',
+    DEPLOYMENTS_LIST: 'workato_deployments_list',
+    DEPLOY_PLAN: 'workato_deploy_plan',
+    DEPLOY_RUN: 'workato_deploy_run',
     SWITCH_PROFILE: 'workato_switch_profile',
     LIST_FOLDERS: 'workato_list_folders',
     CREATE_FOLDER: 'workato_create_folder',
@@ -6021,6 +6025,196 @@ export const TOOL_SCHEMAS: Tool[] = [
       type: 'object',
       properties: {},
       required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.SWITCH_ENVIRONMENT,
+    description:
+      'Move the Workato session to another environment (dev, test, prod) and/or another client ' +
+      'workspace, the way the app header switchers do: it navigates the tab through ' +
+      '/users/switch_team and /users/switch_environment and verifies the result with a fresh ' +
+      'auth_user read. The session belongs to the Chrome PROFILE, so EVERY Workato tab in that ' +
+      'profile moves; other tabs keep showing their old page until reloaded. Changes no Workato ' +
+      'data, so it needs no write flag, but it changes what every later call in this profile ' +
+      'reads and writes: switch back when done. environment takes dev|development, test, ' +
+      'prod|production, an exact environment name, or an id; workspace takes an exact name, a ' +
+      'unique part of one, or an id, from the workspaces this user belongs to (ambiguous input ' +
+      'is refused with the candidates). With both, the workspace switches first and the ' +
+      'environment is resolved inside it. return_to lands the tab on an app path after an ' +
+      'environment switch. Returns {changed, before, after:{workspace_id, workspace_name, ' +
+      'environment, environment_id, environment_type}, tab_id, landed_url}; changed:false means ' +
+      'it was already there. A pinned MCP session on this profile follows the switch. Use ' +
+      'workato_whoami for the list of environments and workspaces.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        environment: {
+          type: ['string', 'number'],
+          description: 'Target environment: dev, test, prod, an environment name or id.',
+        },
+        workspace: {
+          type: ['string', 'number'],
+          description: 'Target client workspace: its name (or a unique part of it) or id.',
+        },
+        return_to: {
+          type: 'string',
+          description:
+            'App path to land on after an environment switch, starting with "/", e.g. "/recipes/123".',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Workato tab to navigate. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.DEPLOYMENTS_LIST,
+    description:
+      "A project's deployment history and where it can deploy to. Resolves the project from " +
+      'recipe_id, folder_id or project (name or project_id), then returns deployable_environments ' +
+      '[{id, name, type}] and one page of deployments: id, deployment_id, title, state ' +
+      '(deploy_finished, deploy_failed, ...), error, environment name/type/id, created_at, ' +
+      'updated_at, performed_by, zip_file_name, plus page/per_page/count/total. Abandoned drafts ' +
+      '(a plan that was never run) are not listed there. Read only. Run it from the SOURCE ' +
+      'environment tab, where the project is developed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'A recipe of the project.' },
+        folder_id: { type: 'number', description: 'Any folder of the project, root or nested.' },
+        project: {
+          type: ['string', 'number'],
+          description: 'Project name (exact, case-insensitive) or project_id.',
+        },
+        page: { type: 'number', description: 'Page of the history, 1-based. Default 1.' },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.DEPLOY_PLAN,
+    description:
+      'Step 1 of a deployment: what would change in the target environment, before anything is ' +
+      'deployed. Run from the SOURCE environment tab (usually Development); a target equal to the ' +
+      'tab environment is refused. Opens a deployment draft (a server object that changes nothing ' +
+      'in either environment; an unused draft lingers and is not listed in the history), selects ' +
+      'the assets, and waits for Workato to calculate the diff. With recipe_id the default ' +
+      'selection is the recipe plus the project assets it depends on, transitively (the recipe ' +
+      'page "Deploy to" button); a recipe that calls it is not included. assets:"all" takes the ' +
+      'whole project; include/exclude toggle source asset ids. Returns deployment_id, summary ' +
+      '{added, updated, unchanged}, assets [{name, type, source_id, target_id, state, changes, ' +
+      'running}], not_included, will_stop (changed recipes running in the target: the run stops ' +
+      'and restarts them) and step_diffs per changed recipe: steps_changed with field diffs (code ' +
+      'as a unified diff, target now vs source), steps_added, steps_removed, and remaps: ids that ' +
+      'only differ because each environment has its own copy (data table, called recipe, lookup ' +
+      'table), which are not changes. Then call workato_deploy_run with the deployment_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'number', description: 'Deploy this recipe (and its dependencies).' },
+        folder_id: { type: 'number', description: 'A folder of the project to deploy.' },
+        project: {
+          type: ['string', 'number'],
+          description: 'Project name (exact, case-insensitive) or project_id.',
+        },
+        environment: {
+          type: ['string', 'number'],
+          description: 'TARGET environment: test, prod, an environment name or id.',
+        },
+        assets: {
+          type: 'string',
+          enum: ['recipe_with_deps', 'all'],
+          description:
+            'recipe_with_deps (default with recipe_id) or all (default with folder_id/project).',
+        },
+        include: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Source asset ids to add to the selection.',
+        },
+        exclude: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Source asset ids to leave out; wins over include.',
+        },
+        include_step_diff: {
+          type: 'boolean',
+          description: 'Fetch the step-level diff of each changed recipe. Default true.',
+          default: true,
+        },
+        include_tags: {
+          type: 'boolean',
+          description: 'Deploy asset tags too, as the UI does. Default true.',
+          default: true,
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['environment'],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.DEPLOY_RUN,
+    description:
+      'Step 2 of a deployment: deploy a plan from workato_deploy_plan to its target environment. ' +
+      'WRITES TO THE TARGET (often production): requires allow_writes:true, and only after the ' +
+      'plan was reviewed. Sets the deployment title (required; the target history shows it, keep ' +
+      'it neutral), starts the deploy and polls until it finishes. When the target has running ' +
+      'recipes the deployment changes, Workato refuses until they may be stopped: without ' +
+      'allow_stop_running:true the call returns status "needs_stop" with recipes_to_stop and ' +
+      'nothing changed; with it, Workato stops them, deploys and restarts them (recipes with jobs ' +
+      'in progress cannot be stopped). Returns state (deploy_finished or the failure verbatim), ' +
+      'changed_assets, imported_recipes_status {stopped, restarted, failed, stop_failed} and ' +
+      'zip_file_name. Idempotent: calling it again on a deployment in flight only polls, and on a ' +
+      'finished one only reports; title is ignored once the deploy has started. On timeout or ' +
+      'wait:false it returns the current state; call again to keep waiting.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        deployment_id: { type: 'number', description: 'deployment_id from workato_deploy_plan.' },
+        title: {
+          type: 'string',
+          description: 'Deployment name shown in the target history. Required, non-empty.',
+        },
+        description: { type: 'string', description: 'Optional deployment description.' },
+        allow_writes: {
+          type: 'boolean',
+          description: 'Required (true): this deploys to the target environment. Default false.',
+          default: false,
+        },
+        allow_stop_running: {
+          type: 'boolean',
+          description:
+            'Let Workato stop the running target recipes the deployment changes, then restart them. Default false.',
+          default: false,
+        },
+        wait: {
+          type: 'boolean',
+          description: 'Poll until the deploy finishes. Default true.',
+          default: true,
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'How long to poll in this call. Default 90000, max 110000.',
+        },
+        tabId: {
+          type: 'number',
+          description:
+            'Target Workato tab ID. Omit to use the session pinned tab or first app tab.',
+        },
+      },
+      required: ['deployment_id', 'title', 'allow_writes'],
     },
   },
   {

@@ -34,3 +34,5 @@ export { workatoTestRecipeTool } from './test-recipe';
 export { workatoRecipeCallersTool } from './recipe-callers';
 export { workatoRecipeGrepTool } from './recipe-grep';
 export { workatoSessionContextTool } from './session-context';
+export { workatoSwitchEnvironmentTool } from './switch-environment';
+export { workatoDeploymentsListTool, workatoDeployPlanTool, workatoDeployRunTool } from './deploy';
