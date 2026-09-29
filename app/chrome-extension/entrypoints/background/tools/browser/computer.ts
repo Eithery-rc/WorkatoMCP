@@ -5,7 +5,13 @@ import { ERROR_MESSAGES, TIMEOUTS } from '@/common/constants';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { clickTool, fillTool } from './interaction';
 import { keyboardTool } from './keyboard';
-import { appendPageReport, assertNoOpenDialog, runWithSettle, type PageReport } from './settle';
+import {
+  appendPageReport,
+  assertNoOpenDialog,
+  dialogOpenedReply,
+  runWithSettle,
+  type PageReport,
+} from './settle';
 import { base64ByteLength, screenshotTool } from './screenshot';
 import { screenshotContextManager, scaleCoordinates } from '@/utils/screenshot-context';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
@@ -298,6 +304,8 @@ class ComputerTool extends BaseBrowserToolExecutor {
 
       return appendPageReport(result, page);
     } catch (error) {
+      const opened = dialogOpenedReply(error);
+      if (opened) return opened;
       console.error('Error in computer tool:', error);
       return createErrorResponse(
         `Failed to execute action: ${error instanceof Error ? error.message : String(error)}`,

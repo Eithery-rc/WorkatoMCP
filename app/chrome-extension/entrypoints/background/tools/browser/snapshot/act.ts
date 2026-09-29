@@ -21,17 +21,13 @@ import {
 } from '../settle';
 import { captureSnapshot } from './capture';
 import { clickUid, fillUid, hoverUid, pressKey, waitForTexts } from './element-actions';
-import {
-  resolveTabId,
-  runActing,
-  snapshotText,
-  type SettleArgs,
-  type TabTargetArgs,
-} from './handlers';
+import { resolveTabId, snapshotText, type SettleArgs, type TabTargetArgs } from './handlers';
 
 const MAX_ACTIONS = 30;
 const MAX_FIELDS = 50;
 const DEFAULT_WAIT_FOR_MS = 5000;
+/** Settle budget between fields of a form: enough to see a dialog or a navigation start. */
+const FIELD_SETTLE_MS = 1000;
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -58,26 +54,84 @@ class SnapshotFillFormToolImpl extends BaseBrowserToolExecutor {
     if (fields.length > MAX_FIELDS) {
       return createErrorResponse(`${this.name}: at most ${MAX_FIELDS} fields per call`);
     }
+    let tabId: number;
     try {
-      const tabId = await resolveTabId(args);
-      return runActing(this.name, tabId, args, async () => {
-        const lines: string[] = [];
-        for (let i = 0; i < fields.length; i++) {
-          const f = fields[i];
-          try {
-            lines.push(`${i + 1}. ${await fillUid(tabId, Number(f?.uid), f?.value)}`);
-          } catch (e) {
-            lines.push(`${i + 1}. uid=${f?.uid}: FAILED: ${errorText(e)}`);
-            throw new Error(
-              `${lines.join('\n')}\nstopped at field ${i + 1} of ${fields.length}; the fields before it were filled`,
-            );
-          }
-        }
-        return lines.join('\n');
-      });
+      tabId = await resolveTabId(args);
     } catch (error) {
       return createErrorResponse(`${this.name} failed: ${errorText(error)}`);
     }
+
+    // One settle per field, like chrome_act: a change handler that opens a
+    // dialog or navigates stops the form at that field, so no later field is
+    // written behind a dialog the agent is about to answer.
+    const lines: string[] = [];
+    let lastPage: PageReport | null = null;
+    let failed = false;
+    let stopped: string | null = null;
+    for (let i = 0; i < fields.length; i++) {
+      const f = fields[i];
+      const last = i === fields.length - 1;
+      const settle = last
+        ? { settle: args.settle, settleTimeoutMs: args.settleTimeoutMs }
+        : {
+            settle: true,
+            settleTimeoutMs: Math.min(args.settleTimeoutMs ?? FIELD_SETTLE_MS, FIELD_SETTLE_MS),
+          };
+      try {
+        assertNoOpenDialog(tabId);
+        const { result, page } = await runWithSettle(
+          tabId,
+          () => fillUid(tabId, Number(f?.uid), f?.value),
+          settle,
+        );
+        lines.push(`${i + 1}. ${result}`);
+        lastPage = page ?? lastPage;
+        const reason = stopReason(page);
+        if (reason && !last) {
+          stopped = `stopped after field ${i + 1}: ${reason}; ${fields.length - i - 1} field(s) not filled`;
+          break;
+        }
+      } catch (error) {
+        if (error instanceof DialogOpenError && error.openedByAction) {
+          lines.push(`${i + 1}. uid=${f?.uid}: filled; ${error.message}`);
+          if (!last) stopped = `stopped: ${fields.length - i - 1} field(s) not filled`;
+          break;
+        }
+        failed = true;
+        lines.push(`${i + 1}. uid=${f?.uid}: FAILED: ${errorText(error)}`);
+        stopped = `stopped at field ${i + 1} of ${fields.length}; the fields before it were filled`;
+        break;
+      }
+    }
+
+    let text = lines.join('\n');
+    if (stopped) text += `\n${stopped}`;
+    let reply: ToolResult = { content: [{ type: 'text', text }], isError: failed };
+    reply = failed
+      ? lastPage
+        ? {
+            content: [{ type: 'text', text: `${text}\n${formatPageReport(lastPage)}` }],
+            isError: true,
+          }
+        : reply
+      : appendPageReport(reply, lastPage);
+    if (args.includeSnapshot && !failed) {
+      try {
+        const snap = await captureSnapshot(tabId);
+        const first = reply.content[0] as { type: 'text'; text: string };
+        reply = {
+          ...reply,
+          content: [{ type: 'text', text: `${first.text}\n\n${snapshotText(snap)}` }],
+        };
+      } catch (e) {
+        const first = reply.content[0] as { type: 'text'; text: string };
+        reply = {
+          ...reply,
+          content: [{ type: 'text', text: `${first.text}\n(snapshot failed: ${errorText(e)})` }],
+        };
+      }
+    }
+    return reply;
   }
 }
 

@@ -11,6 +11,7 @@
  * scope would not exist in the page (see scripts/check-bundle.mjs).
  */
 
+import { riskyRegexReason } from '../workato/recipe-grep';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor, getTabOrThrow } from '../base-browser';
@@ -96,6 +97,8 @@ export function searchPageInPage(
 ): SearchInPageResult {
   const MAX_SCAN_CHARS = 2000000;
   const MAX_COUNTED = 10000;
+  // The page's main thread is the user's: a slow pattern must not freeze it.
+  const MAX_MATCH_MS = 1000;
   const SKIP = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, svg: 1 } as Record<string, number>;
 
   let pattern: RegExp;
@@ -235,7 +238,12 @@ export function searchPageInPage(
   let total = 0;
   let match: RegExpExecArray | null;
   pattern.lastIndex = 0;
+  const matchStarted = Date.now();
   while ((match = pattern.exec(text)) !== null) {
+    if (Date.now() - matchStarted > MAX_MATCH_MS) {
+      scanTruncated = true;
+      break;
+    }
     if (match[0].length === 0) {
       pattern.lastIndex++;
       continue;
@@ -360,6 +368,12 @@ class SearchPageTool extends BaseBrowserToolExecutor {
   async execute(args: SearchPageParams): Promise<ToolResult> {
     const query = typeof args?.query === 'string' ? args.query : '';
     if (!query) return createErrorResponse('query is required (the text or pattern to find).');
+    if (args.regex === true) {
+      // Same guard as workato_recipe_grep: a catastrophic pattern would freeze
+      // the page's main thread, which on a leased tab is a live client page.
+      const risky = riskyRegexReason(query);
+      if (risky) return createErrorResponse(`Refused regex: ${risky}. Simplify the pattern.`);
+    }
     try {
       const tab = await resolveTab(args.tabId);
       const result = await runQueryInTab(tab.id!, searchPageInPage, [

@@ -10,8 +10,55 @@ interface TabSessionState {
 
 const DEBUGGER_PROTOCOL_VERSION = '1.3';
 
+/** Default ceiling for one CDP command: a page that never answers must not hold a tool forever. */
+const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
+/**
+ * Commands that legitimately run long (user scripts, traces, big captures).
+ * They get the bridge-call ceiling instead of the short default.
+ */
+const LONG_COMMAND_TIMEOUT_MS = 115_000;
+const LONG_METHODS = new Set([
+  'Runtime.evaluate',
+  'Runtime.callFunctionOn',
+  'Runtime.awaitPromise',
+  'Tracing.end',
+  'Page.captureScreenshot',
+  'Network.getResponseBody',
+  'DOMSnapshot.captureSnapshot',
+  'Accessibility.getFullAXTree',
+]);
+
+export interface SendCommandOptions {
+  /** Reject when Chrome has not answered within this many ms. */
+  timeoutMs?: number;
+}
+
+function commandTimeout(method: string, params: any, options?: SendCommandOptions): number {
+  if (typeof options?.timeoutMs === 'number' && options.timeoutMs > 0) return options.timeoutMs;
+  const base = LONG_METHODS.has(method) ? LONG_COMMAND_TIMEOUT_MS : DEFAULT_COMMAND_TIMEOUT_MS;
+  // A command that carries its own CDP timeout (Runtime.evaluate) gets a little more than that.
+  const own = typeof params?.timeout === 'number' ? params.timeout + 5_000 : 0;
+  return Math.max(base, own);
+}
+
 class CDPSessionManager {
   private sessions = new Map<number, TabSessionState>();
+
+  constructor() {
+    // The browser ends a session on its own when the user clicks Cancel on the
+    // "being debugged" bar, DevTools takes over, or the target goes away. Our
+    // own detach() does not fire this. Without it the tab would stay "attached
+    // by us" forever and every later command would fail.
+    try {
+      chrome.debugger.onDetach.addListener((source) => {
+        if (typeof source.tabId !== 'number') return;
+        this.sessions.delete(source.tabId);
+        this.tabOps.delete(source.tabId);
+      });
+    } catch {
+      /* debugger API unavailable (tests) */
+    }
+  }
 
   private getState(tabId: number): TabSessionState | undefined {
     return this.sessions.get(tabId);
@@ -117,14 +164,48 @@ class CDPSessionManager {
    * Send a CDP command. Requires that this manager has attached to the tab.
    * If not attached by us, will attempt a one-shot attach around the call.
    */
-  async sendCommand<T = any>(tabId: number, method: string, params?: object): Promise<T> {
+  async sendCommand<T = any>(
+    tabId: number,
+    method: string,
+    params?: object,
+    options?: SendCommandOptions,
+  ): Promise<T> {
+    const timeoutMs = commandTimeout(method, params, options);
     const state = this.getState(tabId);
     if (state && state.attachedByUs) {
-      return (await chrome.debugger.sendCommand({ tabId }, method, params)) as T;
+      return this.sendWithTimeout<T>(tabId, method, params, timeoutMs);
     }
     // Fallback: temporary session
     return await this.withSession<T>(tabId, `send:${method}`, async () => {
-      return (await chrome.debugger.sendCommand({ tabId }, method, params)) as T;
+      return this.sendWithTimeout<T>(tabId, method, params, timeoutMs);
+    });
+  }
+
+  private sendWithTimeout<T>(
+    tabId: number,
+    method: string,
+    params: object | undefined,
+    timeoutMs: number,
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(
+          new Error(
+            `CDP ${method} on tab ${tabId} got no answer within ${timeoutMs} ms ` +
+              '(the page may be blocked by a JS dialog or hung).',
+          ),
+        );
+      }, timeoutMs);
+      Promise.resolve(chrome.debugger.sendCommand({ tabId }, method, params)).then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value as T);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
     });
   }
 }

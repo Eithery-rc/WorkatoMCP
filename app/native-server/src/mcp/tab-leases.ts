@@ -45,6 +45,12 @@ export interface TabLease {
   windowId: number | null;
   created_at: number;
   last_used: number;
+  /**
+   * Leased from an existing tab (adopt_tab_id) rather than opened by the
+   * lease: it may be a tab the user works in, so the bridge never closes it
+   * on expiry and release keeps it unless keep_tab:false is explicit.
+   */
+  adopted?: boolean;
 }
 
 const schemaProperties = new Map<string, Record<string, unknown>>();
@@ -129,7 +135,15 @@ export class LeaseTable {
       tabId: l.tabId,
       windowId: l.windowId,
       idle_ms: now - l.last_used,
+      ...(l.adopted ? { adopted: true } : {}),
     }));
+  }
+
+  /** Every leased tab of this session in `profile`. */
+  tabIdsIn(profile: string): Set<number> {
+    const ids = new Set<number>();
+    for (const lease of this.leases.values()) if (lease.profile === profile) ids.add(lease.tabId);
+    return ids;
   }
 
   ids(): string[] {
@@ -184,7 +198,9 @@ export function strictTabsFromEnv(): boolean {
 
 /**
  * Refusal text when strict targeting applies and the call names no tab, else
- * null. `args` is the final argument set, after the lease and the session pin.
+ * null. `args` must be the caller's own arguments after the lease is applied
+ * but BEFORE the session pin is injected: a pinned tab is shared by every
+ * agent of the session, so it cannot satisfy strict mode.
  */
 export function strictTabsViolation(
   name: string,

@@ -18,6 +18,22 @@ export interface UidNodeRef {
   loaderId: string;
   /** Snapshot sequence number the node was last seen in. */
   seen: number;
+  /**
+   * What the node was when last rendered with this uid: its AX role and name,
+   * and the name of its nearest row-like ancestor. A recycled node (a keyed
+   * list that re-renders another record into the same DOM node) keeps its
+   * backendNodeId, so these are what tell "same element" from "same node".
+   */
+  role?: string;
+  name?: string;
+  row?: string;
+}
+
+/** Identity facts recorded with a uid at snapshot time. */
+export interface UidIdentity {
+  role: string;
+  name: string;
+  row?: string;
 }
 
 /**

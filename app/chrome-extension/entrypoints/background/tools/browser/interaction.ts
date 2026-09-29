@@ -3,7 +3,7 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { TIMEOUTS, ERROR_MESSAGES } from '@/common/constants';
-import { appendPageReport, assertNoOpenDialog, runWithSettle } from './settle';
+import { appendPageReport, assertNoOpenDialog, dialogOpenedReply, runWithSettle } from './settle';
 
 interface Coordinates {
   x: number;
@@ -158,6 +158,8 @@ class ClickTool extends BaseBrowserToolExecutor {
         page,
       );
     } catch (error) {
+      const opened = dialogOpenedReply(error);
+      if (opened) return opened;
       console.error('Error in click operation:', error);
       return createErrorResponse(
         `Error performing click: ${error instanceof Error ? error.message : String(error)}`,
@@ -283,6 +285,8 @@ class FillTool extends BaseBrowserToolExecutor {
         page,
       );
     } catch (error) {
+      const opened = dialogOpenedReply(error);
+      if (opened) return opened;
       console.error('Error in fill operation:', error);
       return createErrorResponse(
         `Error filling element: ${error instanceof Error ? error.message : String(error)}`,

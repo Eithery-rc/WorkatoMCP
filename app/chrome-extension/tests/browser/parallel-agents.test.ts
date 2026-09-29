@@ -49,6 +49,21 @@ describe('runExclusiveForTab', () => {
   });
 });
 
+describe('runExclusiveForTab hold bound', () => {
+  it('lets the next call run when one holds the tab past the bound, and the stuck call still answers', async () => {
+    let releaseStuck: (v: string) => void = () => undefined;
+    const stuck = runExclusiveForTab(
+      21,
+      () => new Promise<string>((resolve) => (releaseStuck = resolve)),
+      30,
+    );
+    const next = runExclusiveForTab(21, async () => 'next ran', 30);
+    await expect(next).resolves.toBe('next ran');
+    releaseStuck('stuck finished');
+    await expect(stuck).resolves.toBe('stuck finished');
+  });
+});
+
 describe('snapshot uids across snapshots of one tab', () => {
   beforeEach(() => __resetUidStoreForTest());
 

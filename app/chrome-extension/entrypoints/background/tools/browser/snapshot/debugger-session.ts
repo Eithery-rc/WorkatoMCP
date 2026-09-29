@@ -11,6 +11,7 @@
  */
 
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
+import { ensureDialogWatch, getDialog } from '../dialog-tracker';
 
 const OWNER_TAG = 'snapshot';
 const IDLE_TIMEOUT_MS = 60_000;
@@ -55,6 +56,12 @@ function scheduleIdleDetach(tabId: number) {
   const timer = setTimeout(async () => {
     idleTimers.delete(tabId);
     if (!attachedTabs.has(tabId)) return;
+    // Never drop a session while a dialog is open on the tab: the client that
+    // saw the dialog open is the only one Chrome lets answer it.
+    if (getDialog(tabId)?.confirmed) {
+      scheduleIdleDetach(tabId);
+      return;
+    }
     console.log(`[snapshot] idle ${IDLE_TIMEOUT_MS}ms — detaching tab ${tabId}`);
     attachedTabs.delete(tabId);
     try {
@@ -87,6 +94,9 @@ export async function ensureAttached(tabId: number): Promise<void> {
     await pending;
   }
 
+  // One owner for dialog lifetime: the dialog watch keeps a Page-enabled
+  // session while a dialog is open, whatever this session does.
+  void ensureDialogWatch(tabId);
   scheduleIdleDetach(tabId);
 }
 

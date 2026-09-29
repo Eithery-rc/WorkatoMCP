@@ -12,7 +12,8 @@
 import { ensureAttached, sendCommand } from './debugger-session';
 import { getAllAxNodes, getFrames, UNKNOWN_LOADER } from './capture';
 import { forgetUid, lookupUid, UidError } from './uid-store';
-import type { AXNode } from './types';
+import type { AXNode, UidNodeRef } from './types';
+import { axIdentity, ROW_ROLES } from './ax-tree-formatter';
 
 export interface ResolvedElement {
   uid: number;
@@ -26,6 +27,9 @@ interface ElementInfo {
   role: string;
   contentEditable: boolean;
   disabled: boolean;
+  readOnly: boolean;
+  /** maxlength of a text field, -1 when unlimited. */
+  maxLength: number;
   multiple: boolean;
   checked: boolean | null;
   options: Array<{ text: string; value: string; selected: boolean }> | null;
@@ -137,7 +141,64 @@ export async function resolveElement(tabId: number, uid: unknown): Promise<Resol
     forgetUid(tabId, uid);
     throw gone(uid, 'removed from the page');
   }
+  const drift = await identityDrift(tabId, ref);
+  if (drift) {
+    throw new UidError(
+      `uid ${uid} changed from ${drift.from} to ${drift.to} (the page re-rendered that node for something else); ` +
+        'call chrome_snapshot again. Nothing was done.',
+    );
+  }
   return { uid, backendNodeId: ref.backendNodeId, objectId };
+}
+
+function shownIdentity(role: string, name: string): string {
+  return name ? `${role} "${name}"` : role;
+}
+
+/**
+ * A node can stay connected while it now shows another record: keyed and
+ * virtualized lists recycle DOM nodes. Compare the node's role and name, and
+ * the name of its nearest row-like ancestor, with what the snapshot recorded.
+ * A value change (text typed into a textbox) is not a drift: names come from
+ * labels, not values. Returns null when unchanged or when it cannot be told.
+ */
+async function identityDrift(
+  tabId: number,
+  ref: UidNodeRef,
+): Promise<{ from: string; to: string } | null> {
+  if (ref.role === undefined) return null;
+  let nodes: AXNode[] = [];
+  try {
+    const r = await sendCommand<{ nodes: AXNode[] }>(tabId, 'Accessibility.getPartialAXTree', {
+      backendNodeId: ref.backendNodeId,
+      fetchRelatives: Boolean(ref.row),
+    });
+    nodes = r?.nodes ?? [];
+  } catch {
+    return null;
+  }
+  const self = nodes.find((n) => n.backendDOMNodeId === ref.backendNodeId);
+  if (!self || self.ignored) return null;
+  const now = axIdentity(self);
+  const was = shownIdentity(ref.role, ref.name ?? '');
+  if (now.role !== ref.role || (ref.name && now.name !== ref.name)) {
+    return { from: was, to: shownIdentity(now.role, now.name) };
+  }
+  if (ref.row) {
+    const byId = new Map(nodes.map((n) => [n.nodeId, n]));
+    let cur = self.parentId ? byId.get(self.parentId) : undefined;
+    let guard = 0;
+    while (cur && guard++ < 500) {
+      const id = axIdentity(cur);
+      if (!cur.ignored && ROW_ROLES.has(id.role) && id.name) {
+        return id.name === ref.row
+          ? null
+          : { from: `${was} in row "${ref.row}"`, to: `${was} in row "${id.name}"` };
+      }
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+    }
+  }
+  return null;
 }
 
 const DESCRIBE_FN = `function(){
@@ -149,6 +210,8 @@ const DESCRIBE_FN = `function(){
     role: (ga('role') || '').toLowerCase(),
     contentEditable: !!el.isContentEditable,
     disabled: !!(el.disabled || ga('aria-disabled') === 'true'),
+    readOnly: !!(el.readOnly || ga('aria-readonly') === 'true'),
+    maxLength: (typeof el.maxLength === 'number' && el.maxLength >= 0) ? el.maxLength : -1,
     multiple: !!el.multiple,
     checked: null,
     options: null,
@@ -224,10 +287,28 @@ const HIT_FN = `function(hit){
   return { ok: false, cover: d || 'another element' };
 }`;
 
-async function clickPoint(
-  tabId: number,
-  backendNodeId: number,
-): Promise<{ x: number; y: number } | null> {
+interface ClickPoint {
+  x: number;
+  y: number;
+  /** The whole box lies outside the viewport: a CDP click there lands on nothing. */
+  offscreen?: boolean;
+}
+
+/** Visible viewport size in CSS pixels, or null when Chrome does not say. */
+async function viewportSize(tabId: number): Promise<{ w: number; h: number } | null> {
+  try {
+    const m = await sendCommand<any>(tabId, 'Page.getLayoutMetrics');
+    const vp =
+      m?.cssVisualViewport ?? m?.visualViewport ?? m?.cssLayoutViewport ?? m?.layoutViewport;
+    const w = Number(vp?.clientWidth);
+    const h = Number(vp?.clientHeight);
+    return w > 0 && h > 0 ? { w, h } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function clickPoint(tabId: number, backendNodeId: number): Promise<ClickPoint | null> {
   let quads: number[][] = [];
   try {
     const r = await sendCommand<{ quads: number[][] }>(tabId, 'DOM.getContentQuads', {
@@ -237,28 +318,45 @@ async function clickPoint(
   } catch {
     quads = [];
   }
-  let best: { x: number; y: number; area: number } | null = null;
+  let best: { minX: number; maxX: number; minY: number; maxY: number; area: number } | null = null;
   for (const q of quads) {
     if (!Array.isArray(q) || q.length < 8) continue;
     const xs = [q[0], q[2], q[4], q[6]];
     const ys = [q[1], q[3], q[5], q[7]];
-    const w = Math.max(...xs) - Math.min(...xs);
-    const h = Math.max(...ys) - Math.min(...ys);
-    const area = w * h;
+    const box = {
+      minX: Math.min(...xs),
+      maxX: Math.max(...xs),
+      minY: Math.min(...ys),
+      maxY: Math.max(...ys),
+    };
+    const area = (box.maxX - box.minX) * (box.maxY - box.minY);
     if (area <= 0) continue;
-    if (!best || area > best.area) {
-      best = { x: xs.reduce((a, b) => a + b, 0) / 4, y: ys.reduce((a, b) => a + b, 0) / 4, area };
-    }
+    if (!best || area > best.area) best = { ...box, area };
   }
-  return best ? { x: best.x, y: best.y } : null;
+  if (!best) return null;
+  // Aim at the part of the box that is on screen: the center of an element
+  // taller than the viewport can lie below it.
+  const vp = await viewportSize(tabId);
+  if (!vp) return { x: (best.minX + best.maxX) / 2, y: (best.minY + best.maxY) / 2 };
+  const x0 = Math.max(best.minX, 0);
+  const x1 = Math.min(best.maxX, vp.w);
+  const y0 = Math.max(best.minY, 0);
+  const y1 = Math.min(best.maxY, vp.h);
+  if (x1 <= x0 || y1 <= y0) {
+    return { x: (best.minX + best.maxX) / 2, y: (best.minY + best.maxY) / 2, offscreen: true };
+  }
+  return { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
 }
 
-/** What covers the element at the point, or null when the element gets the click. */
+/** Marker: Chrome could not say what is at the point, so coverage is unknown. */
+const COVER_UNKNOWN = Symbol('cover-unknown');
+
+/** What covers the element at the point, null when the element gets the click, COVER_UNKNOWN when it cannot be told. */
 async function coveredBy(
   tabId: number,
   target: { backendNodeId: number; objectId: string },
   point: { x: number; y: number },
-): Promise<string | null> {
+): Promise<string | null | typeof COVER_UNKNOWN> {
   let hit: any;
   try {
     hit = await sendCommand<any>(tabId, 'DOM.getNodeForLocation', {
@@ -268,7 +366,7 @@ async function coveredBy(
       ignorePointerEventsNone: true,
     });
   } catch {
-    return null;
+    return COVER_UNKNOWN;
   }
   if (!hit?.backendNodeId || hit.backendNodeId === target.backendNodeId) return null;
   let hitObjectId: string | undefined;
@@ -389,15 +487,7 @@ async function clickNode(
     );
     return `${label} (used a JS click: the element has no visible box)`;
   }
-  const cover = await coveredBy(tabId, target, point);
-  if (cover) {
-    throw new Error(
-      `${label.replace(/^(double-)?clicked /, '')} is covered by ${cover} at (${Math.round(point.x)}, ${Math.round(point.y)}); ` +
-        'nothing was clicked. Close or move what covers it, or act on that element instead.',
-    );
-  }
-  if (await pageHidden(tabId)) {
-    // Occluded page: CDP input is ignored, so fire the events on the element.
+  const domClick = async (why: string): Promise<string> => {
     await callOn(
       tabId,
       target.objectId,
@@ -406,7 +496,25 @@ async function clickNode(
       true,
       true,
     );
-    return `${label} (hidden tab: sent DOM events)`;
+    return `${label} (${why}: sent DOM events)`;
+  };
+  if (point.offscreen) {
+    // A CDP click outside the viewport lands on nothing; never report one.
+    return domClick('the element is outside the viewport');
+  }
+  const cover = await coveredBy(tabId, target, point);
+  if (cover === COVER_UNKNOWN) {
+    return domClick('could not verify the element is uncovered');
+  }
+  if (cover) {
+    throw new Error(
+      `${label.replace(/^(double-)?clicked /, '')} is covered by ${cover} at (${Math.round(point.x)}, ${Math.round(point.y)}); ` +
+        'nothing was clicked. Close or move what covers it, or act on that element instead.',
+    );
+  }
+  if (await pageHidden(tabId)) {
+    // Occluded page: CDP input is ignored, so fire the events on the element.
+    return domClick('hidden tab');
   }
   await dispatchClick(tabId, point, double);
   return label;
@@ -456,7 +564,7 @@ export async function hoverUid(tabId: number, uid: number): Promise<string> {
   }
   const point = await clickPoint(tabId, el.backendNodeId);
   if (!point) throw new Error(`uid ${uid} has no visible box to hover.`);
-  if (await pageHidden(tabId)) {
+  if (point.offscreen || (await pageHidden(tabId))) {
     await callOn(tabId, el.objectId, DOM_HOVER_FN, [{ value: point.x }, { value: point.y }]);
     return `hovered uid=${uid} (hidden tab: sent DOM events)`;
   }
@@ -489,27 +597,53 @@ function detectMac(): boolean {
   }
 }
 
-const SELECT_FN = `function(v){
+/**
+ * Pick one enabled option: exact text, exact value, a UNIQUE prefix, a UNIQUE
+ * substring. Anything matching several options is refused with the candidates:
+ * "Paid" must never land on "Unpaid" because it happens to come first.
+ */
+export const SELECT_FN = `function(v){
   var want = String(v).trim().toLowerCase();
-  var opts = Array.prototype.slice.call(this.options);
+  var opts = Array.prototype.slice.call(this.options).filter(function(o){ return !o.disabled; });
   var norm = function(o){ return (o.text || '').trim().toLowerCase(); };
-  var pick = opts.find(function(o){ return norm(o) === want; })
-    || opts.find(function(o){ return String(o.value).toLowerCase() === want; })
-    || opts.find(function(o){ return norm(o).indexOf(want) >= 0; });
-  if (!pick) return { ok: false, options: opts.slice(0, 30).map(function(o){ return (o.text || '').trim(); }) };
+  var names = function(list){ return list.slice(0, 30).map(function(o){ return (o.text || '').trim(); }); };
+  var stages = want === ''
+    ? [function(o){ return norm(o) === '' || String(o.value) === ''; }]
+    : [
+        function(o){ return norm(o) === want; },
+        function(o){ return String(o.value).toLowerCase() === want; },
+        function(o){ return norm(o).indexOf(want) === 0; },
+        function(o){ return norm(o).indexOf(want) >= 0; }
+      ];
+  var pick = null;
+  for (var i = 0; i < stages.length && !pick; i++) {
+    var hits = opts.filter(stages[i]);
+    if (hits.length === 1) pick = hits[0];
+    else if (hits.length > 1) return { ok: false, ambiguous: true, options: names(hits) };
+  }
+  if (!pick) return { ok: false, options: names(opts) };
   if (this.multiple) { pick.selected = true; } else { this.value = pick.value; }
   this.dispatchEvent(new Event('input', { bubbles: true }));
   this.dispatchEvent(new Event('change', { bubbles: true }));
   return { ok: true, selected: (pick.text || '').trim() };
 }`;
 
-const NATIVE_SET_FN = `function(v){
-  var proto = this instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+/**
+ * Set a field's value the way a framework sees it: the native setter (so React
+ * notices), input and change, framed by focus/focusin and blur/focusout so
+ * models that commit on blur (Angular updateOn:'blur') update too.
+ */
+export const NATIVE_SET_FN = `function(v){
+  var el = this;
+  var fire = function(type, bubbles){ try { el.dispatchEvent(new FocusEvent(type, { bubbles: bubbles })); } catch (e) {} };
+  fire('focus', false); fire('focusin', true);
+  var proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   var d = Object.getOwnPropertyDescriptor(proto, 'value');
-  if (d && d.set) d.set.call(this, v); else this.value = v;
-  this.dispatchEvent(new Event('input', { bubbles: true }));
-  this.dispatchEvent(new Event('change', { bubbles: true }));
-  return this.value;
+  if (d && d.set) d.set.call(el, v); else el.value = v;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  fire('blur', false); fire('focusout', true);
+  return el.value;
 }`;
 
 const FIND_OPTION_FN = `function(v, scoped){
@@ -522,10 +656,13 @@ const FIND_OPTION_FN = `function(v, scoped){
   var cands = [];
   scopes.forEach(function(s){ Array.prototype.push.apply(cands, Array.prototype.slice.call(s.querySelectorAll(selector))); });
   cands = cands.filter(function(o){ var r = o.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+  cands = cands.filter(function(o){ return o.getAttribute('aria-disabled') !== 'true'; });
   var norm = function(o){ return (o.innerText || o.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase(); };
-  return cands.find(function(o){ return norm(o) === want; })
-    || cands.find(function(o){ return norm(o).indexOf(want) === 0; })
-    || null;
+  if (!want) return null;
+  var exact = cands.filter(function(o){ return norm(o) === want; });
+  if (exact.length) return exact.length === 1 ? exact[0] : null;
+  var prefix = cands.filter(function(o){ return norm(o).indexOf(want) === 0; });
+  return prefix.length === 1 ? prefix[0] : null;
 }`;
 
 async function findOption(
@@ -634,29 +771,42 @@ async function fillText(
       : `filled uid=${uid} (${info.type}); actual value differs: ${shown(actual)} (check the expected format)`;
   }
 
+  if (info.maxLength >= 0 && value.length > info.maxLength) {
+    throw new Error(
+      `uid ${uid} accepts at most ${info.maxLength} characters; the value has ${value.length}. Nothing was written.`,
+    );
+  }
   const readValue = () =>
     callOn<string>(tabId, el.objectId, 'function(){ return String(this.value); }');
   const before = await readValue();
   const hidden = await pageHidden(tabId);
+  let how = '';
+  let rejected = false;
   if (hidden) {
     // Occluded page: key input is dropped, so set the value and fire the events.
-    await callOn(
-      tabId,
-      el.objectId,
-      'function(){ try { this.focus({ preventScroll: true }); } catch (e) {} }',
-    );
     await callOn<string>(tabId, el.objectId, NATIVE_SET_FN, [{ value }]);
+    how = ' (hidden tab: DOM value set directly, not typed)';
   } else {
     await typeText(tabId, el, value);
   }
   let actual = await readValue();
-  let fixed = false;
-  if (!sameValue(actual, value, info.type)) {
-    // Typing did not produce the value (old text not cleared, input dropped, a
-    // mask rewrote it): set it directly, then read again.
-    actual = await callOn<string>(tabId, el.objectId, NATIVE_SET_FN, [{ value }]);
-    fixed = true;
-  } else {
+  if (!hidden && !sameValue(actual, value, info.type)) {
+    // Only one failure is safe to repair: the old text was not selected, so
+    // the new text landed next to it. A field that rewrote or ignored the typed
+    // text (a mask, a formatter, a guard) is left alone and reported.
+    const oldNotCleared =
+      before !== '' &&
+      value !== '' &&
+      actual.length >= before.length + value.length &&
+      actual.includes(value) &&
+      actual.includes(before);
+    if (oldNotCleared) {
+      actual = await callOn<string>(tabId, el.objectId, NATIVE_SET_FN, [{ value }]);
+      how = ' (the old text was not cleared; replaced it directly)';
+    } else {
+      rejected = true;
+    }
+  } else if (!hidden) {
     // Commit for frameworks that only read on change.
     await callOn(
       tabId,
@@ -664,9 +814,7 @@ async function fillText(
       'function(){ this.dispatchEvent(new Event("change", { bubbles: true })); }',
     );
   }
-  let text = `filled uid=${uid}`;
-  if (hidden) text += ' (hidden tab: set the value directly)';
-  else if (fixed) text += ' (typing did not produce the value; set it directly)';
+  let text = `filled uid=${uid}${how}`;
 
   const wantsOption =
     info.role === 'combobox' ||
@@ -686,6 +834,7 @@ async function fillText(
   }
   if (!sameValue(actual, value, info.type) && !(wantsOption && text.includes('picked'))) {
     text += `; actual value differs: ${shown(actual)}`;
+    if (rejected) text += ' (the field rewrote or rejected the typed text; not overridden)';
   } else if (before === actual && before !== value) {
     text += '; the value did not change';
   }
@@ -698,17 +847,26 @@ export async function fillUid(tabId: number, uid: number, rawValue: unknown): Pr
   const el = await resolveElement(tabId, uid);
   const info = await describe(tabId, el);
   if (info.disabled) throw new Error(`uid ${uid} is disabled; nothing was filled.`);
+  if (info.readOnly) throw new Error(`uid ${uid} is read-only; nothing was written.`);
 
   if (info.tag === 'SELECT') {
-    const r = await callOn<{ ok: boolean; selected?: string; options?: string[] }>(
-      tabId,
-      el.objectId,
-      SELECT_FN,
-      [{ value }],
-    );
+    const r = await callOn<{
+      ok: boolean;
+      selected?: string;
+      options?: string[];
+      ambiguous?: boolean;
+    }>(tabId, el.objectId, SELECT_FN, [{ value }]);
     if (!r?.ok) {
+      const list = (r?.options ?? []).map((o) => `"${o}"`).join(', ');
+      if (r?.ambiguous) {
+        throw new Error(
+          `uid ${uid}: "${value}" matches several options (${list}); pass the exact option text or value. Nothing was selected.`,
+        );
+      }
       throw new Error(
-        `uid ${uid}: no option matches "${value}". Options: ${(r?.options ?? []).map((o) => `"${o}"`).join(', ')}`,
+        value.trim() === ''
+          ? `uid ${uid}: no option has an empty text or value. Options: ${list}`
+          : `uid ${uid}: no enabled option matches "${value}". Options: ${list}`,
       );
     }
     return `selected "${r.selected}" in uid=${uid}`;
@@ -774,6 +932,21 @@ const MODIFIER_BITS: Record<string, number> = {
   shift: 8,
 };
 
+/** keydown/keypress/keyup on the focused element; returns a short description of it. */
+const DOM_KEY_FN = `function(key, code, vk, mods){
+  var el = document.activeElement || document.body;
+  var init = { key: key, code: code, keyCode: vk, which: vk, bubbles: true, cancelable: true, composed: true,
+    altKey: !!(mods & 1), ctrlKey: !!(mods & 2), metaKey: !!(mods & 4), shiftKey: !!(mods & 8) };
+  el.dispatchEvent(new KeyboardEvent('keydown', init));
+  if (key.length === 1 || key === 'Enter') el.dispatchEvent(new KeyboardEvent('keypress', init));
+  el.dispatchEvent(new KeyboardEvent('keyup', init));
+  var d = el.tagName ? el.tagName.toLowerCase() : 'document';
+  if (el.id) d += '#' + el.id;
+  var n = el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('name') || el.getAttribute('placeholder'));
+  if (n) d += ' "' + String(n).slice(0, 40) + '"';
+  return d;
+}`;
+
 export async function pressKey(tabId: number, combo: unknown): Promise<string> {
   if (typeof combo !== 'string' || !combo.trim())
     throw new Error('key is required, e.g. "Enter" or "Control+A"');
@@ -797,6 +970,19 @@ export async function pressKey(tabId: number, combo: unknown): Promise<string> {
     spec = { key: main, code, vk: upper.charCodeAt(0), text: main };
   }
   const printable = spec.text !== undefined && (modifiers & ~8) === 0;
+  if (await pageHidden(tabId)) {
+    // Occluded page: CDP key input is dropped. DOM key events reach the page's
+    // listeners, but the browser does not run default actions for them.
+    const target = await sendCommand<any>(tabId, 'Runtime.evaluate', {
+      expression: `(${DOM_KEY_FN})(${JSON.stringify(spec.key)}, ${JSON.stringify(spec.code)}, ${spec.vk}, ${modifiers})`,
+      returnByValue: true,
+    });
+    const who = target?.result?.value ? ` to ${target.result.value}` : '';
+    return (
+      `pressed ${combo}${who} (hidden tab: DOM key events; browser default actions such as ` +
+      'form submit on Enter may not happen)'
+    );
+  }
   await sendCommand(tabId, 'Input.dispatchKeyEvent', {
     type: printable ? 'keyDown' : 'rawKeyDown',
     modifiers,

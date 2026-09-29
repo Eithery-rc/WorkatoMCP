@@ -85,7 +85,7 @@ export async function captureSnapshot(tabId: number): Promise<CapturedSnapshot> 
 
   const mainTree = await sendCommand<{ nodes: AXNode[] }>(tabId, 'Accessibility.getFullAXTree');
   const mainFmt = formatAxTree(mainTree?.nodes ?? [], {
-    assignUid: (id) => assignUid(state, main.frameId, main.loaderId, id),
+    assignUid: (id, identity) => assignUid(state, main.frameId, main.loaderId, id, identity),
     dom,
   });
   const sections = [mainFmt.text];
@@ -107,7 +107,7 @@ export async function captureSnapshot(tabId: number): Promise<CapturedSnapshot> 
       // Already part of a tree rendered above (Chrome merged it): skip.
       if (!ids.length || ids.every((id) => seen.has(id))) continue;
       const fmt = formatAxTree(nodes, {
-        assignUid: (id) => assignUid(state, frame.frameId, frame.loaderId, id),
+        assignUid: (id, identity) => assignUid(state, frame.frameId, frame.loaderId, id, identity),
         dom,
         indentBase: 1,
       });
