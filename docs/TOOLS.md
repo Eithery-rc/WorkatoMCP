@@ -463,15 +463,18 @@ The escape hatch for endpoints no dedicated tool covers. Same-origin only: `path
 
 ## Projects and folders
 
-| Tool                     | Required                 | Optional                | Description                                   |
-| ------------------------ | ------------------------ | ----------------------- | --------------------------------------------- |
-| `workato_list_folders`   | none                     | `project`, `full`       | The full project and folder tree              |
-| `workato_create_folder`  | `name`, `parent_id`      | none                    | Create a folder                               |
-| `workato_update_folder`  | `folder_id`              | `name`, `parent_id`     | Rename and/or move a folder                   |
-| `workato_delete_folder`  | `folder_id`              | `force`                 | Delete a folder: **cascades to its contents** |
-| `workato_move_recipe`    | `recipe_id`, `folder_id` | none                    | Move a recipe into another folder             |
-| `workato_create_project` | `name`                   | none                    | Create a project                              |
-| `workato_update_project` | `folder_id`              | `name`, `color`, `icon` | Rename or restyle a project                   |
+| Tool                       | Required                                              | Optional                            | Description                                                          |
+| -------------------------- | ----------------------------------------------------- | ----------------------------------- | -------------------------------------------------------------------- |
+| `workato_list_folders`     | none                                                  | `project`, `full`                   | The full project and folder tree                                     |
+| `workato_create_folder`    | `name`, `parent_id`                                   | none                                | Create a folder                                                      |
+| `workato_update_folder`    | `folder_id`                                           | `name`, `parent_id`                 | Rename and/or move a folder                                          |
+| `workato_delete_folder`    | `folder_id`                                           | `force`                             | Delete a folder: **cascades to its contents**                        |
+| `workato_move_recipe`      | `recipe_id`, `folder_id`                              | none                                | Move a recipe into another folder                                    |
+| `workato_create_project`   | `name`                                                | none                                | Create a project                                                     |
+| `workato_update_project`   | `folder_id`                                           | `name`, `color`, `icon`             | Rename or restyle a project                                          |
+| `workato_deployments_list` | `recipe_id`, `folder_id` or `project`                 | `page`                              | Deployment history and deployable environments                       |
+| `workato_deploy_plan`      | `environment`, `recipe_id` or `folder_id` / `project` | `include`, `exclude`, `step_diffs`  | Draft a deployment and diff it against the target, remaps normalised |
+| `workato_deploy_run`       | `deployment_id`, `title`, `allow_writes`              | `description`, `allow_stop_running` | Deploy a planned draft; **writes to the target environment**         |
 
 `workato_list_folders` is the source of folder ids: call it before creating or moving anything. Top-level entries are project **root folders**: their `id` is what `parent_id` / `folder_id` want, while `project_id` identifies the owning project. Nodes report `flow_count` / `active_flow_count` plus non-zero asset counts under `counts`.
 
@@ -690,13 +693,15 @@ Workato Workflow Apps (LCAP). The page tree is replaced whole: GET, mutate, PUT.
 
 ## Session and build identity
 
-| Tool                      | Required  | Optional                | Description                                                              |
-| ------------------------- | --------- | ----------------------- | ------------------------------------------------------------------------ |
-| `workato_session_context` | none      | `max_age_ms`, `refresh` | Which tab, host, workspace, environment and user a call lands in         |
-| `workato_whoami`          | none      | none                    | Workspace, user, role, environments, teams, timezone, tier               |
-| `workato_list_profiles`   | none      | none                    | Connected Chrome profiles plus the pinned session tuple                  |
-| `workato_switch_profile`  | `profile` | `tabId`                 | Route this session's calls to a profile, pinning a tab and its workspace |
-| `workato_bridge_info`     | none      | none                    | Which build is answering: versions, tool count, schema revision          |
+| Tool                         | Required      | Optional                              | Description                                                                                  |
+| ---------------------------- | ------------- | ------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `workato_session_context`    | none          | `max_age_ms`, `refresh`               | Which tab, host, workspace, environment and user a call lands in                             |
+| `workato_whoami`             | none          | none                                  | Workspace, user, role, environments, teams, timezone, tier                                   |
+| `workato_list_profiles`      | none          | none                                  | Connected Chrome profiles plus the pinned session tuple                                      |
+| `workato_switch_profile`     | `profile`     | `tabId`                               | Route this session's calls to a profile, pinning a tab and its workspace                     |
+| `workato_bridge_info`        | none          | none                                  | Which build is answering: versions, tool count, schema revision                              |
+| `workato_switch_environment` | `environment` | `workspace`, `return_to`, `tabId`     | Switch environment and/or client workspace; moves every Workato tab in the Chrome profile    |
+| `workato_reload_extension`   | none          | `profile`, `check_only`, `timeout_ms` | Dev: reload the unpacked extension in every profile, bridge owner last (restarts the bridge) |
 
 `workato_session_context` is the cheap identity check: `{tab_id, host, workspace_id, workspace_name, environment, user_id, age_ms, from_cache}` from `/web_api/auth_user.json` and nothing else, cached per tab for `max_age_ms` (default 60,000, maximum 600,000) and dropped the moment the tab navigates or closes. `refresh: true` bypasses the cache. Prefer it over `workato_whoami` whenever you only need the target workspace: whoami attaches the debugger and returns the full profile.
 
