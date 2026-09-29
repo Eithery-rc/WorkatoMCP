@@ -2,7 +2,7 @@ import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
-import { clearDialog, getDialog } from './dialog-tracker';
+import { clearDialog, getDialog, pingTab } from './dialog-tracker';
 
 /** How long to let Chrome report a dialog that was already open before answering it. */
 const DIALOG_REPORT_WAIT_MS = 1500;
@@ -65,9 +65,8 @@ class HandleDialogTool extends BaseBrowserToolExecutor {
         } catch (e) {
           const text = e instanceof Error ? e.message : String(e);
           if (/no dialog/i.test(text)) {
-            const suspected = getDialog(tabId);
             clearDialog(tabId);
-            if (suspected && !suspected.confirmed) {
+            if ((await pingTab(tabId)) === 'blocked') {
               throw new Error(
                 `Tab ${tabId} looks blocked by a JS dialog that opened before this extension was watching the tab, ` +
                   'and Chrome only lets the client that saw it open answer it. Ask the user to click it, ' +

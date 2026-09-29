@@ -225,13 +225,14 @@ export async function probeDialog(tabId: number): Promise<TrackedDialog | null> 
   }
   const found = dialogs.get(tabId);
   if (found?.confirmed) return found;
-  const suspected: TrackedDialog = {
+  // Not stored: a heavy page that is merely slow must not be reported as a
+  // dialog (an agent would try to answer it). Callers get the guess to word an
+  // error, nothing more.
+  return {
     type: 'unknown',
     message:
       'The page stopped answering scripts; a JS dialog (alert/confirm/prompt) is probably open, or the page is busy.',
     confirmed: false,
     at: Date.now(),
   };
-  dialogs.set(tabId, suspected);
-  return suspected;
 }
