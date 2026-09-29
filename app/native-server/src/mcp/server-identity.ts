@@ -41,12 +41,12 @@ export const SERVER_INSTRUCTIONS = [
   'then workato_operation_status if it times out;',
   'run a fixture through a recipe -> workato_test_recipe;',
   'confirm the workspace a call lands in -> workato_session_context;',
-  'confirm which build is answering -> workato_bridge_info.',
-  'Large results spill to a file (auto_file) and come back as a summary;',
-  'pass out_file for a path of your own, or auto_file:false to force the result inline.',
-  'Writes are gated: a tool that can change data says so in its description and needs its',
-  'own flag. Read the description before the first call; it carries the constraints that',
-  'make the call succeed.',
+  'confirm which build is answering -> workato_bridge_info;',
+  'change environment or client workspace -> workato_switch_environment;',
+  'deploy -> workato_deploy_plan, review its diff, then workato_deploy_run.',
+  'Large results spill to a file (auto_file) as a summary; out_file picks the path.',
+  'Writes need their own flag. Read a description before the first call: it carries the',
+  'constraints that make the call succeed.',
 ].join(' ');
 
 /** The bridge version, read once from the package.json that ships with dist. */

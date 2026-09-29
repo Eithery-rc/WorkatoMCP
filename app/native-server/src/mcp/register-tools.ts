@@ -41,6 +41,11 @@ import {
   handleWorkatoReloadExtensionCall,
   isWorkatoReloadExtensionTool,
 } from './workato-reload-extension';
+import {
+  followSwitch,
+  isContextChangingTool,
+  parseSwitchResult,
+} from './workato-switch-environment';
 import { handleWorkatoStepSchemaApplyCall, isStepSchemaApplyCall } from './workato-step-schema';
 import {
   applyAutoFile,
@@ -292,6 +297,8 @@ function withSessionTarget(
   if (
     expected &&
     name !== TOOL_NAMES.WORKATO_SESSION.SESSION_CONTEXT &&
+    // A switch exists to leave the pinned context; checking it against that would refuse it.
+    !isContextChangingTool(name) &&
     args.expected_context == null &&
     args.allow_context_mismatch !== true
   ) {
@@ -636,6 +643,7 @@ export function createToolRouter(): ToolRouter {
         session &&
         session.tabId !== null &&
         name.startsWith('workato_') &&
+        !isContextChangingTool(name) &&
         (session.workspace_id !== undefined || session.environment !== undefined)
       ) {
         const generation = profileRegistry.getGeneration();
@@ -843,6 +851,12 @@ export function createToolRouter(): ToolRouter {
         // Single return path for a routed tool response: spill a large result
         // to disk first (the context block is kept out of the file), then stamp
         // the profile into the context block (only this side knows the name).
+        // The session cookie belongs to the Chrome profile: a pin on the profile
+        // that just switched follows it, or its next call reports ContextChanged.
+        if (isContextChangingTool(name) && session && session.profile === routingProfile) {
+          const switched = parseSwitchResult(response.data);
+          if (switched) session = followSwitch(session, switched, profileRegistry.getGeneration());
+        }
         return stampContextBlock(applyAutoFile(name, autoFilePlan, response.data), routingProfile);
       } else {
         return {
