@@ -3,7 +3,7 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { TIMEOUTS, ERROR_MESSAGES } from '@/common/constants';
-import { appendPageReport, assertNoOpenDialog, runWithSettle } from './settle';
+import { appendPageReport, assertNoOpenDialog, dialogOpenedReply, runWithSettle } from './settle';
 
 interface KeyboardToolParams {
   keys: string; // Required: string representing keys or key combinations to simulate (e.g., "Enter", "Ctrl+C")
@@ -149,6 +149,8 @@ class KeyboardTool extends BaseBrowserToolExecutor {
         page,
       );
     } catch (error) {
+      const opened = dialogOpenedReply(error);
+      if (opened) return opened;
       console.error('Error in keyboard operation:', error);
       return createErrorResponse(
         `Error simulating keyboard events: ${error instanceof Error ? error.message : String(error)}`,

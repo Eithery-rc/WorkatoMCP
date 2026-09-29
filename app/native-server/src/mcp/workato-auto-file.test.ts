@@ -45,10 +45,11 @@ describe('browser read tools', () => {
       'chrome_javascript',
       'chrome_search_page',
       'chrome_find_elements',
-      'chrome_act',
     ]) {
       expect(isAutoFileEligible(name)).toBe(true);
     }
+    // chrome_act reports what its actions did (navigation, dialog): never a file summary.
+    expect(isAutoFileEligible('chrome_act')).toBe(false);
     expect(isAutoFileEligible('chrome_click_element')).toBe(false);
     expect(isAutoFileEligible('chrome_navigate')).toBe(false);
   });

@@ -177,6 +177,87 @@ describe('tab leases', () => {
     expect((missing.content[0] as any).text).toContain('tab 56 is not open in profile "centium"');
   });
 
+  test('a session pin does not satisfy strict mode while leases are held', async () => {
+    const sendRequest = mockExtension();
+    const router = createToolRouter();
+    await router.handleToolCall('workato_switch_profile', { profile: 'personal', tabId: 5 });
+    parse(await router.handleToolCall('chrome_lease_tab', { profile: 'personal' }));
+
+    const refused = await router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
+    expect(refused.isError).toBe(true);
+    expect((refused.content[0] as any).text).toContain('StrictTabs');
+    expect(
+      toolCalls(sendRequest).filter((c: any[]) => c[1].name === 'workato_recipe_status'),
+    ).toHaveLength(0);
+  });
+
+  test('releasing an adopted tab keeps it open unless keep_tab:false', async () => {
+    jest.spyOn(profileRegistry, 'getConnectedProfiles').mockReturnValue(['personal', 'centium']);
+    jest.spyOn(profileRegistry, 'getActiveProfile').mockReturnValue('personal');
+    const sendRequest = jest
+      .spyOn(profileRegistry, 'sendRequest')
+      .mockImplementation(async (_profile: string, payload: any, type?: string) => {
+        if (payload?.name === 'get_windows_and_tabs') {
+          const windows = [{ windowId: 9, tabs: [{ tabId: 55 }, { tabId: 56 }] }];
+          return {
+            status: 'success',
+            data: { content: [{ type: 'text', text: JSON.stringify({ windows }) }] },
+          };
+        }
+        if (type === NativeMessageType.AGENT_TAB_CLOSE) return { status: 'success', data: {} };
+        return { status: 'success', data: { content: [{ type: 'text', text: 'ok' }] } };
+      });
+    const router = createToolRouter();
+    const closes = () =>
+      sendRequest.mock.calls.filter((c: any[]) => c[2] === NativeMessageType.AGENT_TAB_CLOSE);
+
+    const a = parse(await router.handleToolCall('chrome_lease_tab', { adopt_tab_id: 55 }));
+    expect(a.note).toContain('leaves it open');
+    const releasedA = parse(await router.handleToolCall('chrome_release_tab', { lease: a.lease }));
+    expect(releasedA.tab_closed).toBe(false);
+    expect(closes()).toHaveLength(0);
+
+    const b = parse(await router.handleToolCall('chrome_lease_tab', { adopt_tab_id: 56 }));
+    const releasedB = parse(
+      await router.handleToolCall('chrome_release_tab', { lease: b.lease, keep_tab: false }),
+    );
+    expect(releasedB.tab_closed).toBe(true);
+    expect(closes()).toHaveLength(1);
+  });
+
+  test('chrome_close_tabs never closes a tab leased in this session', async () => {
+    const sendRequest = mockExtension();
+    const router = createToolRouter();
+    const lease = parse(await router.handleToolCall('chrome_lease_tab', { profile: 'personal' }));
+
+    const byId = await router.handleToolCall('chrome_close_tabs', { tabIds: [lease.tabId] });
+    expect(byId.isError).toBe(true);
+    expect((byId.content[0] as any).text).toContain('chrome_release_tab');
+
+    const byUrl = await router.handleToolCall('chrome_close_tabs', { url: 'https://example.com' });
+    expect(byUrl.isError).toBe(true);
+    expect(
+      toolCalls(sendRequest).filter((c: any[]) => c[1].name === 'chrome_close_tabs'),
+    ).toHaveLength(0);
+  });
+
+  test('a cancelled chrome_lease_tab keeps no lease and closes its tab', async () => {
+    const sendRequest = mockExtension();
+    const router = createToolRouter();
+    const controller = new AbortController();
+    controller.abort();
+
+    await router.handleToolCall('chrome_lease_tab', { profile: 'personal' }, controller.signal);
+    // The handler keeps running after the cancelled reply; let it finish.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // No lease, so no strict mode: a tabless call goes through.
+    const listed = parse(await router.handleToolCall('workato_list_profiles', {}));
+    expect(listed.leases).toEqual([]);
+    expect(
+      sendRequest.mock.calls.some((c: any[]) => c[2] === NativeMessageType.AGENT_TAB_CLOSE),
+    ).toBe(true);
+  });
+
   test('a cancelled call stops waiting', async () => {
     const controller = new AbortController();
     const never = new Promise<any>(() => {});

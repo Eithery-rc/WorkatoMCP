@@ -576,7 +576,10 @@ export function createToolRouter(): ToolRouter {
   };
 
   const sweepLeases = () => {
-    for (const lease of leases.takeExpired(Date.now())) void closeLeaseTab(lease);
+    for (const lease of leases.takeExpired(Date.now())) {
+      // An adopted tab may be the user's own: forget the lease, keep the tab.
+      if (!lease.adopted) void closeLeaseTab(lease);
+    }
     stopSweepWhenIdle();
   };
 
@@ -610,6 +613,7 @@ export function createToolRouter(): ToolRouter {
   const handleLeaseTab = async (
     args: JsonObject,
     profile: string | null,
+    signal?: AbortSignal,
   ): Promise<CallToolResult> => {
     const target = profile ?? profileRegistry.getActiveProfile();
     if (!target) return routeError('Error: no Chrome profile is connected to lease a tab in.');
@@ -662,6 +666,7 @@ export function createToolRouter(): ToolRouter {
     }
 
     const now = Date.now();
+    const adopted = adopt !== undefined;
     const lease: TabLease = {
       lease: newLeaseId(),
       profile: target,
@@ -669,7 +674,14 @@ export function createToolRouter(): ToolRouter {
       windowId,
       created_at: now,
       last_used: now,
+      ...(adopted ? { adopted: true } : {}),
     };
+    if (signal?.aborted) {
+      // The caller gave up: nobody will ever pass this lease, and holding it
+      // would switch the session into strict mode. Close a tab we opened.
+      if (!adopted) await closeLeaseTab(lease);
+      return routeError('Error: the call was cancelled; no lease was kept.');
+    }
     leases.add(lease);
     if (!sweepTimer) {
       sweepTimer = setInterval(sweepLeases, 60_000);
@@ -680,12 +692,50 @@ export function createToolRouter(): ToolRouter {
       tabId: lease.tabId,
       windowId: lease.windowId,
       profile: lease.profile,
-      ...(adopt !== undefined ? { adopted: true } : {}),
+      ...(adopted ? { adopted: true } : {}),
       note:
         'Pass lease on every browser call. While this session holds a lease, calls that name ' +
         'no tab are refused. Release it with chrome_release_tab when done (idle leases expire ' +
-        'after 30 minutes).',
+        'after 30 minutes).' +
+        (adopted
+          ? ' This tab was adopted, so releasing or expiring the lease leaves it open ' +
+            '(chrome_release_tab keep_tab:false closes it).'
+          : ''),
     });
+  };
+
+  /**
+   * chrome_close_tabs must not close a tab another agent of this session holds
+   * a lease on: tabIds naming one are refused (release it instead), and a url
+   * close is refused while leased tabs exist in that profile, since the url
+   * match could reach them.
+   */
+  const leasedTabCloseGuard = (
+    name: string,
+    args: JsonObject,
+    profile: string | null,
+  ): string | null => {
+    if (name !== TOOL_NAMES.BROWSER.CLOSE_TABS || leases.size === 0) return null;
+    const target = profile ?? profileRegistry.getActiveProfile();
+    if (!target) return null;
+    const leased = leases.tabIdsIn(target);
+    if (leased.size === 0) return null;
+    const ids: unknown[] = Array.isArray(args.tabIds) ? args.tabIds : [];
+    const hit = ids.filter((id) => typeof id === 'number' && leased.has(id));
+    if (hit.length > 0) {
+      return (
+        `Error: tab(s) ${hit.join(', ')} are leased in this session; close them with ` +
+        'chrome_release_tab(lease). Nothing was closed.'
+      );
+    }
+    if (typeof args.url === 'string' && args.url.trim() !== '') {
+      return (
+        'Error: closing by url is refused while this session holds leased tabs in profile ' +
+        `"${target}" (the url could match a tab another agent leased). Pass tabIds instead. ` +
+        'Nothing was closed.'
+      );
+    }
+    return null;
   };
 
   const handleReleaseTab = async (args: JsonObject): Promise<CallToolResult> => {
@@ -699,7 +749,8 @@ export function createToolRouter(): ToolRouter {
     }
     leases.delete(id);
     stopSweepWhenIdle();
-    const keep = args.keep_tab === true;
+    // An adopted tab stays open unless the caller explicitly asks to close it.
+    const keep = lease.adopted ? args.keep_tab !== false : args.keep_tab === true;
     const closeError = keep ? null : await closeLeaseTab(lease);
     return leaseResult({
       released: lease.lease,
@@ -722,7 +773,11 @@ export function createToolRouter(): ToolRouter {
         }
       : null;
 
-  const handleToolCall = async (name: string, args: any): Promise<CallToolResult> => {
+  const handleToolCall = async (
+    name: string,
+    args: any,
+    signal?: AbortSignal,
+  ): Promise<CallToolResult> => {
     try {
       // 1. Check for Profile Management Admin Tools
       if (name === TOOL_NAMES.WORKATO.LIST_PROFILES) {
@@ -848,9 +903,10 @@ export function createToolRouter(): ToolRouter {
       sweepLeases();
       const routed = extractRoutedArgs(args);
       if (name === LEASE_TAB_TOOL) {
-        return handleLeaseTab(routed.args, getRoutingProfile(routed.profile));
+        // Awaited here so a rejection becomes a tool error, not a protocol error.
+        return await handleLeaseTab(routed.args, getRoutingProfile(routed.profile), signal);
       }
-      if (name === RELEASE_TAB_TOOL) return handleReleaseTab(routed.args);
+      if (name === RELEASE_TAB_TOOL) return await handleReleaseTab(routed.args);
 
       // A lease names both the profile and the tab of this call.
       let leaseProfile: string | null = null;
@@ -953,13 +1009,18 @@ export function createToolRouter(): ToolRouter {
       }
       // workato_pull_recipe(out_file) / workato_ui_save_recipe_code(code_path):
       // resolve the file params here (this process has filesystem access).
-      let effectiveArgs: any = withSessionTarget(name, routed.args || {}, session, routingProfile);
+      // Strict targeting looks at the caller's own arguments (lease applied),
+      // before the session pin is injected: the pin is shared by every agent
+      // of the session, so it must not count as naming a tab.
       const strictRefusal = strictTabsViolation(
         name,
-        effectiveArgs,
+        routed.args || {},
         leases.size > 0 || strictTabsFromEnv(),
       );
       if (strictRefusal) return routeError(strictRefusal);
+      const closeRefusal = leasedTabCloseGuard(name, routed.args || {}, routingProfile);
+      if (closeRefusal) return routeError(closeRefusal);
+      let effectiveArgs: any = withSessionTarget(name, routed.args || {}, session, routingProfile);
       let pullOutFile: string | undefined;
       if (isWorkatoFileTool(name)) {
         const prepared = prepareWorkatoCall(name, effectiveArgs || {});
@@ -1135,7 +1196,7 @@ export function createToolRouter(): ToolRouter {
   };
 
   const handleToolCallWithCancel = (name: string, args: any, signal?: AbortSignal) =>
-    raceAbort(handleToolCall(name, args), signal);
+    raceAbort(handleToolCall(name, args, signal), signal);
 
   return { listTools, handleToolCall: handleToolCallWithCancel };
 }

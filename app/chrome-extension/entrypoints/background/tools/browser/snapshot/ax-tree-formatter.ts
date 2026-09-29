@@ -18,7 +18,7 @@
  * form controls (a checkbox inside a clickable row stays addressable).
  */
 
-import type { AXNode, DomInfo } from './types';
+import type { AXNode, DomInfo, UidIdentity } from './types';
 
 const INTERACTIVE_ROLES = new Set<string>([
   'button',
@@ -100,6 +100,21 @@ function normalizeName(name: AXNode['name']): string {
   return (name?.value ?? '').toString();
 }
 
+/**
+ * Roles whose name identifies the record a node belongs to. A uid records the
+ * name of its nearest such ancestor, so a row a keyed list re-rendered with
+ * another record is caught even when the button in it has the same label.
+ */
+export const ROW_ROLES = new Set(['row', 'listitem', 'treeitem', 'article']);
+
+/** Role and name exactly as a uid records them; the action-time check uses the same normalization. */
+export function axIdentity(node: AXNode): { role: string; name: string } {
+  return {
+    role: normalizeRole(node.role),
+    name: truncate(clean(normalizeName(node.name)), MAX_NAME_LEN),
+  };
+}
+
 function normalizeValue(value: AXNode['value']): string {
   if (value === undefined || value === null) return '';
   if (typeof value === 'string') return value;
@@ -114,8 +129,8 @@ function propMap(node: AXNode): Map<string, any> {
 }
 
 export interface FormatOptions {
-  /** Stable uid for a node of this tree's frame. */
-  assignUid: (backendNodeId: number) => number;
+  /** Stable uid for a node of this tree's frame; identity is what the node is now. */
+  assignUid: (backendNodeId: number, identity?: UidIdentity) => number;
   /** Layout facts; null falls back to the role-only heuristic. */
   dom?: DomInfo | null;
   /** Indent every line by this many levels (frames nested under a header). */
@@ -250,6 +265,7 @@ export function formatAxTree(nodes: AXNode[], opts: FormatOptions): FormatResult
     parentRole: string,
     insideUid: boolean,
     textClaimed: boolean,
+    rowName: string,
   ): void => {
     if (!node || visited.has(node.nodeId)) return;
     visited.add(node.nodeId);
@@ -257,6 +273,8 @@ export function formatAxTree(nodes: AXNode[], opts: FormatOptions): FormatResult
     const ignored = node.ignored === true;
     const role = normalizeRole(node.role);
     let name = truncate(clean(normalizeName(node.name)), MAX_NAME_LEN);
+    // The AX name as Chrome computes it, before a clickable div borrows its text.
+    const axName = name;
     const backendId = node.backendDOMNodeId;
     const hasBackend = typeof backendId === 'number';
 
@@ -310,7 +328,11 @@ export function formatAxTree(nodes: AXNode[], opts: FormatOptions): FormatResult
       const props = propMap(node);
       let line = `${indent}${role} "${name}"`;
       if (actionable && hasBackend) {
-        const uid = opts.assignUid(backendId as number);
+        const uid = opts.assignUid(backendId as number, {
+          role,
+          name: axName,
+          row: rowName || undefined,
+        });
         uids.push(uid);
         uidToBackendNodeId.set(uid, backendId as number);
         line += ` [uid=${uid}]`;
@@ -336,13 +358,14 @@ export function formatAxTree(nodes: AXNode[], opts: FormatOptions): FormatResult
     const childInsideUid =
       insideUid || (actionable && (role === 'button' || role === 'link' || pointerRoot));
     const childClaimed = textClaimed || claimsText;
+    const childRow = !ignored && ROW_ROLES.has(role) && axName ? axName : rowName;
     for (const cid of node.childIds ?? []) {
       const child = byId.get(cid);
-      if (child) walk(child, childDepth, childParentRole, childInsideUid, childClaimed);
+      if (child) walk(child, childDepth, childParentRole, childInsideUid, childClaimed, childRow);
     }
   };
 
-  for (const root of startNodes) walk(root, 0, '', false, false);
+  for (const root of startNodes) walk(root, 0, '', false, false, '');
 
   let text = lines.join('\n');
   if (text.trim().length === 0) {

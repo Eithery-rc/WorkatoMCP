@@ -4,8 +4,10 @@
  * A uid names one DOM node (frame + document + backendNodeId). A node seen
  * again in a later snapshot keeps its uid; a new node gets the next number of
  * a per-tab counter that only grows, so a uid can never come to name a
- * different element. That is what makes it safe for several agents, or one
- * agent across many steps, to hold uids from different snapshots.
+ * different node. That is what makes it safe for several agents, or one
+ * agent across many steps, to hold uids from different snapshots. Each entry
+ * also records the node's role, name and row context, so an action refuses a
+ * node that a keyed list recycled for another record.
  *
  * Entries are dropped when their frame navigates (new loaderId), when they
  * have not been seen for STALE_AFTER_SNAPSHOTS snapshots, and when the tab
@@ -13,7 +15,7 @@
  * restart keeps every uid: backendNodeIds live in the renderer, not here.
  */
 
-import type { UidNodeRef } from './types';
+import type { UidIdentity, UidNodeRef } from './types';
 
 /** A node absent from this many consecutive snapshots is forgotten. */
 const STALE_AFTER_SNAPSHOTS = 10;
@@ -75,14 +77,27 @@ export async function getTabUids(tabId: number): Promise<TabUids> {
         | {
             lastUid?: number;
             seq?: number;
-            entries?: Array<[number, number, string, string, number]>;
+            entries?: Array<[number, number, string, string, number, string?, string?, string?]>;
           }
         | undefined;
       if (stored && Array.isArray(stored.entries)) {
         state.lastUid = Number(stored.lastUid) || 0;
         state.seq = Number(stored.seq) || 0;
-        for (const [uid, backendNodeId, frameId, loaderId, seen] of stored.entries) {
-          state.byUid.set(uid, { backendNodeId, frameId, loaderId, seen });
+        for (const [
+          uid,
+          backendNodeId,
+          frameId,
+          loaderId,
+          seen,
+          role,
+          name,
+          row,
+        ] of stored.entries) {
+          const ref: UidNodeRef = { backendNodeId, frameId, loaderId, seen };
+          if (typeof role === 'string') ref.role = role;
+          if (typeof name === 'string') ref.name = name;
+          if (typeof row === 'string') ref.row = row;
+          state.byUid.set(uid, ref);
           state.byKey.set(nodeKey(frameId, loaderId, backendNodeId), uid);
         }
       }
@@ -108,24 +123,42 @@ export function beginSnapshot(state: TabUids, liveFrames: Map<string, string>): 
   return state.seq;
 }
 
-/** The node's uid, issuing the next one if the node is new. */
+function applyIdentity(ref: UidNodeRef, identity?: UidIdentity): void {
+  if (!identity) return;
+  ref.role = identity.role;
+  ref.name = identity.name;
+  if (identity.row) ref.row = identity.row;
+  else delete ref.row;
+}
+
+/**
+ * The node's uid, issuing the next one if the node is new. `identity` is what
+ * the node is in this snapshot; it replaces the recorded one, so a legitimate
+ * change the agent has now seen (a button relabelled) is accepted from here on.
+ */
 export function assignUid(
   state: TabUids,
   frameId: string,
   loaderId: string,
   backendNodeId: number,
+  identity?: UidIdentity,
 ): number {
   const key = nodeKey(frameId, loaderId, backendNodeId);
   const existing = state.byKey.get(key);
   if (existing !== undefined) {
     const ref = state.byUid.get(existing);
-    if (ref) ref.seen = state.seq;
+    if (ref) {
+      ref.seen = state.seq;
+      applyIdentity(ref, identity);
+    }
     return existing;
   }
   state.lastUid += 1;
   const uid = state.lastUid;
   state.byKey.set(key, uid);
-  state.byUid.set(uid, { backendNodeId, frameId, loaderId, seen: state.seq });
+  const ref: UidNodeRef = { backendNodeId, frameId, loaderId, seen: state.seq };
+  applyIdentity(ref, identity);
+  state.byUid.set(uid, ref);
   return uid;
 }
 
@@ -152,7 +185,8 @@ export async function persistTabUids(tabId: number, state: TabUids): Promise<voi
   const area = sessionStorage();
   if (!area) return;
   const entries = [...state.byUid.entries()].map(
-    ([uid, r]) => [uid, r.backendNodeId, r.frameId, r.loaderId, r.seen] as const,
+    ([uid, r]) =>
+      [uid, r.backendNodeId, r.frameId, r.loaderId, r.seen, r.role, r.name, r.row] as const,
   );
   try {
     await area.set({

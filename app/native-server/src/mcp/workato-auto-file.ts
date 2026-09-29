@@ -72,7 +72,9 @@ export const READ_TOOLS = new Set<string>([
   'chrome_javascript',
   'chrome_search_page',
   'chrome_find_elements',
-  'chrome_act',
+  // chrome_act is deliberately absent: its step results and page report
+  // ("the action opened a dialog", "stopped: the page navigated") must reach
+  // the agent inline, never as a summary of a file.
 ]);
 
 /** Tools whose served schema gains the out_file / auto_file properties. */

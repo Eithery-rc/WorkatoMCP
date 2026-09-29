@@ -113,16 +113,33 @@ function scheduleWatchRelease(tabId: number): void {
   );
 }
 
+/** In-flight watch attaches, shared by concurrent callers so each tab holds one watch ref. */
+const pendingWatch = new Map<number, Promise<void>>();
+
+async function attachWatch(tabId: number): Promise<void> {
+  if (watching.has(tabId)) return;
+  let pending = pendingWatch.get(tabId);
+  if (!pending) {
+    pending = cdpSessionManager
+      .attach(tabId, WATCH_OWNER)
+      .then(() => {
+        watching.add(tabId);
+      })
+      .finally(() => pendingWatch.delete(tabId));
+    pendingWatch.set(tabId, pending);
+  }
+  await pending;
+}
+
 /** Arm the dialog watch on a tab (idempotent). Never throws. */
 export async function ensureDialogWatch(tabId: number): Promise<void> {
   try {
-    if (!watching.has(tabId)) {
-      await cdpSessionManager.attach(tabId, WATCH_OWNER);
-      watching.add(tabId);
-    }
+    await attachWatch(tabId);
     // Enable while the page still answers; do not hang on a page that does not.
     await Promise.race([
-      cdpSessionManager.sendCommand(tabId, 'Page.enable').catch(() => undefined),
+      cdpSessionManager
+        .sendCommand(tabId, 'Page.enable', undefined, { timeoutMs: WATCH_ENABLE_TIMEOUT_MS })
+        .catch(() => undefined),
       delay(WATCH_ENABLE_TIMEOUT_MS),
     ]);
   } catch {
@@ -214,7 +231,13 @@ export async function probeDialog(tabId: number): Promise<TrackedDialog | null> 
   if (known?.confirmed) return known;
   try {
     await cdpSessionManager.withSession(tabId, PROBE_OWNER, async () => {
-      await cdpSessionManager.sendCommand(tabId, 'Page.enable');
+      // Never await Page.enable here: the probe runs exactly when the page does
+      // not answer, and the renderer half of Page.enable waits on the page. Fire
+      // it and watch for the dialog event for a short window instead, so the
+      // session is always released.
+      cdpSessionManager
+        .sendCommand(tabId, 'Page.enable', undefined, { timeoutMs: PROBE_EVENT_WAIT_MS })
+        .catch(() => undefined);
       const until = Date.now() + PROBE_EVENT_WAIT_MS;
       while (Date.now() < until && !dialogs.get(tabId)?.confirmed) {
         await delay(50);

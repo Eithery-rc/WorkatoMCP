@@ -87,6 +87,18 @@ export class DialogOpenError extends Error {
 }
 
 /**
+ * The reply for an action that ran and opened a JS dialog itself: not an error
+ * (the action happened; retrying would repeat it), just the instruction to
+ * answer the dialog. null for any other error.
+ */
+export function dialogOpenedReply(error: unknown): ToolResult | null {
+  if (error instanceof DialogOpenError && error.openedByAction) {
+    return { content: [{ type: 'text', text: error.message }], isError: false };
+  }
+  return null;
+}
+
+/**
  * Throw DialogOpenError when a JS dialog is open on the tab. Input tools call
  * it before acting: CDP input into a page blocked by a dialog hangs until timeout.
  * Only a dialog Chrome reported refuses the call; a suspected one does not.
@@ -298,8 +310,24 @@ async function waitDomQuiet(
 // Focus emulation for hidden tabs
 // ---------------------------------------------------------------------------
 
+/**
+ * The page is shown to the user: its tab is the selected one AND its window
+ * has focus. A selected tab in an unfocused (often covered) agents window is
+ * not: Chrome treats it as hidden, which is exactly the leased-tab case.
+ */
+async function pageInFront(tab: chrome.tabs.Tab): Promise<boolean> {
+  if (!tab.active) return false;
+  try {
+    const win = await chrome.windows.get(tab.windowId);
+    return !!win.focused;
+  } catch {
+    return false;
+  }
+}
+
 async function enableFocusEmulation(tab: chrome.tabs.Tab | null): Promise<boolean> {
-  if (!tab || typeof tab.id !== 'number' || tab.active) return false;
+  if (!tab || typeof tab.id !== 'number') return false;
+  if (await pageInFront(tab)) return false;
   try {
     await cdpSessionManager.attach(tab.id, FOCUS_OWNER);
   } catch {
