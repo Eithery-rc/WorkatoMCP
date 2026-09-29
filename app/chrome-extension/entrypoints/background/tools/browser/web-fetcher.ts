@@ -1,5 +1,5 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
-import { BaseBrowserToolExecutor } from '../base-browser';
+import { BaseBrowserToolExecutor, getTabOrThrow } from '../base-browser';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 
@@ -26,7 +26,9 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
     const url = args.url;
     const selector = args.selector;
     const explicitTabId = args.tabId;
-    const background = args.background === true;
+    // Naming a tab means "read that tab", not "show it to me": no focus change
+    // unless background:false is passed explicitly.
+    const background = args.background ?? typeof explicitTabId === 'number';
     const windowId = args.windowId;
 
     console.log(`Starting web fetcher with options:`, {
@@ -41,7 +43,7 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
       let tab;
 
       if (typeof explicitTabId === 'number') {
-        tab = await chrome.tabs.get(explicitTabId);
+        tab = await getTabOrThrow(explicitTabId);
       } else if (url) {
         // If URL is provided, check if it's already open
         console.log(`Checking if URL is already open: ${url}`);

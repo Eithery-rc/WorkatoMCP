@@ -11,6 +11,8 @@ export interface UidMapEntry {
   snapshotId: string;
   uidToBackendNodeId: Map<number, number>;
   capturedAt: number;
+  /** First uid of this snapshot; anything lower belongs to an older one. */
+  firstUid?: number;
 }
 
 export interface SnapshotResult {

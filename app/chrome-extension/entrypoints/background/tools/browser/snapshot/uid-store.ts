@@ -12,6 +12,13 @@
 import type { UidMapEntry } from './types';
 
 const store = new Map<number, UidMapEntry>();
+/**
+ * Last uid handed out per tab. It only grows (until the tab closes), so each
+ * snapshot numbers its elements after the previous one's: when two agents
+ * snapshot the same tab, the older agent's uids are refused instead of
+ * silently naming the newer snapshot's elements.
+ */
+const lastUid = new Map<number, number>();
 
 let onRemovedRegistered = false;
 
@@ -24,27 +31,35 @@ function ensureTabCloseListener() {
         console.log(`[snapshot] tab ${tabId} closed — clearing UID store`);
         store.delete(tabId);
       }
+      lastUid.delete(tabId);
     });
   } catch (e) {
     console.warn('[snapshot] could not register tabs.onRemoved listener:', e);
   }
 }
 
+/** The uid the next snapshot of this tab numbers from. */
+export function uidBase(tabId: number): number {
+  return lastUid.get(tabId) ?? 0;
+}
+
 export function storeSnapshot(tabId: number, entry: UidMapEntry): void {
   ensureTabCloseListener();
   store.set(tabId, entry);
+  let max = uidBase(tabId);
+  for (const uid of entry.uidToBackendNodeId.keys()) if (uid > max) max = uid;
+  lastUid.set(tabId, max);
 }
 
 export function resolveUid(tabId: number, uid: number): number {
   const entry = store.get(tabId);
-  if (!entry) {
-    throw new Error(`uid ${uid} not found — snapshot may be stale, call chrome_snapshot again`);
+  const backendNodeId = entry?.uidToBackendNodeId.get(uid);
+  if (typeof backendNodeId === 'number') return backendNodeId;
+  const firstOfLatest = entry?.firstUid ?? uidBase(tabId) + 1;
+  if (uid < firstOfLatest) {
+    throw new Error(`uid ${uid} is from an older snapshot of this tab; call chrome_snapshot again`);
   }
-  const backendNodeId = entry.uidToBackendNodeId.get(uid);
-  if (typeof backendNodeId !== 'number') {
-    throw new Error(`uid ${uid} not found — snapshot may be stale, call chrome_snapshot again`);
-  }
-  return backendNodeId;
+  throw new Error(`uid ${uid} not found, snapshot may be stale; call chrome_snapshot again`);
 }
 
 export function clear(tabId: number): void {

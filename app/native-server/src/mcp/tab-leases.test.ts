@@ -1,0 +1,149 @@
+/**
+ * Tab leases, strict targeting, the cross-profile pin rule and cancellation,
+ * exercised through the real router with the extension transport mocked.
+ */
+
+import { afterEach, describe, expect, jest, test } from '@jest/globals';
+import { NativeMessageType, TOOL_SCHEMAS } from 'workatomcp-shared';
+import { createToolRouter, raceAbort } from './register-tools';
+import { profileRegistry } from '../server/profile-registry';
+import { withLeaseToolSchemas } from './tab-leases';
+
+const parse = (result: any): any => JSON.parse((result.content[0] as any).text);
+
+function mockExtension(tabIdFor: Record<string, number> = { centium: 77, personal: 88 }) {
+  jest.spyOn(profileRegistry, 'getConnectedProfiles').mockReturnValue(['personal', 'centium']);
+  jest.spyOn(profileRegistry, 'getActiveProfile').mockReturnValue('personal');
+  return jest
+    .spyOn(profileRegistry, 'sendRequest')
+    .mockImplementation(async (profile: string, payload: any, type?: string) => {
+      if (type === NativeMessageType.AGENT_TAB_OPEN) {
+        return { status: 'success', data: { tabId: tabIdFor[profile], windowId: 5 } };
+      }
+      if (type === NativeMessageType.AGENT_TAB_CLOSE) return { status: 'success', data: {} };
+      if (payload?.name === 'workato_session_context') {
+        return {
+          status: 'success',
+          data: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ tab_id: 5, host: 'app.workato.com', workspace_id: 1 }),
+              },
+            ],
+          },
+        };
+      }
+      return { status: 'success', data: { content: [{ type: 'text', text: 'ok' }] } };
+    });
+}
+
+function toolCalls(sendRequest: any) {
+  return sendRequest.mock.calls.filter((c: any[]) => c[2] === NativeMessageType.CALL_TOOL);
+}
+
+describe('tab leases', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  test('a lease routes to its profile and tab without activating it', async () => {
+    const sendRequest = mockExtension();
+    const router = createToolRouter();
+
+    const lease = parse(await router.handleToolCall('chrome_lease_tab', { profile: 'centium' }));
+    expect(lease).toMatchObject({ tabId: 77, profile: 'centium' });
+
+    const result = await router.handleToolCall('chrome_get_web_content', { lease: lease.lease });
+    expect(result.isError).toBeFalsy();
+    const [call] = toolCalls(sendRequest);
+    expect(call[0]).toBe('centium');
+    expect(call[1]).toEqual({
+      name: 'chrome_get_web_content',
+      args: { tabId: 77, background: true },
+    });
+  });
+
+  test('while a lease is held, a call that names no tab is refused', async () => {
+    const sendRequest = mockExtension();
+    const router = createToolRouter();
+    const lease = parse(await router.handleToolCall('chrome_lease_tab', {}));
+
+    const refused = await router.handleToolCall('chrome_read_page', {});
+    expect(refused.isError).toBe(true);
+    expect((refused.content[0] as any).text).toContain('StrictTabs');
+    expect(toolCalls(sendRequest)).toHaveLength(0);
+
+    // Tools that target no tab, and explicit tabIds, still go through.
+    await router.handleToolCall('chrome_read_page', { tabId: 12 });
+    expect(toolCalls(sendRequest)).toHaveLength(1);
+
+    const released = parse(
+      await router.handleToolCall('chrome_release_tab', { lease: lease.lease }),
+    );
+    expect(released.tab_closed).toBe(true);
+    const closes = sendRequest.mock.calls.filter(
+      (c: any[]) => c[2] === NativeMessageType.AGENT_TAB_CLOSE,
+    );
+    expect(closes).toHaveLength(1);
+
+    // No lease left: the old default behaviour is back.
+    const free = await router.handleToolCall('chrome_read_page', {});
+    expect(free.isError).toBeFalsy();
+  });
+
+  test('a lease and a conflicting profile or tabId are refused', async () => {
+    mockExtension();
+    const router = createToolRouter();
+    const lease = parse(await router.handleToolCall('chrome_lease_tab', { profile: 'centium' }));
+
+    const wrongProfile = await router.handleToolCall('chrome_read_page', {
+      lease: lease.lease,
+      profile: 'personal',
+    });
+    expect(wrongProfile.isError).toBe(true);
+    const wrongTab = await router.handleToolCall('chrome_read_page', {
+      lease: lease.lease,
+      tabId: 1,
+    });
+    expect(wrongTab.isError).toBe(true);
+    const unknown = await router.handleToolCall('chrome_read_page', { lease: 'Lnope' });
+    expect((unknown.content[0] as any).text).toContain('Unknown or expired lease');
+  });
+
+  test('the session pin is not injected into a call routed to another profile', async () => {
+    const sendRequest = mockExtension();
+    const router = createToolRouter();
+    await router.handleToolCall('workato_switch_profile', { profile: 'personal', tabId: 5 });
+
+    await router.handleToolCall('workato_recipe_status', { recipe_id: 1, profile: 'centium' });
+    await router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
+
+    const statusCalls = toolCalls(sendRequest).filter(
+      (c: any[]) => c[1].name === 'workato_recipe_status',
+    );
+    expect(statusCalls[0][0]).toBe('centium');
+    expect(statusCalls[0][1].args.tabId).toBeUndefined();
+    expect(statusCalls[1][0]).toBe('personal');
+    expect(statusCalls[1][1].args.tabId).toBe(5);
+  });
+
+  test('lease is advertised on tools that take a tabId only', () => {
+    const tools = withLeaseToolSchemas(TOOL_SCHEMAS);
+    const props = (name: string) =>
+      (tools.find((t) => t.name === name)!.inputSchema as any).properties;
+    expect(props('chrome_read_page').lease).toBeDefined();
+    expect(props('get_windows_and_tabs').lease).toBeUndefined();
+    expect(props('chrome_lease_tab').lease).toBeUndefined();
+  });
+
+  test('a cancelled call stops waiting', async () => {
+    const controller = new AbortController();
+    const never = new Promise<any>(() => {});
+    const pending = raceAbort(never, controller.signal);
+    controller.abort();
+    const result = await pending;
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as any).text).toContain('Cancelled by the MCP client');
+  });
+});

@@ -49,6 +49,9 @@ class NavigateTool extends BaseBrowserToolExecutor {
       background,
       windowId,
     } = args;
+    // A caller that names its tab is usually one of several agents sharing the
+    // profile: leave focus alone unless it asks for background:false.
+    const quiet = background ?? typeof tabId === 'number';
 
     console.log(
       `Attempting to ${refresh ? 'refresh current tab' : `open URL: ${url}`} with options:`,
@@ -105,8 +108,8 @@ class NavigateTool extends BaseBrowserToolExecutor {
 
         // Respect background flag for focus behavior
         await this.ensureFocus(targetTab, {
-          activate: background !== true,
-          focusWindow: background !== true,
+          activate: !quiet,
+          focusWindow: !quiet,
         });
 
         if (url === 'forward') {
@@ -262,8 +265,8 @@ class NavigateTool extends BaseBrowserToolExecutor {
         }
         // Optionally bring to foreground based on background flag
         await this.ensureFocus(existingTab, {
-          activate: background !== true,
-          focusWindow: background !== true,
+          activate: !quiet,
+          focusWindow: !quiet,
         });
 
         console.log(`Activated existing Tab ID: ${existingTab.id}`);
@@ -301,7 +304,7 @@ class NavigateTool extends BaseBrowserToolExecutor {
           url: url,
           width: typeof width === 'number' ? width : DEFAULT_WINDOW_WIDTH,
           height: typeof height === 'number' ? height : DEFAULT_WINDOW_HEIGHT,
-          focused: background === true ? false : true,
+          focused: quiet ? false : true,
         });
 
         if (newWindow && newWindow.id !== undefined) {
@@ -350,9 +353,9 @@ class NavigateTool extends BaseBrowserToolExecutor {
           const newTab = await chrome.tabs.create({
             url: url,
             windowId: targetWindow.id,
-            active: background === true ? false : true,
+            active: quiet ? false : true,
           });
-          if (background !== true) {
+          if (!quiet) {
             await chrome.windows.update(targetWindow.id, { focused: true });
           }
 
@@ -588,30 +591,10 @@ class CloseTabsTool extends BaseBrowserToolExecutor {
         };
       }
 
-      // If no tabIds or URL provided, close the current active tab
-      console.log('No tabIds or URL provided, closing active tab');
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-      if (!activeTab || !activeTab.id) {
-        return createErrorResponse('No active tab found');
-      }
-
-      await chrome.tabs.remove(activeTab.id);
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              success: true,
-              message: 'Closed active tab',
-              closedCount: 1,
-              closedTabIds: [activeTab.id],
-            }),
-          },
-        ],
-        isError: false,
-      };
+      // Never guess: with parallel agents the active tab belongs to someone else.
+      return createErrorResponse(
+        'chrome_close_tabs needs tabIds or url; it no longer closes the active tab. Nothing was closed.',
+      );
     } catch (error) {
       console.error('Error in CloseTabsTool.execute:', error);
       return createErrorResponse(

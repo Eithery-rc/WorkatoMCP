@@ -55,6 +55,19 @@ import {
 } from './workato-auto-file';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { profileRegistry } from '../server/profile-registry';
+import {
+  LEASE_ARG,
+  LEASE_TAB_TOOL,
+  LeaseTable,
+  RELEASE_TAB_TOOL,
+  applyLease,
+  leaseResult,
+  newLeaseId,
+  strictTabsFromEnv,
+  strictTabsViolation,
+  withLeaseToolSchemas,
+  type TabLease,
+} from './tab-leases';
 
 export const PROFILE_ROUTING_ARG = 'profile';
 export const TAB_ROUTING_ARG = 'tabId';
@@ -212,7 +225,40 @@ function buildPullOrigin(
 
 interface ToolRouter {
   listTools: () => Promise<{ tools: Tool[] }>;
-  handleToolCall: (name: string, args: any) => Promise<CallToolResult>;
+  handleToolCall: (name: string, args: any, signal?: AbortSignal) => Promise<CallToolResult>;
+}
+
+const CANCELLED_TEXT = 'Cancelled by the MCP client; the browser may still finish the action.';
+
+/**
+ * Stop waiting when the client cancels (or its request timed out): the handler
+ * returns at once instead of holding the call for up to 120s. The browser side
+ * is not interrupted, which the message says.
+ */
+export function raceAbort(
+  work: Promise<CallToolResult>,
+  signal?: AbortSignal,
+): Promise<CallToolResult> {
+  if (!signal) return work;
+  const cancelled: CallToolResult = {
+    content: [{ type: 'text', text: CANCELLED_TEXT }],
+    isError: true,
+  };
+  if (signal.aborted) return Promise.resolve(cancelled);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => resolve(cancelled);
+    signal.addEventListener('abort', onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      },
+    );
+  });
 }
 
 export function withProfileRoutingToolSchemas(tools: Tool[]): Tool[] {
@@ -283,8 +329,13 @@ function withSessionTarget(
   name: string,
   args: JsonObject,
   session: SessionContext | null,
+  routingProfile: string | null,
 ): JsonObject {
   if (!session || !isSessionTargetedTool(name)) return args;
+  // Tab ids and workspaces belong to one Chrome profile: a call routed to
+  // another profile (explicit profile arg, or a lease there) gets nothing
+  // from this pin.
+  if (routingProfile !== null && routingProfile !== session.profile) return args;
   let next = args;
   if (
     session.tabId !== null &&
@@ -486,8 +537,8 @@ export const setupTools = (server: Server) => {
   server.setRequestHandler(ListToolsRequestSchema, router.listTools);
 
   // Call tool handler
-  server.setRequestHandler(CallToolRequestSchema, async (request) =>
-    router.handleToolCall(request.params.name, request.params.arguments || {}),
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) =>
+    router.handleToolCall(request.params.name, request.params.arguments || {}, extra?.signal),
   );
 };
 
@@ -497,6 +548,106 @@ export function createToolRouter(): ToolRouter {
 
   const getRoutingProfile = (callProfile: string | null): string | null =>
     callProfile || session?.profile || null;
+
+  // Leases of THIS MCP session. Subagents share the session, so the lease id
+  // they pass is what tells their calls apart.
+  const leases = new LeaseTable();
+  let sweepTimer: NodeJS.Timeout | null = null;
+
+  const closeLeaseTab = async (lease: TabLease): Promise<string | null> => {
+    try {
+      const reply = await profileRegistry.sendRequest(
+        lease.profile,
+        { tabId: lease.tabId },
+        NativeMessageType.AGENT_TAB_CLOSE,
+        15000,
+      );
+      return reply?.status === 'success' ? null : reply?.error || 'the extension refused';
+    } catch (err: any) {
+      return err?.message || String(err);
+    }
+  };
+
+  const stopSweepWhenIdle = () => {
+    if (leases.size === 0 && sweepTimer) {
+      clearInterval(sweepTimer);
+      sweepTimer = null;
+    }
+  };
+
+  const sweepLeases = () => {
+    for (const lease of leases.takeExpired(Date.now())) void closeLeaseTab(lease);
+    stopSweepWhenIdle();
+  };
+
+  const handleLeaseTab = async (
+    args: JsonObject,
+    profile: string | null,
+  ): Promise<CallToolResult> => {
+    const target = profile ?? profileRegistry.getActiveProfile();
+    if (!target) return routeError('Error: no Chrome profile is connected to lease a tab in.');
+    requireConnectedProfile(target);
+    const reply = await profileRegistry.sendRequest(
+      target,
+      {
+        url: typeof args.url === 'string' ? args.url : undefined,
+        own_window: args.own_window === true,
+      },
+      NativeMessageType.AGENT_TAB_OPEN,
+      20000,
+    );
+    if (reply?.status !== 'success' || typeof reply?.data?.tabId !== 'number') {
+      return routeError(
+        `Error: could not open a tab in profile "${target}": ` +
+          `${reply?.error || 'no tab id came back'}`,
+      );
+    }
+    const now = Date.now();
+    const lease: TabLease = {
+      lease: newLeaseId(),
+      profile: target,
+      tabId: reply.data.tabId,
+      windowId: typeof reply.data.windowId === 'number' ? reply.data.windowId : null,
+      created_at: now,
+      last_used: now,
+    };
+    leases.add(lease);
+    if (!sweepTimer) {
+      sweepTimer = setInterval(sweepLeases, 60_000);
+      sweepTimer.unref();
+    }
+    return leaseResult({
+      lease: lease.lease,
+      tabId: lease.tabId,
+      windowId: lease.windowId,
+      profile: lease.profile,
+      note:
+        'Pass lease on every browser call. While this session holds a lease, calls that name ' +
+        'no tab are refused. Release it with chrome_release_tab when done (idle leases expire ' +
+        'after 30 minutes).',
+    });
+  };
+
+  const handleReleaseTab = async (args: JsonObject): Promise<CallToolResult> => {
+    const id = typeof args.lease === 'string' ? args.lease.trim() : '';
+    const lease = leases.get(id);
+    if (!lease) {
+      return routeError(
+        `Error: unknown lease "${args.lease}". Leases of this session: ` +
+          `${JSON.stringify(leases.ids())}.`,
+      );
+    }
+    leases.delete(id);
+    stopSweepWhenIdle();
+    const keep = args.keep_tab === true;
+    const closeError = keep ? null : await closeLeaseTab(lease);
+    return leaseResult({
+      released: lease.lease,
+      tabId: lease.tabId,
+      tab_closed: !keep && closeError === null,
+      ...(closeError ? { close_error: closeError } : {}),
+    });
+  };
 
   const sessionSummary = () =>
     session
@@ -529,6 +680,7 @@ export function createToolRouter(): ToolRouter {
                   session_context: sessionSummary(),
                   server_default_profile: defaultProfile,
                   connected_profiles: connected,
+                  leases: leases.summary(Date.now()),
                   routing_note: session
                     ? `This session is pinned to profile "${session.profile}"` +
                       (session.tabId !== null ? ` and tab ${session.tabId}` : '') +
@@ -633,8 +785,28 @@ export function createToolRouter(): ToolRouter {
         });
       }
 
+      sweepLeases();
       const routed = extractRoutedArgs(args);
-      const routingProfile = getRoutingProfile(routed.profile);
+      if (name === LEASE_TAB_TOOL) {
+        return handleLeaseTab(routed.args, getRoutingProfile(routed.profile));
+      }
+      if (name === RELEASE_TAB_TOOL) return handleReleaseTab(routed.args);
+
+      // A lease names both the profile and the tab of this call.
+      let leaseProfile: string | null = null;
+      if (routed.args[LEASE_ARG] !== undefined) {
+        const applied = applyLease(name, routed.args, leases, Date.now());
+        if (!applied.ok) return routeError(`Error: ${applied.error}`);
+        if (routed.profile && routed.profile !== applied.lease.profile) {
+          return routeError(
+            `Error: lease ${applied.lease.lease} is in profile "${applied.lease.profile}", ` +
+              `but the call passed profile "${routed.profile}".`,
+          );
+        }
+        routed.args = applied.args;
+        leaseProfile = applied.lease.profile;
+      }
+      const routingProfile = getRoutingProfile(leaseProfile ?? routed.profile);
 
       // A profile that reconnected may be a different browser session; the
       // pinned tab id can now belong to another workspace. Re-check once per
@@ -721,7 +893,13 @@ export function createToolRouter(): ToolRouter {
       }
       // workato_pull_recipe(out_file) / workato_ui_save_recipe_code(code_path):
       // resolve the file params here (this process has filesystem access).
-      let effectiveArgs: any = withSessionTarget(name, routed.args || {}, session);
+      let effectiveArgs: any = withSessionTarget(name, routed.args || {}, session, routingProfile);
+      const strictRefusal = strictTabsViolation(
+        name,
+        effectiveArgs,
+        leases.size > 0 || strictTabsFromEnv(),
+      );
+      if (strictRefusal) return routeError(strictRefusal);
       let pullOutFile: string | undefined;
       if (isWorkatoFileTool(name)) {
         const prepared = prepareWorkatoCall(name, effectiveArgs || {});
@@ -781,7 +959,12 @@ export function createToolRouter(): ToolRouter {
           // straight through to the save tool.
           // Nested calls get the same pinned tab and workspace as the top-level
           // one: an orchestrator that reads in one tab must not write in another.
-          let nestedArgs: JsonObject = withSessionTarget(toolName, toolArgs || {}, session);
+          let nestedArgs: JsonObject = withSessionTarget(
+            toolName,
+            toolArgs || {},
+            session,
+            routingProfile,
+          );
           let nestedOutFile: string | undefined;
           if (isWorkatoFileTool(toolName)) {
             const prepared = prepareWorkatoCall(toolName, nestedArgs);
@@ -885,11 +1068,14 @@ export function createToolRouter(): ToolRouter {
   const listTools = async () => {
     const dynamicTools = await listDynamicFlowTools(session?.profile ?? null);
     return {
-      tools: withOutFileToolSchemas(
-        withProfileRoutingToolSchemas([...TOOL_SCHEMAS, ...dynamicTools]),
+      tools: withLeaseToolSchemas(
+        withOutFileToolSchemas(withProfileRoutingToolSchemas([...TOOL_SCHEMAS, ...dynamicTools])),
       ),
     };
   };
 
-  return { listTools, handleToolCall };
+  const handleToolCallWithCancel = (name: string, args: any, signal?: AbortSignal) =>
+    raceAbort(handleToolCall(name, args), signal);
+
+  return { listTools, handleToolCall: handleToolCallWithCancel };
 }

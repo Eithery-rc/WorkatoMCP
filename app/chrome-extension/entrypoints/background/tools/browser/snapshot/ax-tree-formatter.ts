@@ -66,7 +66,11 @@ export interface FormatResult {
   uidMap: Map<number, number>;
 }
 
-export function formatAxTree(nodes: AXNode[]): FormatResult {
+/**
+ * `uidBase` is the last uid handed out for this tab: numbering continues from
+ * there, so a uid from an older snapshot can never name an element of this one.
+ */
+export function formatAxTree(nodes: AXNode[], uidBase = 0): FormatResult {
   const uidMap = new Map<number, number>();
   if (!nodes || nodes.length === 0) {
     return { text: '(empty accessibility tree)', uidMap };
@@ -91,7 +95,7 @@ export function formatAxTree(nodes: AXNode[]): FormatResult {
   // Fall back to the first node if no root is identifiable.
   const startNodes = roots.length > 0 ? roots : [nodes[0]];
 
-  let uidCounter = 0;
+  let uidCounter = uidBase;
   let nodesRendered = 0;
   const lines: string[] = [];
   let totalChars = 0;

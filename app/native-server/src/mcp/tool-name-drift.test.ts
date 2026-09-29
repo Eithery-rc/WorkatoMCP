@@ -22,6 +22,7 @@ import { WORKATO_CALLABLE_TOOLS } from './workato-callable-schema';
 import { DATAPILL_TOOL } from './workato-datapill';
 import { BRIDGE_INFO_TOOL } from './workato-bridge-info';
 import { RELOAD_EXTENSION_TOOL } from './workato-reload-extension';
+import { LEASE_TAB_TOOL, RELEASE_TAB_TOOL } from './tab-leases';
 import { SWITCH_ENVIRONMENT_TOOL } from './workato-switch-environment';
 import { RECIPE_CALLERS_TOOL } from './workato-recipe-callers';
 import { SAVE_WITH_DEPENDENTS_TOOL } from './workato-save-dependents';
@@ -71,6 +72,8 @@ const NAME_SETS: Record<string, string[]> = {
     DATAPILL_TOOL,
     BRIDGE_INFO_TOOL,
     RELOAD_EXTENSION_TOOL,
+    LEASE_TAB_TOOL,
+    RELEASE_TAB_TOOL,
     SWITCH_ENVIRONMENT_TOOL,
     RECIPE_CALLERS_TOOL,
     SAVE_WITH_DEPENDENTS_TOOL,

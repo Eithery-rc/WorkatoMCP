@@ -6,6 +6,7 @@ import { cdpSessionManager } from '@/utils/cdp-session-manager';
 interface HandleDialogParams {
   action: 'accept' | 'dismiss';
   promptText?: string;
+  tabId?: number;
 }
 
 /**
@@ -21,7 +22,10 @@ class HandleDialogTool extends BaseBrowserToolExecutor {
     }
 
     try {
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const explicit = await this.tryGetTab(args.tabId);
+      const [activeTab] = explicit
+        ? [explicit]
+        : await chrome.tabs.query({ active: true, currentWindow: true });
       if (!activeTab?.id) return createErrorResponse('No active tab found');
       const tabId = activeTab.id!;
 

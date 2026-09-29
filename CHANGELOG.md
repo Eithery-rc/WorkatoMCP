@@ -6,6 +6,21 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+Parallel agents on one MCP server, in the same or different Chrome profiles.
+
+### Added
+
+- **`chrome_lease_tab` / `chrome_release_tab`**: each agent leases its own tab (in an unfocused agents window, or its own window with `own_window`) and passes `lease` on every call; the bridge turns it into the right profile and tabId and never activates the tab. While a session holds leases, a tab-targeting call without `lease` or tabId is refused (`WORKATOMCP_STRICT_TABS=1` makes that permanent). Idle leases expire after 30 minutes.
+- `tabId` on `chrome_network_request`, `chrome_handle_dialog`, `performance_*` and `chrome_network_capture`.
+
+### Fixed
+
+- A stale or closed tabId is an error instead of a silent fallback to the active tab.
+- Passing tabId no longer steals focus in `chrome_navigate` and `chrome_get_web_content`; `chrome_computer` keeps tabId in every delegated action; `chrome_screenshot` never captures a tab other than the target.
+- Calls on the same tab run one at a time; snapshot UIDs keep counting across snapshots, and a uid from an older snapshot is refused.
+- CDP attach/detach races; one network capture per tab, and stopping one no longer ends the others; `chrome_close_tabs` with no arguments is refused.
+- A session pin no longer leaks its tabId into calls routed to another profile; a cancelled MCP call stops waiting.
+
 ## bridge 1.8.0 · shared 1.6.0 (2026-09-29)
 
 Deployments, environment switching and a self-reloading dev loop. Endpoint evidence in [`docs/design/specs/2026-09-29-deploy-and-environments.md`](docs/design/specs/2026-09-29-deploy-and-environments.md).

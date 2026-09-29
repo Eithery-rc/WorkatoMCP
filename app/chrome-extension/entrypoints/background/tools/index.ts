@@ -9,6 +9,7 @@ import * as workatoDataTableTools from './workato-data-table';
 import * as workatoSessionTools from './workato-session';
 import { flowRunTool, listPublishedFlowsTool } from './record-replay';
 import { maybeAppendContextBlock } from './workato/session-context';
+import { runExclusiveForTab } from './tab-queue';
 
 const tools = {
   ...browserTools,
@@ -39,7 +40,16 @@ export const handleCallTool = async (param: ToolCallParam) => {
   if (!tool) {
     return createErrorResponse(`Tool ${param.name} not found`);
   }
+  const tabId = param.args?.tabId;
+  // Record-replay flows call handleCallTool for each step themselves; locking
+  // the flow run too would deadlock on its own tab.
+  if (typeof tabId === 'number' && !param.name.startsWith('record_replay')) {
+    return runExclusiveForTab(tabId, () => executeTool(tool, param));
+  }
+  return executeTool(tool, param);
+};
 
+async function executeTool(tool: any, param: ToolCallParam) {
   try {
     const result = await tool.execute(param.args);
     // Say which tab/workspace the call actually ran in. Best effort: it never
@@ -51,4 +61,4 @@ export const handleCallTool = async (param: ToolCallParam) => {
       error instanceof Error ? error.message : ERROR_MESSAGES.TOOL_EXECUTION_FAILED,
     );
   }
-};
+}

@@ -112,15 +112,13 @@ export abstract class BaseBrowserToolExecutor implements ToolExecutor {
   }
 
   /**
-   * Try to get an existing tab by id. Returns null when not found.
+   * The tab the caller named, or null when no tabId was given. A tabId that no
+   * longer exists THROWS: falling back to the active tab would act on another
+   * agent's tab when several agents share one profile.
    */
   protected async tryGetTab(tabId?: number): Promise<chrome.tabs.Tab | null> {
     if (typeof tabId !== 'number') return null;
-    try {
-      return await chrome.tabs.get(tabId);
-    } catch {
-      return null;
-    }
+    return getTabOrThrow(tabId);
   }
 
   /**
@@ -169,5 +167,18 @@ export abstract class BaseBrowserToolExecutor implements ToolExecutor {
     const tab = await this.getActiveTabInWindow(windowId);
     if (!tab || !tab.id) throw new Error('Active tab not found');
     return tab;
+  }
+}
+
+export function tabNotFoundMessage(tabId: number): string {
+  return `Tab ${tabId} not found (closed?). Nothing was done.`;
+}
+
+/** chrome.tabs.get that names the missing tab instead of returning null. */
+export async function getTabOrThrow(tabId: number): Promise<chrome.tabs.Tab> {
+  try {
+    return await chrome.tabs.get(tabId);
+  } catch {
+    throw new Error(tabNotFoundMessage(tabId));
   }
 }

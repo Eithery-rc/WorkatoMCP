@@ -21,6 +21,9 @@ export enum NativeMessageType {
   // Bridge -> extension developer requests (workato_reload_extension)
   DEV_EXTENSION_INFO = 'dev_extension_info',
   DEV_RELOAD_EXTENSION = 'dev_reload_extension',
+  // Bridge -> extension: tabs for chrome_lease_tab / chrome_release_tab
+  AGENT_TAB_OPEN = 'agent_tab_open',
+  AGENT_TAB_CLOSE = 'agent_tab_close',
 }
 
 export interface NativeMessage<P = any, E = any> {
