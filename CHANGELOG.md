@@ -6,6 +6,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+## bridge 1.9.0 · shared 1.7.0 (2026-09-29)
+
 Parallel agents on one MCP server, in the same or different Chrome profiles.
 
 ### Added
