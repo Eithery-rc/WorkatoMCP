@@ -37,6 +37,10 @@ import {
 import { handleWorkatoDatapillCall, isWorkatoDatapillTool } from './workato-datapill';
 import { handleWorkatoOperationCall, isWorkatoOperationTool } from './workato-operation-status';
 import { handleWorkatoBridgeInfoCall, isWorkatoBridgeInfoTool } from './workato-bridge-info';
+import {
+  handleWorkatoReloadExtensionCall,
+  isWorkatoReloadExtensionTool,
+} from './workato-reload-extension';
 import { handleWorkatoStepSchemaApplyCall, isStepSchemaApplyCall } from './workato-step-schema';
 import {
   applyAutoFile,
@@ -59,6 +63,8 @@ const PROFILE_ROUTING_PROPERTY = {
 const PROFILE_MANAGEMENT_TOOLS = new Set([
   TOOL_NAMES.WORKATO.LIST_PROFILES,
   TOOL_NAMES.WORKATO.SWITCH_PROFILE,
+  // Its own `profile` argument selects which profiles reload, not where to route.
+  TOOL_NAMES.WORKATO.RELOAD_EXTENSION,
 ]);
 
 type JsonObject = Record<string, any>;
@@ -605,6 +611,19 @@ export function createToolRouter(): ToolRouter {
             },
           ],
         };
+      }
+
+      // Runs across every connected profile, so it bypasses profile routing.
+      if (isWorkatoReloadExtensionTool(name)) {
+        return handleWorkatoReloadExtensionCall(args, {
+          connectedProfiles: () => profileRegistry.getConnectedProfiles(),
+          connectionSerial: (profile) => profileRegistry.getConnectionSerial(profile),
+          defaultProfile: () => profileRegistry.getActiveProfile(),
+          request: (profile, type, payload, timeoutMs) =>
+            profileRegistry.sendRequest(profile, payload, type, timeoutMs),
+          sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+          now: () => Date.now(),
+        });
       }
 
       const routed = extractRoutedArgs(args);

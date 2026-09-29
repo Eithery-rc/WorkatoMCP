@@ -12,10 +12,18 @@ import { NATIVE_HOST, STORAGE_KEYS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '@/c
 import { handleCallTool } from './tools';
 import { listPublished, getFlow } from './record-replay/flow-store';
 import { acquireKeepalive } from './keepalive-manager';
+import { getExtensionBuildInfo, scheduleExtensionReload } from './dev-reload';
 
 const LOG_PREFIX = '[NativeHost]';
 
 let nativePort: chrome.runtime.Port | null = null;
+/**
+ * True while the native host this profile started is the one serving the
+ * bridge port (it answered SERVER_STARTED). A host that lost the port election
+ * keeps nativePort set without ever sending that, so nativePort alone is not
+ * ownership.
+ */
+let ownsBridge = false;
 export const HOST_NAME = NATIVE_HOST.NAME;
 
 // ==================== WebSocket Aggregator Client State ====================
@@ -479,6 +487,29 @@ async function connectWebSocket(port: number): Promise<boolean> {
               }),
             );
           }
+        } else if (message.type === NativeMessageType.DEV_EXTENSION_INFO && message.requestId) {
+          ws.send(
+            JSON.stringify({
+              responseToRequestId: message.requestId,
+              payload: { status: 'success', data: await getExtensionBuildInfo(ownsBridge) },
+            }),
+          );
+        } else if (message.type === NativeMessageType.DEV_RELOAD_EXTENSION && message.requestId) {
+          // Answer first: the reload kills this worker and the socket with it.
+          let payload: Record<string, unknown>;
+          try {
+            const info = await getExtensionBuildInfo(ownsBridge);
+            payload = {
+              status: 'success',
+              data: { ...info, ...scheduleExtensionReload(message.payload?.delay_ms) },
+            };
+          } catch (error) {
+            payload = {
+              status: 'error',
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+          ws.send(JSON.stringify({ responseToRequestId: message.requestId, payload }));
         } else if (message.type === NativeMessageType.PROCESS_DATA && message.requestId) {
           const requestId = message.requestId;
           const requestPayload = message.payload;
@@ -635,6 +666,7 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
           });
         }
       } else if (message.type === NativeMessageType.SERVER_STARTED) {
+        ownsBridge = true;
         const port = message.payload?.port;
         currentServerStatus = {
           isRunning: true,
@@ -668,6 +700,7 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
     nativePort.onDisconnect.addListener(() => {
       console.warn(ERROR_MESSAGES.NATIVE_DISCONNECTED, chrome.runtime.lastError);
       nativePort = null;
+      ownsBridge = false;
 
       // Mark server as stopped since native host disconnection means server is down
       void markServerStopped('native_port_disconnected');
@@ -815,6 +848,7 @@ export const initNativeHostListener = () => {
             // Ignore
           }
           nativePort = null;
+          ownsBridge = false;
         }
         await markServerStopped('manual_disconnect');
       })()

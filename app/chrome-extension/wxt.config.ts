@@ -21,6 +21,11 @@ const CHROME_EXTENSION_KEY = process.env.CHROME_EXTENSION_KEY ?? DEFAULT_EXTENSI
 // Detect dev mode early for manifest-level switches
 const IS_DEV = process.env.NODE_ENV !== 'production' && process.env.MODE !== 'production';
 
+// One stamp per build: baked into the bundle as __BUILD_TIME__ and written to
+// build-info.json. The extension compares the two to tell a stale running build
+// from the dist/ on disk (workato_reload_extension).
+const BUILD_TIME = new Date().toISOString();
+
 // See https://wxt.dev/api/config.html
 export default defineConfig({
   modules: ['@wxt-dev/module-vue'],
@@ -90,7 +95,18 @@ export default defineConfig({
           },
         }),
   },
+  hooks: {
+    'build:publicAssets': (_wxt, files) => {
+      files.push({
+        relativeDest: 'build-info.json',
+        contents: JSON.stringify({ built_at: BUILD_TIME }),
+      });
+    },
+  },
   vite: (env) => ({
+    define: {
+      __BUILD_TIME__: JSON.stringify(BUILD_TIME),
+    },
     plugins: [
       // TailwindCSS v4 Vite plugin – no PostCSS config required
       tailwindcss(),

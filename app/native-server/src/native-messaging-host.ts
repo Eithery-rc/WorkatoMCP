@@ -5,6 +5,9 @@ import { NativeMessageType } from 'workatomcp-shared';
 import { TIMEOUTS } from './constant';
 import fileHandler from './file-handler';
 
+/** Hard stop after Chrome disconnects, however long the server takes to close. */
+const CLEANUP_EXIT_DEADLINE_MS = 2000;
+
 interface PendingRequest {
   resolve: (value: any) => void;
   reject: (reason?: any) => void;
@@ -316,6 +319,10 @@ export class NativeMessagingHost {
     this.pendingRequests.clear();
 
     if (this.associatedServer && this.associatedServer.isRunning) {
+      // Chrome closed the port (browser exit, or an extension reload in the
+      // profile that started this host). Exit even if the server is slow to
+      // close open MCP streams: a lingering process holds sockets forever.
+      setTimeout(() => process.exit(0), CLEANUP_EXIT_DEADLINE_MS);
       this.associatedServer
         .stop()
         .then(() => {

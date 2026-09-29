@@ -75,6 +75,7 @@ export const TOOL_NAMES = {
     CALL_ACTION: 'workato_call_action',
     LIST_PROFILES: 'workato_list_profiles',
     BRIDGE_INFO: 'workato_bridge_info',
+    RELOAD_EXTENSION: 'workato_reload_extension',
     SWITCH_PROFILE: 'workato_switch_profile',
     LIST_FOLDERS: 'workato_list_folders',
     CREATE_FOLDER: 'workato_create_folder',
@@ -6019,6 +6020,47 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {},
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.WORKATO.RELOAD_EXTENSION,
+    description:
+      'Developer tool: make Chrome run a freshly built extension (and bridge) without anyone ' +
+      'clicking reload in chrome://extensions. Call it after `pnpm build` instead of asking ' +
+      'the user. Every connected profile loads the same unpacked dist/, so by default all of ' +
+      'them reload, one at a time: each is asked for its build stamp, reloaded, and awaited ' +
+      'until it reconnects, and the result shows built_at before and after. The profile whose ' +
+      'native host serves the bridge (owns_bridge) always goes last, and its reload also ' +
+      'restarts the bridge process, which picks up a rebuilt native-server: that profile is ' +
+      'reported as "scheduled" because this call returns before the restart. The bridge is ' +
+      'then down for 5-10s (a call in that window fails with ECONNREFUSED): wait about 10s, ' +
+      'then confirm with check_only:true (every profile stale:false). The MCP session ' +
+      'reconnects by itself. check_only:true reloads nothing and reports each ' +
+      "profile's running build against the dist/ on disk (stale:true means a reload is due). " +
+      'The default profile for unpinned calls is kept across the reload. A profile that does ' +
+      'not answer the build-info request runs a build older than this tool and needs one ' +
+      'manual reload. Changes no Workato data.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        profile: {
+          type: 'string',
+          description:
+            'Reload only this connected profile. Omit to reload every connected profile.',
+        },
+        check_only: {
+          type: 'boolean',
+          description:
+            "Report each profile's running build and whether the dist/ on disk is newer, reload nothing.",
+          default: false,
+        },
+        timeout_ms: {
+          type: 'number',
+          description:
+            'How long to wait for each profile to reconnect after its reload. Default 20000, 3000-60000.',
+        },
+      },
       required: [],
     },
   },
