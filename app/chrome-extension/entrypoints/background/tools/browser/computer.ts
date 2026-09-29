@@ -5,6 +5,7 @@ import { ERROR_MESSAGES, TIMEOUTS } from '@/common/constants';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { clickTool, fillTool } from './interaction';
 import { keyboardTool } from './keyboard';
+import { appendPageReport, assertNoOpenDialog, runWithSettle, type PageReport } from './settle';
 import { base64ByteLength, screenshotTool } from './screenshot';
 import { screenshotContextManager, scaleCoordinates } from '@/utils/screenshot-context';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
@@ -75,7 +76,25 @@ interface ComputerParams {
   tabId?: number; // target existing tab id
   windowId?: number;
   background?: boolean; // avoid focusing/activating
+  settle?: boolean; // wait for what the action caused and report the page (default true)
+  settleTimeoutMs?: number;
 }
+
+/** Actions that act on the page: they get the dialog check and the settle report. */
+const PAGE_ACTIONS = new Set<ComputerParams['action']>([
+  'left_click',
+  'right_click',
+  'double_click',
+  'triple_click',
+  'left_click_drag',
+  'scroll',
+  'type',
+  'key',
+  'hover',
+  'fill',
+  'fill_form',
+  'scroll_to',
+]);
 
 // Minimal CDP helper encapsulated here to avoid scattering CDP code
 class CDPHelper {
@@ -232,8 +251,22 @@ class ComputerTool extends BaseBrowserToolExecutor {
       if (!tab.id)
         return createErrorResponse(ERROR_MESSAGES.TAB_NOT_FOUND + ': Active tab has no ID');
 
-      // Execute the action and capture frame on success
-      const result = await this.executeAction(params, tab);
+      // Execute the action (waiting for what it caused when it acts on the
+      // page) and capture frame on success
+      const tabId = tab.id;
+      let result: ToolResult;
+      let page: PageReport | null = null;
+      if (PAGE_ACTIONS.has(params.action)) {
+        assertNoOpenDialog(tabId);
+        const settled = await runWithSettle(tabId, () => this.executeAction(params, tab), {
+          settle: params.settle,
+          settleTimeoutMs: params.settleTimeoutMs,
+        });
+        result = settled.result;
+        page = settled.page;
+      } else {
+        result = await this.executeAction(params, tab);
+      }
 
       // Trigger auto-capture on successful actions (except screenshot which is read-only)
       if (!result.isError && params.action !== 'screenshot' && params.action !== 'wait') {
@@ -263,7 +296,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
         }
       }
 
-      return result;
+      return appendPageReport(result, page);
     } catch (error) {
       console.error('Error in computer tool:', error);
       return createErrorResponse(
@@ -501,6 +534,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
           // Prefer DOM click via ref
           const domResult = await clickTool.execute({
             tabId: tab.id,
+            settle: false,
             ref: params.ref,
             waitForNavigation: false,
             timeout: TIMEOUTS.DEFAULT_WAIT * 5,
@@ -513,6 +547,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
           // Support selector-based click
           const domResult = await clickTool.execute({
             tabId: tab.id,
+            settle: false,
             selector: params.selector,
             selectorType: params.selectorType,
             frameId: params.frameId,
@@ -550,6 +585,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
         // Prefer DOM path via existing click tool
         const domResult = await clickTool.execute({
           tabId: tab.id,
+          settle: false,
           coordinates: coord,
           waitForNavigation: false,
           timeout: TIMEOUTS.DEFAULT_WAIT * 5,
@@ -936,6 +972,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
           if (params.ref) {
             await clickTool.execute({
               tabId: tab.id,
+              settle: false,
               ref: params.ref,
               waitForNavigation: false,
               timeout: TIMEOUTS.DEFAULT_WAIT * 5,
@@ -963,6 +1000,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
           // Fallback to DOM-based keyboard tool
           const res = await keyboardTool.execute({
             tabId: tab.id,
+            settle: false,
             keys: params.text.split('').join(','),
             delay: 0,
             selector: undefined,
@@ -977,6 +1015,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
         // Reuse existing fill tool to leverage robust DOM event behavior
         const res = await fillTool.execute({
           tabId: tab.id,
+          settle: false,
           selector: params.selector as any,
           selectorType: params.selectorType as any,
           ref: params.ref as any,
@@ -1001,6 +1040,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
           try {
             const r = await fillTool.execute({
               tabId: tab.id,
+              settle: false,
               ref: item.ref as any,
               value: item.value as any,
             } as any);
@@ -1046,6 +1086,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
           if (params.ref) {
             await clickTool.execute({
               tabId: tab.id,
+              settle: false,
               ref: params.ref,
               waitForNavigation: false,
               timeout: TIMEOUTS.DEFAULT_WAIT * 5,
@@ -1074,7 +1115,11 @@ class ComputerTool extends BaseBrowserToolExecutor {
           const keysStr = tokens.join(',');
           const repeatedKeys =
             repeat === 1 ? keysStr : Array.from({ length: repeat }, () => keysStr).join(',');
-          const res = await keyboardTool.execute({ keys: repeatedKeys, tabId: tab.id });
+          const res = await keyboardTool.execute({
+            keys: repeatedKeys,
+            tabId: tab.id,
+            settle: false,
+          });
           return res;
         }
       }

@@ -96,6 +96,14 @@ export class LeaseTable {
     return this.leases.get(id);
   }
 
+  /** The lease of this session that already holds `tabId` in `profile`, if any. */
+  findByTab(profile: string, tabId: number): TabLease | undefined {
+    for (const lease of this.leases.values()) {
+      if (lease.profile === profile && lease.tabId === tabId) return lease;
+    }
+    return undefined;
+  }
+
   delete(id: string): boolean {
     return this.leases.delete(id);
   }

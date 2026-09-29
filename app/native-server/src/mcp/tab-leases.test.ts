@@ -137,6 +137,46 @@ describe('tab leases', () => {
     expect(props('chrome_lease_tab').lease).toBeUndefined();
   });
 
+  test('adopt_tab_id leases an existing tab once, and only a tab the profile has', async () => {
+    jest.spyOn(profileRegistry, 'getConnectedProfiles').mockReturnValue(['personal', 'centium']);
+    jest.spyOn(profileRegistry, 'getActiveProfile').mockReturnValue('personal');
+    const sendRequest = jest
+      .spyOn(profileRegistry, 'sendRequest')
+      .mockImplementation(async (_profile: string, payload: any) => {
+        if (payload?.name === 'get_windows_and_tabs') {
+          const windows = [{ windowId: 9, tabs: [{ tabId: 55, url: 'https://x' }] }];
+          return {
+            status: 'success',
+            data: { content: [{ type: 'text', text: JSON.stringify({ windows }) }] },
+          };
+        }
+        return { status: 'success', data: { content: [{ type: 'text', text: 'ok' }] } };
+      });
+    const router = createToolRouter();
+
+    const adopted = parse(
+      await router.handleToolCall('chrome_lease_tab', { profile: 'centium', adopt_tab_id: 55 }),
+    );
+    expect(adopted).toMatchObject({ tabId: 55, windowId: 9, profile: 'centium', adopted: true });
+    expect(
+      sendRequest.mock.calls.some((c: any[]) => c[2] === NativeMessageType.AGENT_TAB_OPEN),
+    ).toBe(false);
+
+    const again = await router.handleToolCall('chrome_lease_tab', {
+      profile: 'centium',
+      adopt_tab_id: 55,
+    });
+    expect(again.isError).toBe(true);
+    expect((again.content[0] as any).text).toContain(`already leased as ${adopted.lease}`);
+
+    const missing = await router.handleToolCall('chrome_lease_tab', {
+      profile: 'centium',
+      adopt_tab_id: 56,
+    });
+    expect(missing.isError).toBe(true);
+    expect((missing.content[0] as any).text).toContain('tab 56 is not open in profile "centium"');
+  });
+
   test('a cancelled call stops waiting', async () => {
     const controller = new AbortController();
     const never = new Promise<any>(() => {});

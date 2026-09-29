@@ -3,6 +3,7 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { TIMEOUTS, ERROR_MESSAGES } from '@/common/constants';
+import { appendPageReport, assertNoOpenDialog, runWithSettle } from './settle';
 
 interface Coordinates {
   x: number;
@@ -24,6 +25,8 @@ interface ClickToolParams {
   modifiers?: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean };
   tabId?: number; // target existing tab id
   windowId?: number; // when no tabId, pick active tab from this window
+  settle?: boolean; // wait for what the click caused and report the page (default true)
+  settleTimeoutMs?: number;
 }
 
 /**
@@ -98,23 +101,30 @@ class ClickTool extends BaseBrowserToolExecutor {
 
       await this.injectContentScript(tab.id, ['inject-scripts/click-helper.js']);
 
-      // Send click message to content script
-      const result = await this.sendMessageToTab(
-        tab.id,
-        {
-          action: TOOL_MESSAGE_TYPES.CLICK_ELEMENT,
-          selector: finalSelector,
-          coordinates,
-          ref: finalRef,
-          waitForNavigation,
-          timeout,
-          double: args.double === true,
-          button,
-          bubbles,
-          cancelable,
-          modifiers,
-        },
-        frameId,
+      // Send click message to content script, then wait for what it caused
+      const clickTabId = tab.id;
+      assertNoOpenDialog(clickTabId);
+      const { result, page } = await runWithSettle(
+        clickTabId,
+        () =>
+          this.sendMessageToTab(
+            clickTabId,
+            {
+              action: TOOL_MESSAGE_TYPES.CLICK_ELEMENT,
+              selector: finalSelector,
+              coordinates,
+              ref: finalRef,
+              waitForNavigation,
+              timeout,
+              double: args.double === true,
+              button,
+              bubbles,
+              cancelable,
+              modifiers,
+            },
+            frameId,
+          ),
+        { settle: args.settle, settleTimeoutMs: args.settleTimeoutMs },
       );
 
       // Determine actual click method used
@@ -129,21 +139,24 @@ class ClickTool extends BaseBrowserToolExecutor {
         clickMethod = 'unknown';
       }
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              success: true,
-              message: result.message || 'Click operation successful',
-              elementInfo: result.elementInfo,
-              navigationOccurred: result.navigationOccurred,
-              clickMethod,
-            }),
-          },
-        ],
-        isError: false,
-      };
+      return appendPageReport(
+        {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                message: result.message || 'Click operation successful',
+                elementInfo: result.elementInfo,
+                navigationOccurred: result.navigationOccurred || page?.navigated || undefined,
+                clickMethod,
+              }),
+            },
+          ],
+          isError: false,
+        },
+        page,
+      );
     } catch (error) {
       console.error('Error in click operation:', error);
       return createErrorResponse(
@@ -164,6 +177,8 @@ interface FillToolParams {
   frameId?: number;
   tabId?: number; // target existing tab id
   windowId?: number; // when no tabId, pick active tab from this window
+  settle?: boolean;
+  settleTimeoutMs?: number;
 }
 
 /**
@@ -228,35 +243,45 @@ class FillTool extends BaseBrowserToolExecutor {
 
       await this.injectContentScript(tab.id, ['inject-scripts/fill-helper.js']);
 
-      // Send fill message to content script
-      const result = await this.sendMessageToTab(
-        tab.id,
-        {
-          action: TOOL_MESSAGE_TYPES.FILL_ELEMENT,
-          selector: finalSelector,
-          ref: finalRef,
-          value,
-        },
-        frameId,
+      // Send fill message to content script, then wait for what it caused
+      const fillTabId = tab.id;
+      assertNoOpenDialog(fillTabId);
+      const { result, page } = await runWithSettle(
+        fillTabId,
+        () =>
+          this.sendMessageToTab(
+            fillTabId,
+            {
+              action: TOOL_MESSAGE_TYPES.FILL_ELEMENT,
+              selector: finalSelector,
+              ref: finalRef,
+              value,
+            },
+            frameId,
+          ),
+        { settle: args.settle, settleTimeoutMs: args.settleTimeoutMs },
       );
 
       if (result && result.error) {
         return createErrorResponse(result.error);
       }
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              success: true,
-              message: result.message || 'Fill operation successful',
-              elementInfo: result.elementInfo,
-            }),
-          },
-        ],
-        isError: false,
-      };
+      return appendPageReport(
+        {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                message: result.message || 'Fill operation successful',
+                elementInfo: result.elementInfo,
+              }),
+            },
+          ],
+          isError: false,
+        },
+        page,
+      );
     } catch (error) {
       console.error('Error in fill operation:', error);
       return createErrorResponse(

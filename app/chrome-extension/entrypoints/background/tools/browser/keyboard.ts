@@ -3,6 +3,7 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { TIMEOUTS, ERROR_MESSAGES } from '@/common/constants';
+import { appendPageReport, assertNoOpenDialog, runWithSettle } from './settle';
 
 interface KeyboardToolParams {
   keys: string; // Required: string representing keys or key combinations to simulate (e.g., "Enter", "Ctrl+C")
@@ -12,6 +13,8 @@ interface KeyboardToolParams {
   tabId?: number; // target existing tab id
   windowId?: number; // when no tabId, pick active tab from this window
   frameId?: number; // target frame id for iframe support
+  settle?: boolean; // wait for what the keys caused and report the page (default true)
+  settleTimeoutMs?: number;
 }
 
 /**
@@ -104,36 +107,47 @@ class KeyboardTool extends BaseBrowserToolExecutor {
         frameIds,
       );
 
-      // Send keyboard simulation message to content script
-      const result = await this.sendMessageToTab(
-        tab.id,
-        {
-          action: TOOL_MESSAGE_TYPES.SIMULATE_KEYBOARD,
-          keys,
-          selector: finalSelector,
-          delay,
-        },
-        args.frameId,
+      // Send keyboard simulation message to content script, then wait for
+      // what the keys caused (Enter submitting a form, a shortcut opening a view)
+      const keyTabId = tab.id;
+      assertNoOpenDialog(keyTabId);
+      const { result, page } = await runWithSettle(
+        keyTabId,
+        () =>
+          this.sendMessageToTab(
+            keyTabId,
+            {
+              action: TOOL_MESSAGE_TYPES.SIMULATE_KEYBOARD,
+              keys,
+              selector: finalSelector,
+              delay,
+            },
+            args.frameId,
+          ),
+        { settle: args.settle, settleTimeoutMs: args.settleTimeoutMs },
       );
 
       if (result.error) {
         return createErrorResponse(result.error);
       }
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              success: true,
-              message: result.message || 'Keyboard operation successful',
-              targetElement: result.targetElement,
-              results: result.results,
-            }),
-          },
-        ],
-        isError: false,
-      };
+      return appendPageReport(
+        {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                message: result.message || 'Keyboard operation successful',
+                targetElement: result.targetElement,
+                results: result.results,
+              }),
+            },
+          ],
+          isError: false,
+        },
+        page,
+      );
     } catch (error) {
       console.error('Error in keyboard operation:', error);
       return createErrorResponse(

@@ -46,6 +46,10 @@ export const TOOL_NAMES = {
     GIF_RECORDER: 'chrome_gif_recorder',
     SNAPSHOT: 'chrome_snapshot',
     LEASE_TAB: 'chrome_lease_tab',
+    SNAPSHOT_FILL_FORM: 'chrome_snapshot_fill_form',
+    ACT: 'chrome_act',
+    SEARCH_PAGE: 'chrome_search_page',
+    FIND_ELEMENTS: 'chrome_find_elements',
     RELEASE_TAB: 'chrome_release_tab',
     SNAPSHOT_CLICK: 'chrome_snapshot_click',
     SNAPSHOT_FILL: 'chrome_snapshot_fill',
@@ -347,6 +351,16 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        settle: {
+          type: 'boolean',
+          description:
+            'After the action, wait for any navigation it started and for the DOM to go quiet, then report the page (url, title, navigated, open dialog, new tabs it opened). Default true.',
+          default: true,
+        },
+        settleTimeoutMs: {
+          type: 'number',
+          description: 'Upper bound for that wait. Default 3000.',
+        },
         tabId: { type: 'number', description: 'Target tab ID (default: active tab)' },
         background: {
           type: 'boolean',
@@ -550,6 +564,16 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        settle: {
+          type: 'boolean',
+          description:
+            'Wait for the navigation to load and for the DOM to go quiet, then report the page (url, title, navigated, open dialog, new tabs it opened). Default true.',
+          default: true,
+        },
+        settleTimeoutMs: {
+          type: 'number',
+          description: 'Upper bound for that wait. Default 15000.',
+        },
         url: {
           type: 'string',
           description:
@@ -650,12 +674,150 @@ export const TOOL_SCHEMAS: Tool[] = [
     },
   },
   {
+    name: TOOL_NAMES.BROWSER.SNAPSHOT_FILL_FORM,
+    description:
+      'Fill several fields of a form in one call: each {uid, value} is applied like chrome_snapshot_fill (text, <select>/combobox by option text, checkbox/radio/switch by "true"/"false") and read back. Stops at the first field that fails and reports which. Prefer it over repeated fill calls.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fields: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { uid: { type: 'number' }, value: { type: 'string' } },
+            required: ['uid', 'value'],
+          },
+          description: 'Fields to fill, in order.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID.' },
+        settle: {
+          type: 'boolean',
+          description: 'Wait for the page to settle after the last field. Default true.',
+          default: true,
+        },
+        settleTimeoutMs: {
+          type: 'number',
+          description: 'Upper bound for that wait. Default 3000.',
+        },
+        includeSnapshot: {
+          type: 'boolean',
+          description: 'Also return a fresh chrome_snapshot. Default false.',
+          default: false,
+        },
+      },
+      required: ['fields'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.ACT,
+    description:
+      'Run several uid actions on one tab in one call to save round trips: click, double_click, fill, hover, press_key, wait_for. Stops at the first action that fails, and after any action that navigates, opens a tab or raises a dialog (the rest would target a page that changed). Returns one result per action run plus the final page report.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        actions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              action: {
+                type: 'string',
+                enum: ['click', 'double_click', 'fill', 'hover', 'press_key', 'wait_for'],
+              },
+              uid: {
+                type: 'number',
+                description: 'Element uid (click, double_click, fill, hover).',
+              },
+              value: { type: 'string', description: 'Value for fill.' },
+              key: {
+                type: 'string',
+                description: 'Key or combo for press_key, e.g. "Enter", "Control+A".',
+              },
+              text: { type: 'string', description: 'Text to wait for (wait_for).' },
+              timeoutMs: { type: 'number', description: 'Timeout for wait_for. Default 5000.' },
+            },
+            required: ['action'],
+          },
+          description: 'Actions in order.',
+        },
+        tabId: { type: 'number', description: 'Target tab ID.' },
+        includeSnapshot: {
+          type: 'boolean',
+          description: 'Return a fresh chrome_snapshot at the end. Default false.',
+          default: false,
+        },
+      },
+      required: ['actions'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.SEARCH_PAGE,
+    description:
+      'Find text on the page without dumping it: returns each match with surrounding context, like grep. Cheaper than chrome_get_web_content for "is X on this page, and where". Read only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Text to find (or a regular expression with regex:true).',
+        },
+        regex: {
+          type: 'boolean',
+          description: 'Treat query as a JavaScript regular expression. Default false.',
+          default: false,
+        },
+        caseSensitive: { type: 'boolean', description: 'Default false.', default: false },
+        contextChars: {
+          type: 'number',
+          description: 'Characters of context on each side. Default 80.',
+        },
+        cssScope: {
+          type: 'string',
+          description: 'Only search inside elements matching this CSS selector.',
+        },
+        maxResults: { type: 'number', description: 'Default 20.' },
+        tabId: { type: 'number', description: 'Target tab ID.' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.FIND_ELEMENTS,
+    description:
+      'Query the page with a CSS selector and get chosen attributes and text of the matches, capped. For "list all rows/links/ids of X" without writing chrome_javascript. Read only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string', description: 'CSS selector.' },
+        attributes: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Attributes to return. Default: id, name, class, href, value, type, role, aria-label.',
+        },
+        includeText: {
+          type: 'boolean',
+          description: 'Include each match text (trimmed, capped). Default true.',
+          default: true,
+        },
+        maxResults: { type: 'number', description: 'Default 30.' },
+        tabId: { type: 'number', description: 'Target tab ID.' },
+      },
+      required: ['selector'],
+    },
+  },
+  {
     name: TOOL_NAMES.BROWSER.LEASE_TAB,
     description:
       'Get a tab of your own for parallel work: several agents sharing one MCP server and one Chrome profile must each lease a tab and pass the returned `lease` on every browser call, instead of relying on the active tab. Opens the tab in a separate, unfocused agents window (own_window:true gives the tab a window of its own, needed for screenshots and chrome_computer, which only work on a visible tab). The bridge turns `lease` into the right profile and tabId, never activates or focuses the tab, and while this MCP session holds any lease it REFUSES tab-targeting calls that carry neither `lease` nor tabId. Calls on the same tab run one at a time. Leases end with chrome_release_tab, when the tab is closed, or after 30 minutes unused. Returns {lease, tabId, windowId, profile}.',
     inputSchema: {
       type: 'object',
       properties: {
+        adopt_tab_id: {
+          type: 'number',
+          description:
+            'Lease an EXISTING tab instead of opening one, e.g. a tab an action opened (reported in new_tabs). url and own_window are ignored.',
+        },
         url: { type: 'string', description: 'Page to open in the new tab. Default about:blank.' },
         own_window: {
           type: 'boolean',
@@ -728,6 +890,16 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        startChar: {
+          type: 'number',
+          description:
+            'Return text starting at this character (for reading a long page in chunks). Default 0.',
+        },
+        maxChars: {
+          type: 'number',
+          description:
+            'Return at most this many characters; the reply carries next_start_char when there is more.',
+        },
         url: {
           type: 'string',
           description: 'URL to fetch content from. If not provided, uses the current active tab',
@@ -1035,6 +1207,12 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        uids: {
+          type: 'array',
+          items: { type: 'number' },
+          description:
+            'Elements from chrome_snapshot of this tab, handed to your code as the array `elements` (elements[0] is uids[0]), so you never rebuild a selector for an element you already have.',
+        },
         code: {
           type: 'string',
           description:
@@ -1067,6 +1245,16 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        settle: {
+          type: 'boolean',
+          description:
+            'After the action, wait for any navigation it started and for the DOM to go quiet, then report the page (url, title, navigated, open dialog, new tabs it opened). Default true.',
+          default: true,
+        },
+        settleTimeoutMs: {
+          type: 'number',
+          description: 'Upper bound for that wait. Default 3000.',
+        },
         selector: {
           type: 'string',
           description: 'CSS selector or XPath for the element to click.',
@@ -1139,6 +1327,16 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        settle: {
+          type: 'boolean',
+          description:
+            'After the action, wait for any navigation it started and for the DOM to go quiet, then report the page (url, title, navigated, open dialog, new tabs it opened). Default true.',
+          default: true,
+        },
+        settleTimeoutMs: {
+          type: 'number',
+          description: 'Upper bound for that wait. Default 3000.',
+        },
         selector: {
           type: 'string',
           description: 'CSS selector or XPath for the form element.',
@@ -1231,6 +1429,16 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        settle: {
+          type: 'boolean',
+          description:
+            'After the action, wait for any navigation it started and for the DOM to go quiet, then report the page (url, title, navigated, open dialog, new tabs it opened). Default true.',
+          default: true,
+        },
+        settleTimeoutMs: {
+          type: 'number',
+          description: 'Upper bound for that wait. Default 3000.',
+        },
         keys: {
           type: 'string',
           description:
@@ -4050,8 +4258,9 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.SNAPSHOT,
     description:
-      'Capture an accessibility-tree snapshot of a tab and tag every interactive element with a [uid=N] marker. ' +
-      'You MUST call this before chrome_snapshot_click/_fill/_hover — those tools resolve UIDs against the latest snapshot of the same tab.',
+      'Accessibility-tree snapshot of a tab: every element worth acting on gets a [uid=N] marker, with its state (value, checked, expanded, selected, disabled, required, url) and iframes included. ' +
+      'A uid stays valid for as long as that element exists, across snapshots; a uid whose element is gone (or from before a navigation) is refused instead of guessed. ' +
+      'Call it before chrome_snapshot_click/_fill/_hover/_fill_form, chrome_act and chrome_javascript(uids).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -4070,11 +4279,33 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.SNAPSHOT_CLICK,
     description:
-      'Click an element identified by a UID from the latest chrome_snapshot of this tab. ' +
-      'Call chrome_snapshot first to obtain UIDs; stale UIDs will fail with an error asking you to re-snapshot.',
+      'Click an element by uid from chrome_snapshot with real mouse events: scrolls it into view and checks it is visible and not covered (the error names what covers it). ' +
+      'A <select> is not clicked: its options come back so you can pick one with chrome_snapshot_fill; a file input points you to chrome_upload_file. ' +
+      'Waits for what the click caused (navigation, quiet DOM) and reports it unless settle:false. Refused while a JS dialog is open.',
     inputSchema: {
       type: 'object',
       properties: {
+        double: {
+          type: 'boolean',
+          description: 'Double-click instead of a single click. Default false.',
+          default: false,
+        },
+        settle: {
+          type: 'boolean',
+          description:
+            'After the action, wait for any navigation it started and for the DOM to go quiet, then report the page (url, title, navigated, open dialog, new tabs it opened). Default true.',
+          default: true,
+        },
+        settleTimeoutMs: {
+          type: 'number',
+          description: 'Upper bound for that wait. Default 3000.',
+        },
+        includeSnapshot: {
+          type: 'boolean',
+          description:
+            'Also return a fresh chrome_snapshot of the tab after the action. Default false.',
+          default: false,
+        },
         uid: {
           type: 'number',
           description: 'Element UID from the latest chrome_snapshot of this tab.',
@@ -4094,11 +4325,28 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.SNAPSHOT_FILL,
     description:
-      'Focus an element by UID (from the latest chrome_snapshot of this tab), select-all + clear its current value, then insert the provided text. ' +
-      'UIDs come from chrome_snapshot. Call chrome_snapshot first.',
+      'Set the value of an element by uid from chrome_snapshot. Text inputs and editors: clear, type, fire input/change events, then read the value back and report a mismatch. ' +
+      '<select> and comboboxes: the option is matched by visible text or value. Checkbox, radio and switch: pass "true" or "false". ' +
+      'For several fields use chrome_snapshot_fill_form. Refused while a JS dialog is open.',
     inputSchema: {
       type: 'object',
       properties: {
+        settle: {
+          type: 'boolean',
+          description:
+            'After the action, wait for any navigation it started and for the DOM to go quiet, then report the page (url, title, navigated, open dialog, new tabs it opened). Default true.',
+          default: true,
+        },
+        settleTimeoutMs: {
+          type: 'number',
+          description: 'Upper bound for that wait. Default 3000.',
+        },
+        includeSnapshot: {
+          type: 'boolean',
+          description:
+            'Also return a fresh chrome_snapshot of the tab after the action. Default false.',
+          default: false,
+        },
         uid: {
           type: 'number',
           description: 'Element UID from the latest chrome_snapshot of this tab.',
@@ -4127,6 +4375,22 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        settle: {
+          type: 'boolean',
+          description:
+            'After the action, wait for any navigation it started and for the DOM to go quiet, then report the page (url, title, navigated, open dialog, new tabs it opened). Default true.',
+          default: true,
+        },
+        settleTimeoutMs: {
+          type: 'number',
+          description: 'Upper bound for that wait. Default 3000.',
+        },
+        includeSnapshot: {
+          type: 'boolean',
+          description:
+            'Also return a fresh chrome_snapshot of the tab after the action. Default false.',
+          default: false,
+        },
         uid: {
           type: 'number',
           description: 'Element UID from the latest chrome_snapshot of this tab.',
@@ -4153,8 +4417,10 @@ export const TOOL_SCHEMAS: Tool[] = [
       type: 'object',
       properties: {
         text: {
-          type: 'string',
-          description: 'Substring (case-insensitive) to match against accessible names.',
+          type: ['string', 'array'],
+          items: { type: 'string' },
+          description:
+            'Substring (case-insensitive) to match against accessible names, or an array: resolves when any one appears.',
         },
         role: {
           type: 'string',

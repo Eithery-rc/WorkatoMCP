@@ -11,6 +11,35 @@ interface WebFetcherToolParams {
   tabId?: number; // target existing tab id
   background?: boolean; // do not activate/focus
   windowId?: number; // target window id to pick active tab or create tab
+  startChar?: number; // return content from this character on (chunked reading)
+  maxChars?: number; // return at most this many characters
+}
+
+/**
+ * Slice one content string for chunked reading. Only applies when the caller
+ * passed startChar or maxChars; the reply then says where the next chunk starts.
+ */
+function sliceContent(
+  result: Record<string, any>,
+  key: 'textContent' | 'htmlContent',
+  startChar: unknown,
+  maxChars: unknown,
+): void {
+  const content = result[key];
+  if (typeof content !== 'string') return;
+  const total = content.length;
+  const start =
+    typeof startChar === 'number' && Number.isFinite(startChar)
+      ? Math.min(Math.max(Math.floor(startChar), 0), total)
+      : 0;
+  const end =
+    typeof maxChars === 'number' && Number.isFinite(maxChars) && maxChars > 0
+      ? Math.min(start + Math.floor(maxChars), total)
+      : total;
+  result[key] = content.slice(start, end);
+  result.total_chars = total;
+  result.start_char = start;
+  if (end < total) result.next_start_char = end;
 }
 
 class WebFetcherTool extends BaseBrowserToolExecutor {
@@ -148,6 +177,15 @@ class WebFetcherTool extends BaseBrowserToolExecutor {
       }
 
       // Interactive elements feature has been removed
+
+      if (args.startChar !== undefined || args.maxChars !== undefined) {
+        sliceContent(
+          result,
+          htmlContent ? 'htmlContent' : 'textContent',
+          args.startChar,
+          args.maxChars,
+        );
+      }
 
       return {
         content: [

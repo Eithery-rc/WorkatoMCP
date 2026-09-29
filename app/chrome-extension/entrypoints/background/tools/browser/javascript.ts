@@ -4,6 +4,8 @@
  * Execute JavaScript in the browser tab and return the result.
  * - Primary: CDP Runtime.evaluate (supports awaitPromise + returnByValue)
  * - Fallback: chrome.scripting.executeScript (when debugger is busy)
+ * - With `uids`: CDP Runtime.callFunctionOn, the snapshot elements handed to
+ *   the code as `elements` (no fallback: a uid only means something over CDP)
  *
  * Features:
  * - Async code support (top-level await via async wrapper)
@@ -17,6 +19,8 @@ import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
+import { resolveElement } from './snapshot/element-actions';
+import { sendCommand as snapshotSendCommand } from './snapshot/debugger-session';
 import {
   DEFAULT_MAX_OUTPUT_BYTES,
   sanitizeAndLimitOutput,
@@ -56,6 +60,8 @@ interface JavaScriptToolParams {
   tabId?: number;
   timeoutMs?: number;
   maxOutputBytes?: number;
+  /** Snapshot uids, handed to the code as the array `elements`. */
+  uids?: number[];
 }
 
 interface ExecutionError {
@@ -294,6 +300,61 @@ async function executeViaCdp(
   }
 }
 
+/**
+ * Run the code with snapshot elements bound to `elements` (elements[i] is
+ * uids[i]). The code runs as the body of an async function in the page's main
+ * world, like the Runtime.evaluate path, so `return` and `await` work.
+ */
+async function executeWithElements(
+  tabId: number,
+  code: string,
+  uids: number[],
+  options: ExecutionOptions,
+): Promise<ExecutionResult> {
+  let elements: Array<{ objectId: string }>;
+  try {
+    elements = [];
+    for (const uid of uids) elements.push(await resolveElement(tabId, Number(uid)));
+  } catch (error) {
+    const message = sanitizeText(error instanceof Error ? error.message : String(error)).text;
+    return { ok: false, engine: 'cdp', error: { kind: 'runtime_error', message } };
+  }
+  try {
+    const response = (await withTimeout(
+      snapshotSendCommand(tabId, 'Runtime.callFunctionOn', {
+        objectId: elements[0].objectId,
+        functionDeclaration: `async function () {
+const elements = Array.prototype.slice.call(arguments);
+${code}
+}`,
+        arguments: elements.map((e) => ({ objectId: e.objectId })),
+        returnByValue: true,
+        awaitPromise: true,
+      }),
+      options.timeoutMs,
+    )) as CDPEvaluateResult;
+    if (response?.exceptionDetails) {
+      return { ok: false, engine: 'cdp', error: parseExceptionDetails(response.exceptionDetails) };
+    }
+    const sanitized = sanitizeAndLimitOutput(extractReturnValue(response?.result), {
+      maxBytes: options.maxOutputBytes,
+    });
+    return {
+      ok: true,
+      engine: 'cdp',
+      output: sanitized.text,
+      truncated: sanitized.truncated,
+      redacted: sanitized.redacted,
+    };
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      return { ok: false, engine: 'cdp', error: { kind: 'timeout', message: error.message } };
+    }
+    const message = sanitizeText(error instanceof Error ? error.message : String(error)).text;
+    return { ok: false, engine: 'cdp', error: { kind: 'cdp_error', message } };
+  }
+}
+
 // ============================================================================
 // chrome.scripting.executeScript Fallback
 // ============================================================================
@@ -438,6 +499,13 @@ class JavaScriptTool extends BaseBrowserToolExecutor {
         timeoutMs: normalizePositiveInt(args.timeoutMs, DEFAULT_TIMEOUT_MS),
         maxOutputBytes: normalizePositiveInt(args.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES),
       };
+
+      if (Array.isArray(args.uids) && args.uids.length > 0) {
+        const withElements = await executeWithElements(tabId, code, args.uids, options);
+        return withElements.ok
+          ? this.buildSuccessResponse(tabId, withElements, startTime)
+          : this.buildErrorResponse(tabId, withElements, startTime);
+      }
 
       const warnings: string[] = [];
 

@@ -580,6 +580,33 @@ export function createToolRouter(): ToolRouter {
     stopSweepWhenIdle();
   };
 
+  /**
+   * The window of `tabId` in `profile`, or null when the profile has no such
+   * tab. Reads get_windows_and_tabs once: cheap, and it proves the tab exists
+   * before a lease points every later call at it.
+   */
+  const findTabWindow = async (profile: string, tabId: number): Promise<number | null> => {
+    const reply = await profileRegistry.sendRequest(
+      profile,
+      { name: TOOL_NAMES.BROWSER.GET_WINDOWS_AND_TABS, args: {} },
+      NativeMessageType.CALL_TOOL,
+      15000,
+    );
+    const text = reply?.data?.content?.[0]?.text;
+    if (reply?.status !== 'success' || typeof text !== 'string') {
+      throw new Error(
+        `could not list the tabs of profile "${profile}": ${reply?.error || 'no data'}`,
+      );
+    }
+    const windows = JSON.parse(text)?.windows;
+    for (const win of Array.isArray(windows) ? windows : []) {
+      for (const tab of Array.isArray(win?.tabs) ? win.tabs : []) {
+        if (tab?.tabId === tabId) return typeof win.windowId === 'number' ? win.windowId : null;
+      }
+    }
+    return null;
+  };
+
   const handleLeaseTab = async (
     args: JsonObject,
     profile: string | null,
@@ -587,27 +614,59 @@ export function createToolRouter(): ToolRouter {
     const target = profile ?? profileRegistry.getActiveProfile();
     if (!target) return routeError('Error: no Chrome profile is connected to lease a tab in.');
     requireConnectedProfile(target);
-    const reply = await profileRegistry.sendRequest(
-      target,
-      {
-        url: typeof args.url === 'string' ? args.url : undefined,
-        own_window: args.own_window === true,
-      },
-      NativeMessageType.AGENT_TAB_OPEN,
-      20000,
-    );
-    if (reply?.status !== 'success' || typeof reply?.data?.tabId !== 'number') {
-      return routeError(
-        `Error: could not open a tab in profile "${target}": ` +
-          `${reply?.error || 'no tab id came back'}`,
+
+    let tabId: number;
+    let windowId: number | null;
+    const adopt = args.adopt_tab_id;
+    if (adopt !== undefined) {
+      if (typeof adopt !== 'number' || !Number.isInteger(adopt) || adopt < 0) {
+        return routeError('Error: adopt_tab_id must be a tab id (a non-negative integer).');
+      }
+      const held = leases.findByTab(target, adopt);
+      if (held) {
+        return routeError(
+          `Error: tab ${adopt} is already leased as ${held.lease} in this session. Nothing was leased.`,
+        );
+      }
+      let found: number | null;
+      try {
+        found = await findTabWindow(target, adopt);
+      } catch (err: any) {
+        return routeError(`Error: ${err?.message || String(err)}. Nothing was leased.`);
+      }
+      if (found === null) {
+        return routeError(
+          `Error: tab ${adopt} is not open in profile "${target}". Nothing was leased.`,
+        );
+      }
+      tabId = adopt;
+      windowId = found;
+    } else {
+      const reply = await profileRegistry.sendRequest(
+        target,
+        {
+          url: typeof args.url === 'string' ? args.url : undefined,
+          own_window: args.own_window === true,
+        },
+        NativeMessageType.AGENT_TAB_OPEN,
+        20000,
       );
+      if (reply?.status !== 'success' || typeof reply?.data?.tabId !== 'number') {
+        return routeError(
+          `Error: could not open a tab in profile "${target}": ` +
+            `${reply?.error || 'no tab id came back'}`,
+        );
+      }
+      tabId = reply.data.tabId;
+      windowId = typeof reply.data.windowId === 'number' ? reply.data.windowId : null;
     }
+
     const now = Date.now();
     const lease: TabLease = {
       lease: newLeaseId(),
       profile: target,
-      tabId: reply.data.tabId,
-      windowId: typeof reply.data.windowId === 'number' ? reply.data.windowId : null,
+      tabId,
+      windowId,
       created_at: now,
       last_used: now,
     };
@@ -621,6 +680,7 @@ export function createToolRouter(): ToolRouter {
       tabId: lease.tabId,
       windowId: lease.windowId,
       profile: lease.profile,
+      ...(adopt !== undefined ? { adopted: true } : {}),
       note:
         'Pass lease on every browser call. While this session holds a lease, calls that name ' +
         'no tab are refused. Release it with chrome_release_tab when done (idle leases expire ' +

@@ -1,11 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { busyTabs, runExclusiveForTab } from '@/entrypoints/background/tools/tab-queue';
 import {
-  resolveUid,
-  storeSnapshot,
-  uidBase,
+  __resetUidStoreForTest,
+  assignUid,
+  beginSnapshot,
+  getTabUids,
+  lookupUid,
 } from '@/entrypoints/background/tools/browser/snapshot/uid-store';
-import { formatAxTree } from '@/entrypoints/background/tools/browser/snapshot/ax-tree-formatter';
 import { closeAgentTab, openAgentTab } from '@/entrypoints/background/agent-tabs';
 
 function deferred() {
@@ -49,37 +50,27 @@ describe('runExclusiveForTab', () => {
 });
 
 describe('snapshot uids across snapshots of one tab', () => {
-  const nodes = [
-    { nodeId: '1', role: { value: 'button' }, name: { value: 'One' }, backendDOMNodeId: 11 },
-    { nodeId: '2', role: { value: 'button' }, name: { value: 'Two' }, backendDOMNodeId: 12 },
-  ] as any;
+  beforeEach(() => __resetUidStoreForTest());
 
-  it('numbers a second snapshot after the first and refuses the older uids', () => {
+  it('keeps a node on its uid, never reuses a uid, and refuses a uid whose page navigated', async () => {
     const tabId = 4242;
-    const firstBase = uidBase(tabId);
-    const first = formatAxTree(nodes, firstBase);
-    storeSnapshot(tabId, {
-      snapshotId: 's1',
-      uidToBackendNodeId: first.uidMap,
-      capturedAt: 0,
-      firstUid: firstBase + 1,
-    });
-    const firstUids = [...first.uidMap.keys()];
-    expect(firstUids.length).toBeGreaterThan(0);
+    const state = await getTabUids(tabId);
+    beginSnapshot(state, new Map([['F', 'L1']]));
+    const one = assignUid(state, 'F', 'L1', 11);
+    const two = assignUid(state, 'F', 'L1', 12);
 
-    const secondBase = uidBase(tabId);
-    const second = formatAxTree(nodes, secondBase);
-    storeSnapshot(tabId, {
-      snapshotId: 's2',
-      uidToBackendNodeId: second.uidMap,
-      capturedAt: 1,
-      firstUid: secondBase + 1,
-    });
-    const secondUids = [...second.uidMap.keys()];
-    expect(Math.min(...secondUids)).toBeGreaterThan(Math.max(...firstUids));
+    beginSnapshot(state, new Map([['F', 'L1']]));
+    // Same node, second snapshot: same uid. A new node gets a new number.
+    expect(assignUid(state, 'F', 'L1', 11)).toBe(one);
+    const three = assignUid(state, 'F', 'L1', 13);
+    expect(three).toBeGreaterThan(two);
+    await expect(lookupUid(tabId, two)).resolves.toMatchObject({ backendNodeId: 12 });
 
-    expect(() => resolveUid(tabId, firstUids[0])).toThrow('older snapshot');
-    expect(resolveUid(tabId, secondUids[0])).toBe(second.uidMap.get(secondUids[0]));
+    // The frame navigated: every uid of the old document is gone, numbers go on.
+    beginSnapshot(state, new Map([['F', 'L2']]));
+    await expect(lookupUid(tabId, one)).rejects.toThrow('no longer exists');
+    expect(assignUid(state, 'F', 'L2', 11)).toBeGreaterThan(three);
+    await expect(lookupUid(tabId, 999)).rejects.toThrow('never issued');
   });
 });
 

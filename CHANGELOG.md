@@ -6,6 +6,21 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+Agents that know what their actions did. Ideas taken from chrome-devtools-mcp and browser-use.
+
+### Added
+
+- **Wait and report after every action**: clicks, fills, keys, `chrome_computer` and `chrome_navigate` wait for any navigation they started and for the DOM to go quiet, then report the final url and title, whether it navigated, an open JS dialog and tabs the action opened (`settle`, `settleTimeoutMs`). `chrome_navigate` now reports the page it landed on.
+- **JS dialogs**: a dialog an action opens is reported at once ("the action ran and opened a confirm dialog ... answer it with chrome_handle_dialog") instead of hanging; input tools and `chrome_snapshot` refuse or report while one is open; `chrome_handle_dialog` answers it even though the page is blocked.
+- **Snapshot**: uids stay the same while an element exists (a gone element or a navigated page is refused, never guessed); element state (value, checked, expanded, selected, disabled, required, url, select options); same-process iframes; clickable elements found by cursor; no 50k truncation (large results spill to a file).
+- **Real clicks and smart fills**: `chrome_snapshot_click` scrolls into view, refuses a covered element naming what covers it, returns a select's options, and reports checkbox state; `chrome_snapshot_fill` handles select, combobox, checkbox, radio and switch and reads the value back. In a hidden leased tab both fall back to DOM events and direct value setting.
+- New `chrome_snapshot_fill_form`, `chrome_act` (several uid actions in one call), `chrome_search_page`, `chrome_find_elements`; `chrome_javascript` takes `uids`; `chrome_get_web_content` reads in chunks (`startChar`, `maxChars`); `chrome_lease_tab adopt_tab_id` leases a tab an action opened.
+
+### Fixed
+
+- `chrome_navigate` with a tab failed on URLs Chrome cannot turn into a match pattern (an IP with a port).
+- A call waiting behind a dialog-blocked call on the same tab could deadlock `chrome_handle_dialog`.
+
 ## bridge 1.9.0 · shared 1.7.0 (2026-09-29)
 
 Parallel agents on one MCP server, in the same or different Chrome profiles.

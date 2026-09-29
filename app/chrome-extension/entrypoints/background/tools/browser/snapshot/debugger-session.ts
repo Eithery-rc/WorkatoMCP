@@ -6,11 +6,11 @@
  * go through ensureAttached() so the idle timer is reset.
  *
  * This wraps cdpSessionManager and never calls chrome.debugger.attach
- * directly. Owner tag is 'snapshot'.
+ * directly. Owner tag is 'snapshot'. Detaching does not invalidate uids: a
+ * backendNodeId stays valid for the node's lifetime, attached or not.
  */
 
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
-import { clear as clearUidStore } from './uid-store';
 
 const OWNER_TAG = 'snapshot';
 const IDLE_TIMEOUT_MS = 60_000;
@@ -42,7 +42,7 @@ function registerDetachListener() {
         clearTimeout(timer);
         idleTimers.delete(tabId);
       }
-      clearUidStore(tabId);
+      // uids stay: backendNodeIds belong to the renderer, not to this session.
     });
   } catch (e) {
     console.warn('[snapshot] could not register debugger.onDetach listener:', e);
@@ -57,7 +57,6 @@ function scheduleIdleDetach(tabId: number) {
     if (!attachedTabs.has(tabId)) return;
     console.log(`[snapshot] idle ${IDLE_TIMEOUT_MS}ms — detaching tab ${tabId}`);
     attachedTabs.delete(tabId);
-    clearUidStore(tabId);
     try {
       await cdpSessionManager.detach(tabId, OWNER_TAG);
     } catch (e) {
@@ -97,6 +96,10 @@ async function attachForSnapshot(tabId: number): Promise<void> {
   try {
     await cdpSessionManager.sendCommand(tabId, 'DOM.enable');
     await cdpSessionManager.sendCommand(tabId, 'Accessibility.enable');
+    // Page events carry javascriptDialogOpening. Enabling it now, while the page
+    // still answers, is what lets a click that opens confirm() be reported
+    // instead of hanging: Page.enable sent after the dialog is up blocks too.
+    await cdpSessionManager.sendCommand(tabId, 'Page.enable').catch(() => undefined);
   } catch (e) {
     // If domain enable fails, drop the attach so we don't hold a useless session.
     try {

@@ -43,7 +43,13 @@ export const handleCallTool = async (param: ToolCallParam) => {
   const tabId = param.args?.tabId;
   // Record-replay flows call handleCallTool for each step themselves; locking
   // the flow run too would deadlock on its own tab.
-  if (typeof tabId === 'number' && !param.name.startsWith('record_replay')) {
+  // chrome_handle_dialog answers the dialog another call on this tab is blocked
+  // on; queueing it behind that call would deadlock the tab.
+  if (
+    typeof tabId === 'number' &&
+    !param.name.startsWith('record_replay') &&
+    param.name !== 'chrome_handle_dialog'
+  ) {
     return runExclusiveForTab(tabId, () => executeTool(tool, param));
   }
   return executeTool(tool, param);

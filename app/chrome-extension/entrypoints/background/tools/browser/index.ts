@@ -34,3 +34,7 @@ export {
   SnapshotHoverTool,
   SnapshotWaitForTool,
 } from './snapshot/handlers';
+// Multi-field fill and batched uid actions (snapshot/act.ts)
+export { SnapshotFillFormTool, ActTool } from './snapshot/act';
+// Read-only page queries (page-query.ts)
+export { searchPageTool, findElementsTool } from './page-query';
