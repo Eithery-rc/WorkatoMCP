@@ -42,6 +42,13 @@ export const closeTabNode: NodeRuntime<StepCloseTab> = {
     const args: any = {};
     if (Array.isArray(s.tabIds) && s.tabIds.length) args.tabIds = s.tabIds;
     if (s.url) args.url = s.url;
+    if (!args.tabIds && !args.url) {
+      // chrome_close_tabs no longer guesses the active tab; a recorded flow
+      // runs in the active tab, so name it here.
+      const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (typeof active?.id !== 'number') throw new Error('closeTab failed: no active tab');
+      args.tabIds = [active.id];
+    }
     const res = await handleCallTool({ name: TOOL_NAMES.BROWSER.CLOSE_TABS, args });
     if ((res as any).isError) throw new Error('closeTab failed');
     return {} as ExecResult;

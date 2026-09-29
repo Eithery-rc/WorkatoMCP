@@ -20,10 +20,10 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { ERROR_MESSAGES } from '@/common/constants';
 import { TOOL_NAMES } from 'workatomcp-shared';
-import { BaseBrowserToolExecutor } from '../../base-browser';
+import { BaseBrowserToolExecutor, getTabOrThrow } from '../../base-browser';
 import { ensureAttached, sendCommand } from './debugger-session';
 import { formatAxTree } from './ax-tree-formatter';
-import { storeSnapshot, resolveUid } from './uid-store';
+import { storeSnapshot, resolveUid, uidBase } from './uid-store';
 import type { AXNode } from './types';
 
 interface TabTargetArgs {
@@ -70,8 +70,11 @@ function detectMac(): boolean {
  * Resolve target tab from args. Throws on missing.
  */
 async function resolveTabId(args: TabTargetArgs): Promise<number> {
-  const explicit = typeof args.tabId === 'number' ? await safeGetTab(args.tabId) : null;
-  if (explicit && typeof explicit.id === 'number') return explicit.id;
+  // A given tabId that no longer exists is an error, never the active tab.
+  if (typeof args.tabId === 'number') {
+    const explicit = await getTabOrThrow(args.tabId);
+    if (typeof explicit.id === 'number') return explicit.id;
+  }
   const tabs = await chrome.tabs.query(
     typeof args.windowId === 'number'
       ? { active: true, windowId: args.windowId }
@@ -82,14 +85,6 @@ async function resolveTabId(args: TabTargetArgs): Promise<number> {
     throw new Error(ERROR_MESSAGES.TAB_NOT_FOUND);
   }
   return t.id;
-}
-
-async function safeGetTab(tabId: number): Promise<chrome.tabs.Tab | null> {
-  try {
-    return await chrome.tabs.get(tabId);
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -104,12 +99,14 @@ async function captureSnapshot(tabId: number): Promise<{
   await ensureAttached(tabId);
   const result = await sendCommand<{ nodes: AXNode[] }>(tabId, 'Accessibility.getFullAXTree');
   const nodes: AXNode[] = (result && result.nodes) || [];
-  const { text, uidMap } = formatAxTree(nodes);
+  const base = uidBase(tabId);
+  const { text, uidMap } = formatAxTree(nodes, base);
   const snapshotId = newSnapshotId();
   storeSnapshot(tabId, {
     snapshotId,
     uidToBackendNodeId: uidMap,
     capturedAt: Date.now(),
+    firstUid: base + 1,
   });
   return { snapshotId, text, uidCount: uidMap.size };
 }

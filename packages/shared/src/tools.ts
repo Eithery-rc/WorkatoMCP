@@ -45,6 +45,8 @@ export const TOOL_NAMES = {
     PERFORMANCE_ANALYZE_INSIGHT: 'performance_analyze_insight',
     GIF_RECORDER: 'chrome_gif_recorder',
     SNAPSHOT: 'chrome_snapshot',
+    LEASE_TAB: 'chrome_lease_tab',
+    RELEASE_TAB: 'chrome_release_tab',
     SNAPSHOT_CLICK: 'chrome_snapshot_click',
     SNAPSHOT_FILL: 'chrome_snapshot_fill',
     SNAPSHOT_HOVER: 'chrome_snapshot_hover',
@@ -235,6 +237,11 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        tabId: {
+          type: 'number',
+          description:
+            'Target tab. Omit for the active tab of the last-focused window (refused while this session holds tab leases).',
+        },
         reload: {
           type: 'boolean',
           description:
@@ -258,6 +265,10 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        tabId: {
+          type: 'number',
+          description: 'Tab the trace was started on. Omit for the active tab.',
+        },
         saveToDownloads: {
           type: 'boolean',
           description: 'Whether to save the trace as a JSON file in Downloads (default true).',
@@ -277,6 +288,10 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        tabId: {
+          type: 'number',
+          description: 'Tab whose last trace to summarise. Omit for the active tab.',
+        },
         insightName: {
           type: 'string',
           description:
@@ -635,15 +650,51 @@ export const TOOL_SCHEMAS: Tool[] = [
     },
   },
   {
+    name: TOOL_NAMES.BROWSER.LEASE_TAB,
+    description:
+      'Get a tab of your own for parallel work: several agents sharing one MCP server and one Chrome profile must each lease a tab and pass the returned `lease` on every browser call, instead of relying on the active tab. Opens the tab in a separate, unfocused agents window (own_window:true gives the tab a window of its own, needed for screenshots and chrome_computer, which only work on a visible tab). The bridge turns `lease` into the right profile and tabId, never activates or focuses the tab, and while this MCP session holds any lease it REFUSES tab-targeting calls that carry neither `lease` nor tabId. Calls on the same tab run one at a time. Leases end with chrome_release_tab, when the tab is closed, or after 30 minutes unused. Returns {lease, tabId, windowId, profile}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Page to open in the new tab. Default about:blank.' },
+        own_window: {
+          type: 'boolean',
+          description:
+            'Open the tab in its own unfocused window so it stays visible (screenshots, chrome_computer). Default false: a shared agents window.',
+          default: false,
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.RELEASE_TAB,
+    description:
+      'End a lease from chrome_lease_tab and close its tab (keep_tab:true leaves the tab open). Call it when the agent is done.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        lease: { type: 'string', description: 'Lease id from chrome_lease_tab.' },
+        keep_tab: {
+          type: 'boolean',
+          description: 'Leave the tab open. Default false.',
+          default: false,
+        },
+      },
+      required: ['lease'],
+    },
+  },
+  {
     name: TOOL_NAMES.BROWSER.CLOSE_TABS,
-    description: 'Close one or more browser tabs',
+    description:
+      'Close browser tabs by tabIds or by exact url. Pass one of them: a call with neither is refused (it used to close the active tab, which under parallel agents is another agent tab). For a leased tab use chrome_release_tab.',
     inputSchema: {
       type: 'object',
       properties: {
         tabIds: {
           type: 'array',
           items: { type: 'number' },
-          description: 'Array of tab IDs to close. If not provided, will close the active tab.',
+          description: 'Tab IDs to close.',
         },
         url: {
           type: 'string',
@@ -715,6 +766,11 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        tabId: {
+          type: 'number',
+          description:
+            'Tab whose page context and cookies send the request. Omit for the active tab.',
+        },
         url: {
           type: 'string',
           description: 'URL to send the request to',
@@ -751,6 +807,11 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        tabId: {
+          type: 'number',
+          description:
+            'Tab to capture (start) or to stop and read (stop). Omit to use url or the active tab; stop then only ends the capture of that tab.',
+        },
         action: {
           type: 'string',
           enum: ['start', 'stop'],
@@ -1322,6 +1383,10 @@ export const TOOL_SCHEMAS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        tabId: {
+          type: 'number',
+          description: 'Tab showing the dialog. Omit for the active tab.',
+        },
         action: { type: 'string', description: 'accept | dismiss' },
         promptText: {
           type: 'string',

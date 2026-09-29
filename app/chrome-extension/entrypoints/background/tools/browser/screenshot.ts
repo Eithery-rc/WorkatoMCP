@@ -165,6 +165,25 @@ export function buildScreenshotContent(input: ScreenshotContentInput): ToolResul
   return content;
 }
 
+function notVisibleMessage(tabId: number): string {
+  return (
+    `Tab ${tabId} is not the visible tab of its window, so it cannot be captured this way. ` +
+    'Lease it with chrome_lease_tab own_window:true (its own window keeps it visible), or ' +
+    'take a plain viewport screenshot, which uses CDP for hidden tabs.'
+  );
+}
+
+/** Active in a window that is not minimized: what captureVisibleTab would show. */
+async function isTabVisible(tab: chrome.tabs.Tab): Promise<boolean> {
+  if (!tab.active) return false;
+  try {
+    const win = await chrome.windows.get(tab.windowId);
+    return win.state !== 'minimized';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Tool for capturing screenshots of web pages
  */
@@ -213,8 +232,16 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
     let didPreparePage = false;
     let pageDetails: ScreenshotPageDetails | undefined;
 
+    // captureVisibleTab shoots whatever tab is showing in the window. When the
+    // target is not that tab (a background or leased tab), only CDP can capture
+    // it, and a failure must be an error, never another tab's pixels.
+    const targetVisible = await isTabVisible(tab);
+    if (!targetVisible && (fullPage || selector)) {
+      return createErrorResponse(notVisibleMessage(tab.id!));
+    }
+
     try {
-      const background = args.background === true;
+      const background = args.background === true || !targetVisible;
       // CDP path: background=true with simple viewport capture (no fullPage, no selector)
       const canUseCdpCapture = background && !fullPage && !selector;
 
@@ -248,6 +275,11 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
             finalImageHeightCss = Math.round(viewport.clientHeight || 600);
           });
         } catch (e) {
+          if (!targetVisible) {
+            throw new Error(
+              `${notVisibleMessage(tab.id!)} CDP capture failed: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
           console.warn('CDP viewport capture failed, falling back to helper path:', e);
         }
       }
@@ -491,7 +523,12 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
     // Small delay to ensure element is fully rendered after scrollIntoView
     await new Promise((resolve) => setTimeout(resolve, SCREENSHOT_CONSTANTS.SCRIPT_INIT_DELAY));
 
-    const visibleCaptureDataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' });
+    // captureVisibleTab without a window id shoots the last-focused window, which
+    // may not hold this tab at all.
+    const { windowId: elementWindowId } = await chrome.tabs.get(tabId);
+    const visibleCaptureDataUrl = await chrome.tabs.captureVisibleTab(elementWindowId, {
+      format: 'png',
+    });
     if (!visibleCaptureDataUrl) {
       throw new Error('Failed to capture visible tab for element cropping');
     }
@@ -514,6 +551,7 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
     options: ScreenshotToolParams,
     initialPageDetails: any,
   ): Promise<string> {
+    const { windowId: fullPageWindowId } = await chrome.tabs.get(tabId);
     const dpr = initialPageDetails.devicePixelRatio;
     const totalWidthCss = options.width || initialPageDetails.totalWidth; // Use option width if provided
     const totalHeightCss = initialPageDetails.totalHeight; // Full page always uses actual height
@@ -562,7 +600,7 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
         setTimeout(resolve, SCREENSHOT_CONSTANTS.CAPTURE_STITCH_DELAY_MS),
       );
 
-      const dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' });
+      const dataUrl = await chrome.tabs.captureVisibleTab(fullPageWindowId, { format: 'png' });
       if (!dataUrl) throw new Error('captureVisibleTab returned empty during full page capture');
 
       const yOffsetPx = currentScrollYCss * dpr;

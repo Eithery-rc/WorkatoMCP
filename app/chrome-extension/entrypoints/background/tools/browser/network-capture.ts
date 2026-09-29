@@ -13,6 +13,7 @@ interface NetworkCaptureToolParams {
   maxCaptureTime?: number;
   inactivityTimeout?: number;
   includeStatic?: boolean;
+  tabId?: number;
 }
 
 /**
@@ -52,6 +53,17 @@ function isDebuggerCaptureActive(): boolean {
     networkDebuggerStartTool as unknown as { captureData?: Map<number, unknown> }
   ).captureData;
   return captureData instanceof Map && captureData.size > 0;
+}
+
+function debuggerCaptureTabs(): number[] {
+  const captureData = (
+    networkDebuggerStartTool as unknown as { captureData?: Map<number, unknown> }
+  ).captureData;
+  return captureData instanceof Map ? Array.from(captureData.keys()) : [];
+}
+
+function captureHasTab(tabId: number): boolean {
+  return debuggerCaptureTabs().includes(tabId) || networkCaptureStartTool.captureData.has(tabId);
 }
 
 /**
@@ -95,8 +107,16 @@ class NetworkCaptureTool extends BaseBrowserToolExecutor {
     debuggerActive: boolean,
     webActive: boolean,
   ): Promise<ToolResult> {
-    // Prevent any capture conflict (cross-mode or same-mode)
-    if (debuggerActive || webActive) {
+    // One capture per tab: with a tabId only that tab has to be free, so
+    // parallel agents can capture their own tabs. Without one the target is
+    // not known yet, so any active capture still blocks.
+    if (typeof args.tabId === 'number') {
+      if (captureHasTab(args.tabId)) {
+        return createErrorResponse(
+          `Network capture is already active on tab ${args.tabId}. Stop it before starting a new one.`,
+        );
+      }
+    } else if (debuggerActive || webActive) {
       const activeMode = debuggerActive ? 'debugger' : 'webRequest';
       return createErrorResponse(
         `Network capture is already active in ${activeMode} mode. Stop it before starting a new capture.`,
@@ -107,6 +127,7 @@ class NetworkCaptureTool extends BaseBrowserToolExecutor {
     const backend: NetworkCaptureBackend = wantBody ? 'debugger' : 'webRequest';
 
     const result = await delegate.execute({
+      tabId: args.tabId,
       url: args.url,
       maxCaptureTime: args.maxCaptureTime,
       inactivityTimeout: args.inactivityTimeout,
@@ -123,6 +144,19 @@ class NetworkCaptureTool extends BaseBrowserToolExecutor {
   ): Promise<ToolResult> {
     // Determine which backend to stop
     let backendToStop: NetworkCaptureBackend | null = null;
+
+    if (typeof args.tabId === 'number') {
+      const tabId = args.tabId;
+      const backend: NetworkCaptureBackend | null = debuggerCaptureTabs().includes(tabId)
+        ? 'debugger'
+        : networkCaptureStartTool.captureData.has(tabId)
+          ? 'webRequest'
+          : null;
+      if (!backend) return createErrorResponse(`Tab ${tabId} has no active network capture.`);
+      const stopTool = backend === 'debugger' ? networkDebuggerStopTool : networkCaptureStopTool;
+      const stopped = await stopTool.execute({ tabId });
+      return decorateJsonResult(stopped, { backend, needResponseBody: backend === 'debugger' });
+    }
 
     // If user explicitly specified needResponseBody, try to stop that specific backend
     if (args?.needResponseBody === true) {

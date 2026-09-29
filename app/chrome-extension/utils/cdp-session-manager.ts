@@ -21,61 +21,84 @@ class CDPSessionManager {
     this.sessions.set(tabId, state);
   }
 
-  async attach(tabId: number, owner: OwnerTag = 'unknown'): Promise<void> {
-    const state = this.getState(tabId);
-    if (state && state.attachedByUs) {
-      state.refCount += 1;
-      state.owners.add(owner);
-      return;
-    }
+  /**
+   * Attach and detach for one tab run one at a time. Without this, two first
+   * attaches both saw "not attached" (the second failed with "Another debugger
+   * is already attached"), the adopt branch reset the refcount from a stale
+   * read, and an attach during a detach bumped a state that was then deleted.
+   */
+  private tabOps = new Map<number, Promise<unknown>>();
 
-    // Check existing attachments
-    const targets = await chrome.debugger.getTargets();
-    const existing = targets.find((t) => t.tabId === tabId && t.attached);
-    if (existing) {
-      if (existing.extensionId === chrome.runtime.id) {
-        // Already attached by us (e.g., previous tool). Adopt and refcount.
-        this.setState(tabId, {
-          refCount: state ? state.refCount + 1 : 1,
-          owners: new Set([...(state?.owners || []), owner]),
-          attachedByUs: true,
-        });
-        return;
-      }
-      // Another client (DevTools/other extension) is attached
-      throw new Error(
-        `Debugger is already attached to tab ${tabId} by another client (e.g., DevTools/extension)`,
-      );
-    }
-
-    // Attach freshly
-    await chrome.debugger.attach({ tabId }, DEBUGGER_PROTOCOL_VERSION);
-    this.setState(tabId, { refCount: 1, owners: new Set([owner]), attachedByUs: true });
+  private serialize<T>(tabId: number, op: () => Promise<T>): Promise<T> {
+    const previous = this.tabOps.get(tabId) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(op);
+    const tail = run.catch(() => undefined);
+    this.tabOps.set(tabId, tail);
+    tail.then(() => {
+      if (this.tabOps.get(tabId) === tail) this.tabOps.delete(tabId);
+    });
+    return run;
   }
 
-  async detach(tabId: number, owner: OwnerTag = 'unknown'): Promise<void> {
-    const state = this.getState(tabId);
-    if (!state) return; // Nothing to do
-
-    // Update ownership/refcount
-    if (state.owners.has(owner)) state.owners.delete(owner);
-    state.refCount = Math.max(0, state.refCount - 1);
-
-    if (state.refCount > 0) {
-      // Still in use by other owners
-      return;
-    }
-
-    // We are the last owner
-    try {
-      if (state.attachedByUs) {
-        await chrome.debugger.detach({ tabId });
+  attach(tabId: number, owner: OwnerTag = 'unknown'): Promise<void> {
+    return this.serialize(tabId, async () => {
+      const state = this.getState(tabId);
+      if (state && state.attachedByUs) {
+        state.refCount += 1;
+        state.owners.add(owner);
+        return;
       }
-    } catch (e) {
-      // Best-effort detach; ignore
-    } finally {
+
+      // Check existing attachments
+      const targets = await chrome.debugger.getTargets();
+      const existing = targets.find((t) => t.tabId === tabId && t.attached);
+      if (existing) {
+        if (existing.extensionId === chrome.runtime.id) {
+          // Attached by us but not tracked (service-worker restart): adopt it.
+          const current = this.getState(tabId);
+          this.setState(tabId, {
+            refCount: (current?.refCount ?? 0) + 1,
+            owners: new Set([...(current?.owners || []), owner]),
+            attachedByUs: true,
+          });
+          return;
+        }
+        // Another client (DevTools/other extension) is attached
+        throw new Error(
+          `Debugger is already attached to tab ${tabId} by another client (e.g., DevTools/extension)`,
+        );
+      }
+
+      // Attach freshly
+      await chrome.debugger.attach({ tabId }, DEBUGGER_PROTOCOL_VERSION);
+      this.setState(tabId, { refCount: 1, owners: new Set([owner]), attachedByUs: true });
+    });
+  }
+
+  detach(tabId: number, owner: OwnerTag = 'unknown'): Promise<void> {
+    return this.serialize(tabId, async () => {
+      const state = this.getState(tabId);
+      if (!state) return; // Nothing to do
+
+      // Update ownership/refcount
+      if (state.owners.has(owner)) state.owners.delete(owner);
+      state.refCount = Math.max(0, state.refCount - 1);
+
+      if (state.refCount > 0) {
+        // Still in use by other owners
+        return;
+      }
+
+      // We are the last owner
       this.sessions.delete(tabId);
-    }
+      try {
+        if (state.attachedByUs) {
+          await chrome.debugger.detach({ tabId });
+        }
+      } catch (e) {
+        // Best-effort detach; ignore
+      }
+    });
   }
 
   /**

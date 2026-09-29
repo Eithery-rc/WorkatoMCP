@@ -13,6 +13,7 @@ import { handleCallTool } from './tools';
 import { listPublished, getFlow } from './record-replay/flow-store';
 import { acquireKeepalive } from './keepalive-manager';
 import { getExtensionBuildInfo, scheduleExtensionReload } from './dev-reload';
+import { closeAgentTab, openAgentTab } from './agent-tabs';
 
 const LOG_PREFIX = '[NativeHost]';
 
@@ -503,6 +504,25 @@ async function connectWebSocket(port: number): Promise<boolean> {
               status: 'success',
               data: { ...info, ...scheduleExtensionReload(message.payload?.delay_ms) },
             };
+          } catch (error) {
+            payload = {
+              status: 'error',
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+          ws.send(JSON.stringify({ responseToRequestId: message.requestId, payload }));
+        } else if (
+          (message.type === NativeMessageType.AGENT_TAB_OPEN ||
+            message.type === NativeMessageType.AGENT_TAB_CLOSE) &&
+          message.requestId
+        ) {
+          let payload: Record<string, unknown>;
+          try {
+            const data =
+              message.type === NativeMessageType.AGENT_TAB_OPEN
+                ? await openAgentTab(message.payload ?? {})
+                : await closeAgentTab(message.payload?.tabId);
+            payload = { status: 'success', data };
           } catch (error) {
             payload = {
               status: 'error',

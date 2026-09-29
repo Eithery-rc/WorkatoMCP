@@ -72,27 +72,41 @@ function scheduleIdleDetach(tabId: number) {
  * domains enabled. Idempotent — safe to call before every CDP command.
  * Resets the 60s idle timer.
  */
+const pendingAttach = new Map<number, Promise<void>>();
+
 export async function ensureAttached(tabId: number): Promise<void> {
   registerDetachListener();
 
   if (!attachedTabs.has(tabId)) {
-    await cdpSessionManager.attach(tabId, OWNER_TAG);
-    try {
-      await cdpSessionManager.sendCommand(tabId, 'DOM.enable');
-      await cdpSessionManager.sendCommand(tabId, 'Accessibility.enable');
-    } catch (e) {
-      // If domain enable fails, drop the attach so we don't hold a useless session.
-      try {
-        await cdpSessionManager.detach(tabId, OWNER_TAG);
-      } catch {
-        /* best-effort */
-      }
-      throw e;
+    // Single flight: concurrent first calls share one attach, so the snapshot
+    // owner holds exactly one reference and the idle detach really detaches.
+    let pending = pendingAttach.get(tabId);
+    if (!pending) {
+      pending = attachForSnapshot(tabId).finally(() => pendingAttach.delete(tabId));
+      pendingAttach.set(tabId, pending);
     }
-    attachedTabs.add(tabId);
+    await pending;
   }
 
   scheduleIdleDetach(tabId);
+}
+
+async function attachForSnapshot(tabId: number): Promise<void> {
+  if (attachedTabs.has(tabId)) return;
+  await cdpSessionManager.attach(tabId, OWNER_TAG);
+  try {
+    await cdpSessionManager.sendCommand(tabId, 'DOM.enable');
+    await cdpSessionManager.sendCommand(tabId, 'Accessibility.enable');
+  } catch (e) {
+    // If domain enable fails, drop the attach so we don't hold a useless session.
+    try {
+      await cdpSessionManager.detach(tabId, OWNER_TAG);
+    } catch {
+      /* best-effort */
+    }
+    throw e;
+  }
+  attachedTabs.add(tabId);
 }
 
 /**

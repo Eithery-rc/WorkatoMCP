@@ -30,9 +30,9 @@ export const SERVER_INSTRUCTIONS = [
   'what an adapter can do, what a field is called -> workato_adapter_meta;',
   "a step's real extended_*_schema, never hand-written -> workato_step_schema;",
   'one field to change -> workato_recipe_set_input_path;',
-  'several edits or any structural change -> workato_recipe_apply (one version, not five);',
+  'several edits or any structural change -> workato_recipe_apply;',
   'find a value inside a recipe -> workato_recipe_grep, then read the path it reports;',
-  'inspect a job -> workato_job_trace with paths and empty, not the whole trace;',
+  'inspect a job -> workato_job_trace with paths, not the whole trace;',
   'find jobs -> workato_list_jobs with started_from/started_to or match, no page walking;',
   'who calls a recipe -> workato_recipe_callers;',
   'check a recipe can still authenticate -> workato_recipe_connections;',
@@ -43,10 +43,10 @@ export const SERVER_INSTRUCTIONS = [
   'confirm the workspace a call lands in -> workato_session_context;',
   'confirm which build is answering -> workato_bridge_info;',
   'change environment or client workspace -> workato_switch_environment;',
-  'deploy -> workato_deploy_plan, review its diff, then workato_deploy_run.',
+  'deploy -> workato_deploy_plan, review its diff, then workato_deploy_run;',
+  'parallel agents -> each takes chrome_lease_tab, passes its lease on every call.',
   'Large results spill to a file (auto_file) as a summary; out_file picks the path.',
-  'Writes need their own flag. Read a description before the first call: it carries the',
-  'constraints that make the call succeed.',
+  "Writes need their own flag. Read a tool's description before its first call.",
 ].join(' ');
 
 /** The bridge version, read once from the package.json that ships with dist. */
