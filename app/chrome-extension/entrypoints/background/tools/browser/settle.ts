@@ -98,10 +98,10 @@ export function assertNoOpenDialog(tabId: number): void {
   }
 }
 
-/** The open dialog on a tab, if one is tracked (confirmed or suspected). */
+/** The open dialog on a tab, when Chrome reported one (a slow page is not a dialog). */
 export function openDialog(tabId: number): { type: string; message: string } | null {
   const dialog = getDialog(tabId);
-  return dialog ? { type: dialog.type, message: dialog.message } : null;
+  return dialog?.confirmed ? { type: dialog.type, message: dialog.message } : null;
 }
 
 // ---------------------------------------------------------------------------

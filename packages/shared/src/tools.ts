@@ -1211,7 +1211,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'array',
           items: { type: 'number' },
           description:
-            'Elements from chrome_snapshot of this tab, handed to your code as the array `elements` (elements[0] is uids[0]), so you never rebuild a selector for an element you already have.',
+            'Elements from chrome_snapshot of this tab, handed to your code as the array `elements` (elements[0] is uids[0]), so you never rebuild a selector for an element you already have. With uids the code runs in the frame of elements[0] (when the first uid is inside an iframe, document is the document of that iframe).',
         },
         code: {
           type: 'string',
