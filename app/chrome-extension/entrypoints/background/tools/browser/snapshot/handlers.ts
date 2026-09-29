@@ -1,75 +1,59 @@
 /**
  * Snapshot+UID tool family.
  *
- * Five tools that drive a tab via the Chrome Debugger Protocol (CDP):
- *   - chrome_snapshot           — capture a11y tree, return tagged text
- *   - chrome_snapshot_click     — click by UID
- *   - chrome_snapshot_fill      — focus + clear + type by UID
- *   - chrome_snapshot_hover     — hover by UID
- *   - chrome_snapshot_wait_for  — poll until role/text appears, return fresh snapshot
+ *   - chrome_snapshot           capture the accessibility tree with stable uids and element state
+ *   - chrome_snapshot_click     real mouse click by uid (covered/disabled/select/file handled)
+ *   - chrome_snapshot_fill      set a value by uid, per element kind, read back
+ *   - chrome_snapshot_hover     hover by uid
+ *   - chrome_snapshot_wait_for  poll until a role/text appears, then return a fresh snapshot
  *
- * Each handler:
- *   - resolves the target tab via tryGetTab / getActiveTabOrThrowInWindow
- *   - calls ensureAttached() so the CDP session is alive + idle timer reset
- *   - returns a plain text ToolResult
- *
- * Modeled on app/chrome-extension/entrypoints/background/tools/browser/
- * interaction.ts (ClickTool/FillTool template).
+ * The acting tools refuse while a JS dialog is open, run inside runWithSettle
+ * (wait for what the action caused, then report the page), and can append a
+ * snapshot taken after settling. The element logic lives in element-actions.ts
+ * so chrome_act and chrome_snapshot_fill_form share it.
  */
 
+import { getDialog } from '../dialog-tracker';
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { ERROR_MESSAGES } from '@/common/constants';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor, getTabOrThrow } from '../../base-browser';
-import { ensureAttached, sendCommand } from './debugger-session';
-import { formatAxTree } from './ax-tree-formatter';
-import { storeSnapshot, resolveUid, uidBase } from './uid-store';
-import type { AXNode } from './types';
+import { appendPageReport, assertNoOpenDialog, DialogOpenError, runWithSettle } from '../settle';
+import { captureSnapshot } from './capture';
+import { clickUid, fillUid, hoverUid, waitForTexts } from './element-actions';
+import { getTabUids } from './uid-store';
 
-interface TabTargetArgs {
+export interface TabTargetArgs {
   tabId?: number;
   windowId?: number;
 }
 
-type SnapshotArgs = TabTargetArgs;
-interface SnapshotClickArgs extends TabTargetArgs {
-  uid: number;
+export interface SettleArgs {
+  settle?: boolean;
+  settleTimeoutMs?: number;
+  includeSnapshot?: boolean;
 }
-interface SnapshotFillArgs extends TabTargetArgs {
+
+type SnapshotArgs = TabTargetArgs;
+interface SnapshotClickArgs extends TabTargetArgs, SettleArgs {
+  uid: number;
+  double?: boolean;
+}
+interface SnapshotFillArgs extends TabTargetArgs, SettleArgs {
   uid: number;
   value: string;
 }
-interface SnapshotHoverArgs extends TabTargetArgs {
+interface SnapshotHoverArgs extends TabTargetArgs, SettleArgs {
   uid: number;
 }
 interface SnapshotWaitForArgs extends TabTargetArgs {
-  text?: string;
+  text?: string | string[];
   role?: string;
   timeoutMs?: number;
 }
 
-function newSnapshotId(): string {
-  const ts = Date.now().toString(36);
-  const rand = Math.floor(Math.random() * 1e6).toString(36);
-  return `snap_${ts}_${rand}`;
-}
-
-function detectMac(): boolean {
-  try {
-    const uaPlatform = (navigator as any)?.userAgentData?.platform;
-    if (typeof uaPlatform === 'string' && uaPlatform.length > 0) {
-      return uaPlatform.toLowerCase().includes('mac');
-    }
-    return (navigator.platform ?? '').toLowerCase().includes('mac');
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Resolve target tab from args. Throws on missing.
- */
-async function resolveTabId(args: TabTargetArgs): Promise<number> {
+/** Resolve the target tab: a given tabId must exist; otherwise the active tab. */
+export async function resolveTabId(args: TabTargetArgs): Promise<number> {
   // A given tabId that no longer exists is an error, never the active tab.
   if (typeof args.tabId === 'number') {
     const explicit = await getTabOrThrow(args.tabId);
@@ -87,28 +71,63 @@ async function resolveTabId(args: TabTargetArgs): Promise<number> {
   return t.id;
 }
 
+export function snapshotText(snap: { text: string; uidCount: number; seq: number }): string {
+  return `Snapshot ${snap.seq}: ${snap.uidCount} elements with uids\n\n${snap.text}`;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
- * Capture an a11y tree for the tab and store the UID map.
- * Returns the formatted text and snapshotId.
+ * Run an acting tool: refuse while a dialog is open, settle, report the page,
+ * optionally append a fresh snapshot. `run` returns the one-line result.
  */
-async function captureSnapshot(tabId: number): Promise<{
-  snapshotId: string;
-  text: string;
-  uidCount: number;
-}> {
-  await ensureAttached(tabId);
-  const result = await sendCommand<{ nodes: AXNode[] }>(tabId, 'Accessibility.getFullAXTree');
-  const nodes: AXNode[] = (result && result.nodes) || [];
-  const base = uidBase(tabId);
-  const { text, uidMap } = formatAxTree(nodes, base);
-  const snapshotId = newSnapshotId();
-  storeSnapshot(tabId, {
-    snapshotId,
-    uidToBackendNodeId: uidMap,
-    capturedAt: Date.now(),
-    firstUid: base + 1,
-  });
-  return { snapshotId, text, uidCount: uidMap.size };
+export async function runActing(
+  toolName: string,
+  tabId: number,
+  args: SettleArgs,
+  run: () => Promise<string>,
+): Promise<ToolResult> {
+  try {
+    assertNoOpenDialog(tabId);
+    const { result, page } = await runWithSettle(tabId, run, {
+      settle: args.settle,
+      settleTimeoutMs: args.settleTimeoutMs,
+    });
+    let reply: ToolResult = appendPageReport(
+      { content: [{ type: 'text', text: result }], isError: false },
+      page,
+    );
+    if (args.includeSnapshot) {
+      try {
+        const snap = await captureSnapshot(tabId);
+        const first = reply.content[0] as { type: 'text'; text: string };
+        reply = {
+          ...reply,
+          content: [{ type: 'text', text: `${first.text}\n\n${snapshotText(snap)}` }],
+        };
+      } catch (e) {
+        const first = reply.content[0] as { type: 'text'; text: string };
+        reply = {
+          ...reply,
+          content: [
+            {
+              type: 'text',
+              text: `${first.text}\n(snapshot after the action failed: ${errorText(e)})`,
+            },
+          ],
+        };
+      }
+    }
+    return reply;
+  } catch (error) {
+    if (error instanceof DialogOpenError && error.openedByAction) {
+      // The action ran; the page now waits on the dialog. Not a failure to retry.
+      return { content: [{ type: 'text', text: error.message }], isError: false };
+    }
+    return createErrorResponse(`${toolName} failed: ${errorText(error)}`);
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -119,20 +138,28 @@ class SnapshotToolImpl extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.BROWSER.SNAPSHOT;
 
   async execute(args: SnapshotArgs): Promise<ToolResult> {
-    console.log(`[snapshot] capture requested:`, args);
     try {
       const tabId = await resolveTabId(args ?? {});
-      const { snapshotId, text, uidCount } = await captureSnapshot(tabId);
-      const header = `Snapshot ${snapshotId} — ${uidCount} interactive elements\n\n`;
-      return {
-        content: [{ type: 'text', text: header + text }],
-        isError: false,
-      };
+      // A page blocked by a JS dialog cannot be read; say so instead of hanging.
+      const dialog = getDialog(tabId);
+      if (dialog?.confirmed) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `A JS ${dialog.type} dialog is open on tab ${tabId}: "${dialog.message}". ` +
+                'The page cannot be read until it is answered: call chrome_handle_dialog (accept or dismiss).',
+            },
+          ],
+          isError: false,
+        };
+      }
+      const snap = await captureSnapshot(tabId);
+      return { content: [{ type: 'text', text: snapshotText(snap) }], isError: false };
     } catch (error) {
       console.error('[snapshot] capture failed:', error);
-      return createErrorResponse(
-        `chrome_snapshot failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      return createErrorResponse(`chrome_snapshot failed: ${errorText(error)}`);
     }
   }
 }
@@ -145,62 +172,16 @@ class SnapshotClickToolImpl extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.BROWSER.SNAPSHOT_CLICK;
 
   async execute(args: SnapshotClickArgs): Promise<ToolResult> {
-    console.log(`[snapshot] click requested:`, args);
+    if (typeof args?.uid !== 'number') {
+      return createErrorResponse(ERROR_MESSAGES.INVALID_PARAMETERS + ': uid (number) is required');
+    }
     try {
-      if (typeof args?.uid !== 'number') {
-        return createErrorResponse(
-          ERROR_MESSAGES.INVALID_PARAMETERS + ': uid (number) is required',
-        );
-      }
       const tabId = await resolveTabId(args);
-      await ensureAttached(tabId);
-      const backendNodeId = resolveUid(tabId, args.uid);
-
-      // Best-effort scroll into view; ignore failures.
-      try {
-        await sendCommand(tabId, 'DOM.scrollIntoViewIfNeeded', { backendNodeId });
-      } catch (e) {
-        console.warn('[snapshot] scrollIntoViewIfNeeded failed (continuing):', e);
-      }
-
-      // Resolve to JS object, then call .click() on it.
-      const resolved = await sendCommand<{ object: { objectId: string } }>(
-        tabId,
-        'DOM.resolveNode',
-        { backendNodeId },
+      return runActing(this.name, tabId, args, () =>
+        clickUid(tabId, args.uid, args.double === true),
       );
-      const objectId = resolved?.object?.objectId;
-      if (!objectId) {
-        return createErrorResponse(
-          `chrome_snapshot_click: could not resolve uid=${args.uid} to a JS object`,
-        );
-      }
-      const callResult = await sendCommand<{
-        result?: { type?: string };
-        exceptionDetails?: { text?: string; exception?: { description?: string } };
-      }>(tabId, 'Runtime.callFunctionOn', {
-        objectId,
-        functionDeclaration:
-          'function(){ if (typeof this.click !== "function") throw new Error("target is not clickable (not an HTMLElement)"); this.click(); }',
-        awaitPromise: false,
-      });
-      if (callResult?.exceptionDetails) {
-        const detail =
-          callResult.exceptionDetails.exception?.description ??
-          callResult.exceptionDetails.text ??
-          'unknown JS exception';
-        return createErrorResponse(`chrome_snapshot_click failed at uid=${args.uid}: ${detail}`);
-      }
-
-      return {
-        content: [{ type: 'text', text: `clicked uid=${args.uid}` }],
-        isError: false,
-      };
     } catch (error) {
-      console.error('[snapshot] click failed:', error);
-      return createErrorResponse(
-        `chrome_snapshot_click failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      return createErrorResponse(`${this.name} failed: ${errorText(error)}`);
     }
   }
 }
@@ -213,111 +194,17 @@ class SnapshotFillToolImpl extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.BROWSER.SNAPSHOT_FILL;
 
   async execute(args: SnapshotFillArgs): Promise<ToolResult> {
-    console.log(`[snapshot] fill requested:`, args);
+    if (typeof args?.uid !== 'number') {
+      return createErrorResponse(ERROR_MESSAGES.INVALID_PARAMETERS + ': uid (number) is required');
+    }
+    if (args.value === undefined || args.value === null) {
+      return createErrorResponse(ERROR_MESSAGES.INVALID_PARAMETERS + ': value is required');
+    }
     try {
-      if (typeof args?.uid !== 'number') {
-        return createErrorResponse(
-          ERROR_MESSAGES.INVALID_PARAMETERS + ': uid (number) is required',
-        );
-      }
-      if (args.value === undefined || args.value === null) {
-        return createErrorResponse(ERROR_MESSAGES.INVALID_PARAMETERS + ': value is required');
-      }
-
       const tabId = await resolveTabId(args);
-      await ensureAttached(tabId);
-      const backendNodeId = resolveUid(tabId, args.uid);
-      const value = String(args.value);
-
-      // Resolve so we can introspect the target element and do contenteditable
-      // fallback via a single round-trip.
-      const resolved = await sendCommand<{ object: { objectId: string } }>(
-        tabId,
-        'DOM.resolveNode',
-        { backendNodeId },
-      );
-      const objectId = resolved?.object?.objectId;
-      if (!objectId) {
-        return createErrorResponse(
-          `chrome_snapshot_fill: could not resolve uid=${args.uid} to a JS object`,
-        );
-      }
-
-      // Inspect kind: 'input' (INPUT/TEXTAREA), 'contenteditable', or 'unsupported'.
-      const kindResult = await sendCommand<{
-        result?: { value?: 'input' | 'contenteditable' | 'unsupported' };
-        exceptionDetails?: { text?: string };
-      }>(tabId, 'Runtime.callFunctionOn', {
-        objectId,
-        functionDeclaration:
-          'function(){ if (!(this instanceof Element)) return "unsupported"; const tn = this.tagName; if (tn === "INPUT" || tn === "TEXTAREA") return "input"; if (this.isContentEditable) return "contenteditable"; return "unsupported"; }',
-        returnByValue: true,
-        awaitPromise: false,
-      });
-      const kind = kindResult?.result?.value ?? 'unsupported';
-      if (kind === 'unsupported') {
-        return createErrorResponse(
-          `chrome_snapshot_fill: uid=${args.uid} is not a fillable element (not INPUT/TEXTAREA/contenteditable)`,
-        );
-      }
-
-      await sendCommand(tabId, 'DOM.focus', { backendNodeId });
-
-      if (kind === 'contenteditable') {
-        // `Input.insertText` is a no-op for contenteditable in modern Chrome.
-        // Use execCommand for the clear+insert path — fires the same input/beforeinput
-        // events that frameworks like ProseMirror, Lexical, CodeMirror watch for.
-        const editResult = await sendCommand<{ exceptionDetails?: { text?: string } }>(
-          tabId,
-          'Runtime.callFunctionOn',
-          {
-            objectId,
-            functionDeclaration:
-              'function(v){ this.focus(); const sel = window.getSelection(); const range = document.createRange(); range.selectNodeContents(this); sel.removeAllRanges(); sel.addRange(range); document.execCommand("insertText", false, v); }',
-            arguments: [{ value }],
-            awaitPromise: false,
-          },
-        );
-        if (editResult?.exceptionDetails) {
-          return createErrorResponse(
-            `chrome_snapshot_fill (contenteditable): ${editResult.exceptionDetails.text ?? 'unknown error'}`,
-          );
-        }
-      } else {
-        // INPUT / TEXTAREA: select-all via key event then insertText.
-        // The `text` field must be set on keyDown for Chrome to act on Ctrl/Cmd+A
-        // (the text-editing subsystem ignores synthetic modifier+key without it).
-        const isMac = detectMac();
-        const modifiers = isMac ? 4 /* Meta */ : 2; /* Ctrl */
-        await sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyDown',
-          modifiers,
-          key: 'a',
-          code: 'KeyA',
-          text: '\x01',
-          windowsVirtualKeyCode: 65,
-          nativeVirtualKeyCode: 65,
-        });
-        await sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyUp',
-          modifiers,
-          key: 'a',
-          code: 'KeyA',
-          windowsVirtualKeyCode: 65,
-          nativeVirtualKeyCode: 65,
-        });
-        await sendCommand(tabId, 'Input.insertText', { text: value });
-      }
-
-      return {
-        content: [{ type: 'text', text: `filled uid=${args.uid}` }],
-        isError: false,
-      };
+      return runActing(this.name, tabId, args, () => fillUid(tabId, args.uid, args.value));
     } catch (error) {
-      console.error('[snapshot] fill failed:', error);
-      return createErrorResponse(
-        `chrome_snapshot_fill failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      return createErrorResponse(`${this.name} failed: ${errorText(error)}`);
     }
   }
 }
@@ -330,57 +217,14 @@ class SnapshotHoverToolImpl extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.BROWSER.SNAPSHOT_HOVER;
 
   async execute(args: SnapshotHoverArgs): Promise<ToolResult> {
-    console.log(`[snapshot] hover requested:`, args);
+    if (typeof args?.uid !== 'number') {
+      return createErrorResponse(ERROR_MESSAGES.INVALID_PARAMETERS + ': uid (number) is required');
+    }
     try {
-      if (typeof args?.uid !== 'number') {
-        return createErrorResponse(
-          ERROR_MESSAGES.INVALID_PARAMETERS + ': uid (number) is required',
-        );
-      }
       const tabId = await resolveTabId(args);
-      await ensureAttached(tabId);
-      const backendNodeId = resolveUid(tabId, args.uid);
-
-      // scrollIntoViewIfNeeded returns when the CDP command is issued, not when
-      // a smooth-scroll animation settles. For elements in smoothly-scrolled
-      // containers, getContentQuads below may still return empty quads — the
-      // model can retry hover after a short wait_for.
-      try {
-        await sendCommand(tabId, 'DOM.scrollIntoViewIfNeeded', { backendNodeId });
-      } catch (e) {
-        console.warn('[snapshot] scrollIntoViewIfNeeded failed (continuing):', e);
-      }
-
-      const quadsResp = await sendCommand<{ quads: number[][] }>(tabId, 'DOM.getContentQuads', {
-        backendNodeId,
-      });
-      const quads = quadsResp?.quads;
-      if (!quads || quads.length === 0 || !Array.isArray(quads[0]) || quads[0].length < 8) {
-        return createErrorResponse(
-          `chrome_snapshot_hover: element uid=${args.uid} has no visible content quads`,
-        );
-      }
-      // Quad is [x1,y1,x2,y2,x3,y3,x4,y4]; pick center.
-      const q = quads[0];
-      const cx = (q[0] + q[2] + q[4] + q[6]) / 4;
-      const cy = (q[1] + q[3] + q[5] + q[7]) / 4;
-
-      await sendCommand(tabId, 'Input.dispatchMouseEvent', {
-        type: 'mouseMoved',
-        x: cx,
-        y: cy,
-        button: 'none',
-      });
-
-      return {
-        content: [{ type: 'text', text: `hovered uid=${args.uid}` }],
-        isError: false,
-      };
+      return runActing(this.name, tabId, args, () => hoverUid(tabId, args.uid));
     } catch (error) {
-      console.error('[snapshot] hover failed:', error);
-      return createErrorResponse(
-        `chrome_snapshot_hover failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      return createErrorResponse(`${this.name} failed: ${errorText(error)}`);
     }
   }
 }
@@ -393,11 +237,12 @@ class SnapshotWaitForToolImpl extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.BROWSER.SNAPSHOT_WAIT_FOR;
 
   async execute(args: SnapshotWaitForArgs): Promise<ToolResult> {
-    console.log(`[snapshot] wait_for requested:`, args);
     try {
-      const text = args?.text;
+      const texts = (Array.isArray(args?.text) ? args.text : args?.text ? [args.text] : [])
+        .map((t) => String(t))
+        .filter((t) => t.length > 0);
       const role = args?.role;
-      if (!text && !role) {
+      if (!texts.length && !role) {
         return createErrorResponse(
           ERROR_MESSAGES.INVALID_PARAMETERS + ': provide text and/or role to wait for',
         );
@@ -406,96 +251,37 @@ class SnapshotWaitForToolImpl extends BaseBrowserToolExecutor {
         typeof args?.timeoutMs === 'number' && args.timeoutMs > 0
           ? Math.min(args.timeoutMs, 120_000)
           : 10_000;
-      const pollIntervalMs = 250;
-
       const tabId = await resolveTabId(args);
-
       const start = Date.now();
-      let lastError: unknown = null;
-      let matched = false;
-
-      while (Date.now() - start < timeoutMs) {
-        try {
-          await ensureAttached(tabId);
-          const result = await sendCommand<{ nodes: AXNode[] }>(
-            tabId,
-            'Accessibility.getFullAXTree',
-          );
-          const nodes: AXNode[] = (result && result.nodes) || [];
-          if (matches(nodes, role, text)) {
-            matched = true;
+      const hit = await waitForTexts(tabId, texts, role, timeoutMs);
+      const snap = await captureSnapshot(tabId);
+      let found = `found ${hit.role} "${hit.name}" after ${Date.now() - start}ms`;
+      if (typeof hit.backendNodeId === 'number') {
+        const state = await getTabUids(tabId);
+        for (const [uid, ref] of state.byUid) {
+          if (ref.backendNodeId === hit.backendNodeId) {
+            found += ` uid=${uid}`;
             break;
           }
-        } catch (e) {
-          lastError = e;
         }
-        await sleep(pollIntervalMs);
       }
-
-      if (!matched) {
-        const reason = lastError
-          ? ` (last error: ${lastError instanceof Error ? lastError.message : String(lastError)})`
-          : '';
-        return createErrorResponse(
-          `chrome_snapshot_wait_for: timed out after ${timeoutMs}ms waiting for ` +
-            `${role ? `role="${role}"` : ''}${role && text ? ' + ' : ''}` +
-            `${text ? `text~"${text}"` : ''}${reason}`,
-        );
-      }
-
-      // Capture a fresh snapshot so the model gets new UIDs.
-      const { snapshotId, text: treeText, uidCount } = await captureSnapshot(tabId);
-      const header = `Matched after ${Date.now() - start}ms. Snapshot ${snapshotId} — ${uidCount} interactive elements\n\n`;
       return {
-        content: [{ type: 'text', text: header + treeText }],
+        content: [{ type: 'text', text: `${found}\n\n${snapshotText(snap)}` }],
         isError: false,
       };
     } catch (error) {
       console.error('[snapshot] wait_for failed:', error);
-      return createErrorResponse(
-        `chrome_snapshot_wait_for failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      return createErrorResponse(`chrome_snapshot_wait_for failed: ${errorText(error)}`);
     }
   }
-}
-
-function axRole(node: AXNode): string {
-  return typeof node.role === 'string' ? node.role : (node.role?.value ?? '');
-}
-
-function axName(node: AXNode): string {
-  return typeof node.name === 'string' ? node.name : (node.name?.value ?? '').toString();
-}
-
-function matches(nodes: AXNode[], role?: string, text?: string): boolean {
-  const roleLower = role ? role.toLowerCase() : null;
-  const textLower = text ? text.toLowerCase() : null;
-  for (const n of nodes) {
-    if (n.ignored) continue;
-    const nodeRole = axRole(n).toLowerCase();
-    const nodeName = axName(n).toLowerCase();
-    if (roleLower && textLower) {
-      if (nodeRole === roleLower && nodeName.includes(textLower)) return true;
-    } else if (roleLower) {
-      if (nodeRole === roleLower) return true;
-    } else if (textLower) {
-      if (nodeName.includes(textLower)) return true;
-    }
-  }
-  return false;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // -----------------------------------------------------------------------------
 // Exports
 // -----------------------------------------------------------------------------
 
-// Per plan, export under PascalCase names. These are RUNTIME INSTANCES (not
-// classes) so that tools/index.ts can read `.name` to register them in the
-// tool map. Deviation note in report.
+// RUNTIME INSTANCES (not classes) so that tools/index.ts can read `.name` to
+// register them in the tool map.
 export const SnapshotTool = new SnapshotToolImpl();
 export const SnapshotClickTool = new SnapshotClickToolImpl();
 export const SnapshotFillTool = new SnapshotFillToolImpl();

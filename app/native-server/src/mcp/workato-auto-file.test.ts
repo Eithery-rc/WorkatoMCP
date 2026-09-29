@@ -37,6 +37,38 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+describe('browser read tools', () => {
+  test('page-sized chrome reads spill to a file; chrome actions do not', () => {
+    for (const name of [
+      'chrome_snapshot',
+      'chrome_get_web_content',
+      'chrome_javascript',
+      'chrome_search_page',
+      'chrome_find_elements',
+      'chrome_act',
+    ]) {
+      expect(isAutoFileEligible(name)).toBe(true);
+    }
+    expect(isAutoFileEligible('chrome_click_element')).toBe(false);
+    expect(isAutoFileEligible('chrome_navigate')).toBe(false);
+  });
+
+  test('a large plain-text snapshot is written as .txt with a summary', () => {
+    const { args, plan } = prepareAutoFileCall('chrome_snapshot', {
+      tabId: 7,
+      auto_file_threshold_chars: 10,
+    });
+    expect(args).toEqual({ tabId: 7 });
+    const result = applyAutoFile('chrome_snapshot', plan, textResult('RootWebArea [uid=1] big'));
+    const summary = parseSummary(result);
+    expect(summary.mode).toBe('auto_file');
+    expect(summary.content_type).toBe('text/plain');
+    expect(path.basename(summary.saved_to)).toMatch(/^chrome_snapshot-7-.*\.txt$/);
+    expect(fs.readFileSync(summary.saved_to, 'utf8')).toBe('RootWebArea [uid=1] big');
+    fs.rmSync(summary.saved_to, { force: true });
+  });
+});
+
 describe('isAutoFileEligible', () => {
   test('claims workato tools and chrome_screenshot, never an existing out_file tool', () => {
     expect(isAutoFileEligible('workato_job_trace')).toBe(true);

@@ -65,6 +65,14 @@ export const READ_TOOLS = new Set<string>([
   'workato_deployments_list',
   // Opens only a draft deployment; its step diffs can run to tens of KB.
   'workato_deploy_plan',
+  // Browser reads whose output grows with the page: a big snapshot, page text,
+  // script result or match list spills to a file instead of the context.
+  'chrome_snapshot',
+  'chrome_get_web_content',
+  'chrome_javascript',
+  'chrome_search_page',
+  'chrome_find_elements',
+  'chrome_act',
 ]);
 
 /** Tools whose served schema gains the out_file / auto_file properties. */
@@ -97,7 +105,7 @@ const OUT_FILE_PROPERTY = {
 const AUTO_FILE_PROPERTY = {
   type: 'boolean',
   description:
-    'Spill an oversized result to a temp file and return the same summary instead of the full payload. Default: true for Workato read tools, false for chrome_screenshot. Set false to always get the result inline.',
+    'Spill an oversized result to a temp file and return the same summary instead of the full payload. Default: true for read tools, false for chrome_screenshot. Set false to always get the result inline.',
 };
 
 const AUTO_FILE_THRESHOLD_PROPERTY = {
@@ -138,7 +146,7 @@ export function withOutFileToolSchemas(tools: Tool[]): Tool[] {
 /** Tools this post-processor may write files for. */
 export function isAutoFileEligible(name: string): boolean {
   if (isWorkatoFileTool(name) || isWorkatoLcapFileTool(name)) return false;
-  return name === SCREENSHOT_TOOL || name.startsWith('workato_');
+  return name === SCREENSHOT_TOOL || name.startsWith('workato_') || READ_TOOLS.has(name);
 }
 
 /** Tools that spill without being asked. */
@@ -176,6 +184,7 @@ const ID_HINT_KEYS = [
   'folder_id',
   'app_id',
   'id',
+  'tabId',
 ];
 
 function readIdHint(args: Record<string, unknown>): string | undefined {
