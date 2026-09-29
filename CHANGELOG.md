@@ -6,6 +6,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+## bridge 1.10.0 · shared 1.8.0 (2026-09-30)
+
 Agents that know what their actions did. Ideas taken from chrome-devtools-mcp and browser-use.
 
 ### Added
