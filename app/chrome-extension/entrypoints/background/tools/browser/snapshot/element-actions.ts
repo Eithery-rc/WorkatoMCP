@@ -847,7 +847,24 @@ export async function fillUid(tabId: number, uid: number, rawValue: unknown): Pr
   const el = await resolveElement(tabId, uid);
   const info = await describe(tabId, el);
   if (info.disabled) throw new Error(`uid ${uid} is disabled; nothing was filled.`);
-  if (info.readOnly) throw new Error(`uid ${uid} is read-only; nothing was written.`);
+  if (info.readOnly) {
+    // A read-only input that drives a popup list (a common custom dropdown) is
+    // filled by picking an option, never by writing the input.
+    if (info.role !== 'combobox' && !info.hasList) {
+      throw new Error(`uid ${uid} is read-only; nothing was written.`);
+    }
+    await clickNode(tabId, el, `opened uid=${uid}`);
+    await new Promise((r) => setTimeout(r, OPTION_APPEAR_WAIT_MS));
+    const option = await findOption(tabId, el, value, false).catch(() => null);
+    if (!option) {
+      throw new Error(
+        `uid ${uid} is a read-only dropdown; it was opened, but no single visible option matches "${value}" ` +
+          '(none, or several). Take chrome_snapshot and click the option you mean.',
+      );
+    }
+    await clickNode(tabId, option, 'option');
+    return `picked "${value}" in read-only dropdown uid=${uid}`;
+  }
 
   if (info.tag === 'SELECT') {
     const r = await callOn<{
@@ -888,7 +905,11 @@ export async function fillUid(tabId: number, uid: number, rawValue: unknown): Pr
 
   if (info.role === 'listbox' && info.tag !== 'SELECT') {
     const option = await findOption(tabId, el, value, true);
-    if (!option) throw new Error(`uid ${uid}: no visible option matches "${value}".`);
+    if (!option) {
+      throw new Error(
+        `uid ${uid}: no single visible option matches "${value}" (none, or several); pass the exact option text.`,
+      );
+    }
     await clickNode(tabId, option, 'option');
     return `picked "${value}" in uid=${uid}`;
   }

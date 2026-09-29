@@ -11,8 +11,10 @@ const tabQueues = new Map<number, Promise<unknown>>();
  * A call stuck on a page that never answers must not make the tab unusable
  * for every later call (the bridge gives up at 120 s, the extension task may
  * never settle). The stuck call keeps running and still answers its own caller.
+ * Set past the bridge 120 s give-up so a legitimate long call (a slow
+ * chrome_javascript, a long chrome_act) keeps its tab to the end.
  */
-export const TAB_QUEUE_MAX_HOLD_MS = 60_000;
+export const TAB_QUEUE_MAX_HOLD_MS = 125_000;
 
 export function runExclusiveForTab<T>(
   tabId: number,
