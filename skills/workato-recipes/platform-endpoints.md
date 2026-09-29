@@ -1,6 +1,6 @@
 # Workato platform endpoints (live-verified)
 
-Captured live on **2026-09-07** in a **Development environment** workspace, by four probe agents driving a logged-in browser session; the adapter catalogue, action list and schema generation section was added from a **2026-09-08** capture in the same workspace. Every request and response shape below was observed, not inferred from documentation. Workato publishes no contract for these routes; treat this file as the record of what the web app actually does, and re-probe before relying on anything marked unverified.
+Captured live on **2026-09-07** in a **Development environment** workspace, by four probe agents driving a logged-in browser session; the adapter catalogue, action list and schema generation section was added from a **2026-09-08** capture in the same workspace, and the environment switching and deployment sections from a **2026-09-29** capture in the Legacy workspace. Every request and response shape below was observed, not inferred from documentation. Workato publishes no contract for these routes; treat this file as the record of what the web app actually does, and re-probe before relying on anything marked unverified.
 
 **How to use it.** Most of these endpoints already have a tool, named in each section. Reach for `workato_api_request` only for the ones that do not. It is same-origin (a `path` on the Workato host, never a URL elsewhere), it sends `x-requested-with: XMLHttpRequest` on every call, and it attaches `x-csrf-token` from the `XSRF-TOKEN-V2` cookie on writes. Anything other than GET or HEAD needs `allow_writes: true`, and a non-GET call verifies the pinned workspace first.
 
@@ -20,6 +20,8 @@ Two path shapes coexist. `/web_api/...` is the app's own JSON API; a 404 there u
 - [Event Streams (pub/sub) topics](#event-streams-pubsub-topics)
 - [Account and project properties](#account-and-project-properties)
 - [Activity and queue](#activity-and-queue)
+- [Environment and workspace switching](#environment-and-workspace-switching)
+- [Deployments](#deployments)
 - [Routes that do not exist](#routes-that-do-not-exist)
 
 ---
@@ -570,6 +572,49 @@ Both have **no tool**. Ready to paste:
 ```json
 { "method": "GET", "path": "/web_api/recipes/76902508/queue_stats" }
 ```
+
+## Environment and workspace switching
+
+Captured live **2026-09-29** (workspace Legacy: Development 8070978, Test 8070982, Production 8070980). Full capture in `docs/design/specs/2026-09-29-deploy-and-environments.md`.
+
+```
+GET /users/switch_environment?environment_id=<env id>[&return_to=<url-encoded path>]
+GET /users/switch_team?team_id=<team id>&team_name=<team name>
+```
+
+- **Both are page navigations with one redirect, not XHRs.** Navigate the tab to them, then confirm with `workato_session_context` (`refresh: true`). `return_to` decides where the tab lands; without it the tab lands on `/?fid=projects`.
+- **The session is per Chrome profile.** A switch moves every Workato tab in that profile, not only the one navigated.
+- Environment ids come from `GET /web_api/auth_user.json` (`environment.available`, `{id, name, type}`). A workspace's id equals its Development environment id; other workspaces are listed in `teams`.
+- Both verified live on 2026-09-29 (Legacy Dev to Prod and back, Legacy to Power Factors and back). `switch_team` takes no return_to.
+
+**Tool.** `workato_switch_environment` (environment, optional workspace, optional `return_to`).
+
+## Deployments
+
+Captured live **2026-09-29** during a real Dev to Prod deploy (deployment 313765). Full capture, payloads and the recipe diff caveat are in `docs/design/specs/2026-09-29-deploy-and-environments.md`.
+
+```
+GET  /web_api/project_folders/<folder_id>/deployable_environments.json   -> {"result": [{id, name, type}]}
+GET  /web_api/project_folders/<folder_id>/project_builds.json?page=1     -> {"result": {"items": [build], "total"}}   (history)
+POST /web_api/project_folders/<folder_id>/deployments.json               {"title","description","reviewer_ids":[],"environment_id"}
+                                                                          -> draft {id, state "pending", project_build: {manifest: [asset]}}
+PUT  /web_api/deployments/<id>.json                                       {"manifest": [asset with checked true|false]}
+PUT  /web_api/deployments/<id>/start_diff_calculation.json                {"include_tags": true}
+GET  /web_api/deployments/<id>.json                                       poll: state, manifest_with_diff, recipes_to_stop, imported_recipes_status
+GET  /recipes/compare?v1=<rid>:deployment_id:<id>&v2=<rid>:version_no:last   -> {v1: {code, connection_config}, v2: {...}} (JSON strings)
+PUT  /web_api/deployments/<id>.json                                       {"title","description","reviewer_ids":[],"environment_id"}
+PUT  /web_api/deployments/<id>/start_deploy.json                          {"include_tags": true, "retry_deploy": false}
+```
+
+- **States:** `pending -> diff_calculation_started -> diff_calculation_finished -> deploy_started -> deploy_finished`.
+- **"Stopping running recipes" is not a failure.** A changed recipe running in the target yields `deploy_failed` with `error: "Recipes require action: stop"` and `recipes_to_stop`. The same `start_deploy` with `retry_deploy: true` stops, deploys and restarts it (`imported_recipes_status.restarted`).
+- **The POST creates a draft on the server.** The UI does it the moment an environment is chosen. Drafts never deployed are absent from `project_builds`, and no cancel route was found.
+- **`manifest_with_diff` holds TARGET ids, `manifest` holds source ids.** Join them on `zip_name`.
+- **`/recipes/compare` returns target code (v1) against source code (v2) with environment-specific ids.** Normalise ids by `{type, name}` before diffing. Live, 5 of 6 "changed" steps were remaps only.
+- **The recipe page's "Deploy to" is the project wizard.** It pre-checks the recipe and its transitive deps, nothing else.
+- **Headers:** `x-csrf-token` on POST and PUT.
+
+**Tools.** `workato_deployments_list`, `workato_deploy_plan` (draft, selection, diff) and `workato_deploy_run` (`allow_writes`, `allow_stop_running`).
 
 ## Routes that do not exist
 

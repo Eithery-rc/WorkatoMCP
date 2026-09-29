@@ -107,6 +107,16 @@ Pick the tool before picking the file. Every name below exists in `packages/shar
 | Read or set an environment or project property | `workato_properties` (`action: "list"` to read, `"set"` to upsert by name)             |
 | Confirm the target workspace                   | `workato_session_context` (`workato_whoami` for the full profile)                      |
 | Call an endpoint that has no tool              | `workato_api_request`, per `platform-endpoints.md`                                     |
+| Switch environment or client workspace         | `workato_switch_environment` (moves every Workato tab in that Chrome profile)          |
+| Deploy to Test or Production                   | `workato_deploy_plan`, then `workato_deploy_run`                                       |
+| A project's deployment history                 | `workato_deployments_list`                                                             |
+| Put a rebuilt extension and bridge live (dev)  | `workato_reload_extension` (`check_only: true` to see stale profiles)                  |
+
+Deploying a recipe to Test or Production:
+
+1. `workato_deploy_plan` with `recipe_id` and `environment`. Read `step_diffs` (remaps are already normalised away) and confirm only the intended change goes out.
+2. `workato_deploy_run` with `allow_writes: true` and a neutral `title`. Add `allow_stop_running: true` only when `will_stop` is non-empty and stopping those recipes briefly is acceptable. Workato restarts them itself.
+3. Verify in the target: `workato_switch_environment` to it, `workato_recipe_status` / `workato_recipe_grep` on the target ids, then switch back. The switch moves every Workato tab in that Chrome profile.
 
 Three habits that pay for themselves:
 
