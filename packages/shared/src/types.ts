@@ -18,6 +18,9 @@ export enum NativeMessageType {
   ENSURE_NATIVE = 'ensure_native',
   PING_NATIVE = 'ping_native',
   DISCONNECT_NATIVE = 'disconnect_native',
+  // Bridge -> extension developer requests (workato_reload_extension)
+  DEV_EXTENSION_INFO = 'dev_extension_info',
+  DEV_RELOAD_EXTENSION = 'dev_reload_extension',
 }
 
 export interface NativeMessage<P = any, E = any> {

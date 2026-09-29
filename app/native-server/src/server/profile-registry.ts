@@ -4,12 +4,16 @@
  * Author: Roman Chikalenko
  * Version: 1.4.0
  */
+import * as fs from 'fs';
+import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
 interface PendingRequest {
   resolve: (value: any) => void;
   reject: (reason?: any) => void;
   timeoutId: NodeJS.Timeout;
+  /** The socket the request went out on; its close fails the request. */
+  socket: any;
 }
 
 function logProfileRegistry(message: string): void {
@@ -19,6 +23,15 @@ function logProfileRegistry(message: string): void {
 export class ProfileRegistry {
   private connections: Map<string, any> = new Map(); // profileName -> WebSocket socket
   private activeProfile: string | null = null;
+  /**
+   * The profile calls default to. Unlike activeProfile it survives the profile
+   * disconnecting: when it comes back it is the default again, so a reload or
+   * a reconnect cannot quietly move unpinned calls to another client's
+   * workspace. Persisted when a preference file is set (the running bridge),
+   * so a bridge restart keeps it too.
+   */
+  private preferredProfile: string | null = null;
+  private preferenceFile: string | null = null;
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private defaultTimeoutMs = 120000;
   /**
@@ -27,14 +40,52 @@ export class ProfileRegistry {
    * tab it pinned has to be re-validated before the next call is routed.
    */
   private generation = 0;
+  /** Per-profile serial of the current socket; a reconnect gets a higher one. */
+  private connectionSerials: Map<string, number> = new Map();
+  private nextSerial = 0;
+
+  /**
+   * Remember the default profile in `file` across bridge restarts. Only the
+   * running host calls this; tests keep the registry in memory.
+   */
+  public enablePreferencePersistence(file: string): void {
+    this.preferenceFile = file;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { profile?: unknown };
+      if (typeof parsed.profile === 'string' && parsed.profile.trim() !== '') {
+        this.preferredProfile = parsed.profile;
+        if (this.connections.has(parsed.profile)) this.activeProfile = parsed.profile;
+      }
+    } catch {
+      // No file yet, or unreadable: the first profile to connect becomes the default.
+    }
+  }
+
+  private setPreferredProfile(profileName: string): void {
+    this.preferredProfile = profileName;
+    if (!this.preferenceFile) return;
+    try {
+      fs.mkdirSync(path.dirname(this.preferenceFile), { recursive: true });
+      fs.writeFileSync(
+        this.preferenceFile,
+        JSON.stringify({ profile: profileName, set_at: new Date().toISOString() }),
+      );
+    } catch (error: any) {
+      logProfileRegistry(
+        `[ProfileRegistry] Could not persist default profile "${profileName}": ${error?.message}`,
+      );
+    }
+  }
 
   /**
    * Register a new profile connection
    */
   public register(profileName: string, socket: any): void {
-    // If there's an existing socket for this profile, close it first
+    // Take the slot before closing the old socket, so a close event that fires
+    // synchronously already sees the new socket and leaves the profile alone.
     const existing = this.connections.get(profileName);
-    if (existing) {
+    this.connections.set(profileName, socket);
+    if (existing && existing !== socket) {
       try {
         existing.close();
       } catch (e) {
@@ -42,14 +93,21 @@ export class ProfileRegistry {
       }
     }
 
-    this.connections.set(profileName, socket);
+    this.nextSerial += 1;
+    this.connectionSerials.set(profileName, this.nextSerial);
     this.generation += 1;
     logProfileRegistry(`[ProfileRegistry] Profile "${profileName}" connected.`);
 
-    // If no active profile, or the active profile is no longer connected, set this as active
-    if (!this.activeProfile || !this.connections.has(this.activeProfile)) {
+    if (this.preferredProfile === profileName && this.activeProfile !== profileName) {
+      this.activeProfile = profileName;
+      logProfileRegistry(
+        `[ProfileRegistry] Default profile "${profileName}" is back; active again.`,
+      );
+    } else if (!this.activeProfile || !this.connections.has(this.activeProfile)) {
+      // If no active profile, or the active profile is no longer connected, set this as active
       this.activeProfile = profileName;
       logProfileRegistry(`[ProfileRegistry] Active profile automatically set to "${profileName}".`);
+      if (this.preferredProfile === null) this.setPreferredProfile(profileName);
     }
 
     // Set up message handling for this socket
@@ -66,13 +124,31 @@ export class ProfileRegistry {
     });
 
     socket.on('close', () => {
-      this.deregister(profileName);
+      this.handleSocketClosed(profileName, socket);
     });
 
     socket.on('error', (err: any) => {
       console.error(`[ProfileRegistry] Socket error for profile "${profileName}":`, err);
-      this.deregister(profileName);
+      this.handleSocketClosed(profileName, socket);
     });
+  }
+
+  /**
+   * A socket went away. Its in-flight requests fail now instead of waiting out
+   * their timeout, and the profile is dropped only if this is still its socket:
+   * after a reconnect the old socket's close can arrive late, and it must not
+   * remove the new connection.
+   */
+  private handleSocketClosed(profileName: string, socket: any): void {
+    for (const [requestId, pending] of this.pendingRequests) {
+      if (pending.socket !== socket) continue;
+      clearTimeout(pending.timeoutId);
+      this.pendingRequests.delete(requestId);
+      pending.reject(new Error(`Profile "${profileName}" disconnected before replying`));
+    }
+    if (this.connections.get(profileName) === socket) {
+      this.deregister(profileName);
+    }
   }
 
   /**
@@ -81,6 +157,7 @@ export class ProfileRegistry {
   public deregister(profileName: string): void {
     if (this.connections.has(profileName)) {
       this.connections.delete(profileName);
+      this.connectionSerials.delete(profileName);
       this.generation += 1;
       logProfileRegistry(`[ProfileRegistry] Profile "${profileName}" disconnected.`);
 
@@ -106,6 +183,7 @@ export class ProfileRegistry {
   public switchProfile(profileName: string): boolean {
     if (this.connections.has(profileName)) {
       this.activeProfile = profileName;
+      this.setPreferredProfile(profileName);
       logProfileRegistry(`[ProfileRegistry] Active profile switched to "${profileName}".`);
       return true;
     }
@@ -124,6 +202,15 @@ export class ProfileRegistry {
   }
 
   /**
+   * Serial of the profile's current socket, or null when it is not connected.
+   * A reconnect always yields a higher serial, so a caller that recorded one
+   * can tell "reconnected" from "never dropped".
+   */
+  public getConnectionSerial(profileName: string): number | null {
+    return this.connectionSerials.get(profileName) ?? null;
+  }
+
+  /**
    * Get the active profile name
    */
   public getActiveProfile(): string | null {
@@ -133,6 +220,11 @@ export class ProfileRegistry {
       this.activeProfile = remaining.length > 0 ? remaining[0] : null;
     }
     return this.activeProfile;
+  }
+
+  /** The profile unpinned calls return to once it is connected. */
+  public getPreferredProfile(): string | null {
+    return this.preferredProfile;
   }
 
   /**
@@ -163,7 +255,7 @@ export class ProfileRegistry {
         reject(new Error(`Request to profile "${profileName}" timed out after ${timeoutMs}ms`));
       }, timeoutMs);
 
-      this.pendingRequests.set(requestId, { resolve, reject, timeoutId });
+      this.pendingRequests.set(requestId, { resolve, reject, timeoutId, socket });
 
       const envelope = {
         type: messageType,
