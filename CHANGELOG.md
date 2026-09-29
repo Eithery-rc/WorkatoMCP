@@ -6,6 +6,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+## bridge 1.8.0 · shared 1.6.0 (2026-09-29)
+
 Deployments, environment switching and a self-reloading dev loop. Endpoint evidence in [`docs/design/specs/2026-09-29-deploy-and-environments.md`](docs/design/specs/2026-09-29-deploy-and-environments.md).
 
 ### Added
