@@ -81,6 +81,12 @@ In the PR description, say what you changed, how you verified it, and — for to
 
 Note that both the extension and the client must be restarted for a schema change to take effect: rebuild, reload the unpacked extension, restart the MCP client.
 
+## Releasing
+
+1. Bump the versions (bridge, shared, extension) and move the `Unreleased` entries in `CHANGELOG.md` under a `## bridge X.Y.Z · shared A.B.C (date)` heading.
+2. Commit as `chore(release): ...` and publish the npm packages.
+3. Tag that commit with the extension version and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. The release workflow builds the extension, attests the zip and publishes the GitHub release, with the matching `CHANGELOG.md` section as its notes. It fails if the tag disagrees with the extension version.
+
 ## Reporting bugs
 
 Open an issue with the bug template. Include:
