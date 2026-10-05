@@ -32,11 +32,25 @@
   "preferGlobal": true,
   "keywords": [
     "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "workato",
     "chrome",
-    "browser"
+    "chrome-extension",
+    "browser",
+    "ai-agents"
   ],
   "author": "Roman Chikalenko <chikalenkor@gmail.com>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Eithery-rc/WorkatoMCP.git",
+    "directory": "app/native-server"
+  },
+  "homepage": "https://github.com/Eithery-rc/WorkatoMCP#readme",
+  "bugs": {
+    "url": "https://github.com/Eithery-rc/WorkatoMCP/issues"
+  },
   "dependencies": {
     "@fastify/cors": "^11.0.1",
     "@fastify/websocket": "^11.2.0",
