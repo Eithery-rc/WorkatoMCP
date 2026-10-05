@@ -8,7 +8,4 @@ contact_links:
     about: Most setup failures are covered here — start with `workatomcp-bridge doctor --fix`.
   - name: Tool reference
     url: https://github.com/Eithery-rc/WorkatoMCP/blob/master/docs/TOOLS.md
-    about: Parameters, response shapes, and error codes for all 66 Workato tools.
-  - name: Upstream browser automation
-    url: https://github.com/hangwin/mcp-chrome/issues
-    about: Issues with the inherited chrome_* tools usually belong to the parent project.
+    about: Parameters, response shapes, and error codes for all 95 Workato tools.

@@ -169,8 +169,8 @@ Two constraints worth knowing before writing in-tab code:
 - **In-page functions must be plain, bundler-safe JavaScript.** `chrome.scripting.executeScript` serializes the function, so use `function () { ... .then(...) }` rather than `async`/`await`, which the bundler rewrites into helpers that don't survive serialization.
 - **Read the CSRF token from the `XSRF-TOKEN-V2` cookie**, not from a `<meta>` tag — editor pages don't have one.
 
-## Relationship to upstream
+## Origin
 
-WorkatoMCP forks [hangwin/mcp-chrome](https://github.com/hangwin/mcp-chrome) and keeps its extension shell, native-messaging bridge, MCP transport handling, and browser-automation tools. This fork adds the Workato tool families, tab resolution and session model, the multi-profile registry, the file round-trip, write verification, and the safety gates — and renames the published packages to `workatomcp-bridge` / `workatomcp-shared`.
+WorkatoMCP started as a fork of [hangwin/mcp-chrome](https://github.com/hangwin/mcp-chrome) and keeps its extension shell, native-messaging bridge, MCP transport handling, and browser-automation tools. It is developed independently and does not track upstream changes. On top of that base it adds the Workato tool families, tab resolution and session model, the multi-profile registry, the file round-trip, write verification and the safety gates, and publishes its own packages, `workatomcp-bridge` and `workatomcp-shared`.
 
 Historical design specs and implementation plans live in [`docs/design/`](design/).
