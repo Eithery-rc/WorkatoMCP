@@ -261,17 +261,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and [docs/ROADMAP.md](doc
 
 ## Compatibility
 
-|                 |                                                                                              |
-| --------------- | -------------------------------------------------------------------------------------------- |
-| Browsers        | Chrome / Chromium (MV3). Firefox builds exist upstream but Workato tools are untested there. |
-| Platforms       | Windows, macOS, Linux                                                                        |
-| Workato regions | US, EU, JP, SG, AU (`*.workato.com`), plus `*.workato.is` and custom tenants                 |
-| MCP transports  | Streamable HTTP (`/mcp`), legacy SSE (`/sse` + `/messages`), stdio (`workatomcp-stdio`)      |
+|                 |                                                                                           |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| Browsers        | Chrome / Chromium (MV3). A Firefox build target exists (`build:firefox`) but is untested. |
+| Platforms       | Windows, macOS, Linux                                                                     |
+| Workato regions | US, EU, JP, SG, AU (`*.workato.com`), plus `*.workato.is` and custom tenants              |
+| MCP transports  | Streamable HTTP (`/mcp`), legacy SSE (`/sse` + `/messages`), stdio (`workatomcp-stdio`)   |
 
 ## Credits and license
 
-WorkatoMCP is a fork of [hangwin/mcp-chrome](https://github.com/hangwin/mcp-chrome), which provides the extension shell, native-messaging bridge, and browser-automation toolkit. The Workato tool families, session model, and safety gates are this fork's own work.
+WorkatoMCP started as a fork of [hangwin/mcp-chrome](https://github.com/hangwin/mcp-chrome), which provided the extension shell, native-messaging bridge, and browser-automation toolkit, and is now developed independently. The Workato tool families, session model, and safety gates are its own work.
 
-MIT — see [LICENSE](LICENSE) for this fork and [LICENSE.upstream](LICENSE.upstream) for the parent project.
+MIT. See [LICENSE](LICENSE) for this project and [LICENSE.upstream](LICENSE.upstream) for the project it started from.
 
 Workato is a trademark of Workato, Inc. This project is not affiliated with or endorsed by Workato.

@@ -99,6 +99,6 @@ Security issues go through [SECURITY.md](SECURITY.md), not the public tracker.
 
 ## Scope
 
-This fork exists to make Workato workspaces operable by AI agents. Improvements to the inherited browser-automation tools are welcome when they serve that goal; larger changes to that layer are usually better contributed to [hangwin/mcp-chrome](https://github.com/hangwin/mcp-chrome) upstream.
+WorkatoMCP exists to make Workato workspaces operable by AI agents. It is developed independently of the project it started from, so the inherited browser-automation tools are maintained here too, and changes to them are welcome when they serve that goal.
 
 By contributing you agree that your work is licensed under the MIT License.
