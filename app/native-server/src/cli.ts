@@ -13,6 +13,7 @@ import {
 import { BrowserType, parseBrowserType, detectInstalledBrowsers } from './scripts/browser-config';
 import { runDoctor } from './scripts/doctor';
 import { runReport } from './scripts/report';
+import { runWatchWait } from './scripts/watch-wait';
 
 program
   .version(require('../package.json').version)
@@ -225,6 +226,26 @@ program
       console.error(colorText(`Report failed: ${error.message}`, 'red'));
       process.exit(1);
     }
+  });
+
+// Wait for chrome_watch_* events (an agent runs this in the background)
+program
+  .command('watch-wait')
+  .description('Block until chrome_watch_start events arrive, print them and exit')
+  .option('--id <ids>', 'Comma-separated watch ids (default: every watch)')
+  .option('--cursor <n>', 'Only events after this cursor (default: from now)')
+  .option('--timeout <seconds>', 'Give up after this long', '7000')
+  .option('--port <port>', 'Bridge port', '12306')
+  .action(async (options) => {
+    const ids = typeof options.id === 'string' ? options.id.split(',').filter(Boolean) : [];
+    const cursor = options.cursor !== undefined ? Number(options.cursor) : undefined;
+    const exitCode = await runWatchWait({
+      ids,
+      cursor: Number.isFinite(cursor) ? cursor : undefined,
+      timeoutSec: Number(options.timeout) || 7000,
+      port: Number(options.port) || 12306,
+    });
+    process.exit(exitCode);
   });
 
 program.parse(process.argv);

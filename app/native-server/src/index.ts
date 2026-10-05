@@ -4,6 +4,7 @@ import nativeMessagingHostInstance from './native-messaging-host';
 import * as path from 'path';
 import { startUpdateChecker, updateStateDir } from './update-checker';
 import { profileRegistry } from './server/profile-registry';
+import { watchManager } from './mcp/watch-instance';
 
 try {
   // The default profile outlives a bridge restart (an extension reload of the
@@ -37,7 +38,10 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-process.on('exit', (code) => {});
+process.on('exit', () => {
+  // Watch state written on a timer must not be lost to a restart.
+  watchManager.flush();
+});
 
 process.on('uncaughtException', (error) => {
   process.exit(1);

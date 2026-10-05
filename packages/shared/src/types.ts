@@ -24,6 +24,8 @@ export enum NativeMessageType {
   // Bridge -> extension: tabs for chrome_lease_tab / chrome_release_tab
   AGENT_TAB_OPEN = 'agent_tab_open',
   AGENT_TAB_CLOSE = 'agent_tab_close',
+  // Bridge -> extension: run a chrome_watch_start script in its tabs (one tick)
+  WATCH_PROBE = 'watch_probe',
 }
 
 export interface NativeMessage<P = any, E = any> {

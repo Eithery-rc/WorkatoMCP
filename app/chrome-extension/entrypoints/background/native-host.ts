@@ -14,6 +14,7 @@ import { listPublished, getFlow } from './record-replay/flow-store';
 import { acquireKeepalive } from './keepalive-manager';
 import { getExtensionBuildInfo, scheduleExtensionReload } from './dev-reload';
 import { closeAgentTab, openAgentTab } from './agent-tabs';
+import { runWatchProbe } from './watch-probe';
 
 const LOG_PREFIX = '[NativeHost]';
 
@@ -523,6 +524,17 @@ async function connectWebSocket(port: number): Promise<boolean> {
                 ? await openAgentTab(message.payload ?? {})
                 : await closeAgentTab(message.payload?.tabId);
             payload = { status: 'success', data };
+          } catch (error) {
+            payload = {
+              status: 'error',
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+          ws.send(JSON.stringify({ responseToRequestId: message.requestId, payload }));
+        } else if (message.type === NativeMessageType.WATCH_PROBE && message.requestId) {
+          let payload: Record<string, unknown>;
+          try {
+            payload = { status: 'success', data: await runWatchProbe(message.payload ?? {}) };
           } catch (error) {
             payload = {
               status: 'error',
