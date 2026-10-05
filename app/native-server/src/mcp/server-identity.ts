@@ -26,13 +26,13 @@ export const SERVER_NAME = 'WorkatoMCP';
  */
 export const SERVER_INSTRUCTIONS = [
   'Workato tools driving a logged-in browser session. Pick by task:',
-  'which app exists and its adapter name -> workato_apps_list(query);',
+  'which app exists, its adapter name -> workato_apps_list(query);',
   'what an adapter can do, what a field is called -> workato_adapter_meta;',
   "a step's real extended_*_schema, never hand-written -> workato_step_schema;",
   'one field to change -> workato_recipe_set_input_path;',
   'several edits or any structural change -> workato_recipe_apply;',
-  'find a value inside a recipe -> workato_recipe_grep, then read the path it reports;',
-  'inspect a job -> workato_job_trace with paths, not the whole trace;',
+  'find a value in a recipe -> workato_recipe_grep, then read that path;',
+  'inspect a job -> workato_job_trace with paths;',
   'find jobs -> workato_list_jobs with started_from/started_to or match, no page walking;',
   'who calls a recipe -> workato_recipe_callers;',
   'check a recipe can still authenticate -> workato_recipe_connections;',
@@ -41,11 +41,12 @@ export const SERVER_INSTRUCTIONS = [
   'then workato_operation_status if it times out;',
   'run a fixture through a recipe -> workato_test_recipe;',
   'confirm the workspace a call lands in -> workato_session_context;',
-  'confirm which build is answering -> workato_bridge_info;',
+  'which build answers -> workato_bridge_info;',
   'change environment or client workspace -> workato_switch_environment;',
   'deploy -> workato_deploy_plan, review its diff, then workato_deploy_run;',
-  'parallel agents -> each takes chrome_lease_tab, passes its lease on every call.',
-  'Large results spill to a file (auto_file) as a summary; out_file picks the path.',
+  'parallel agents -> each takes chrome_lease_tab and passes its lease;',
+  'wait for a page change -> chrome_watch_start, wait_command in background.',
+  'Large results spill to a file (auto_file); out_file picks the path.',
   "Writes need their own flag. Read a tool's description before its first call.",
 ].join(' ');
 

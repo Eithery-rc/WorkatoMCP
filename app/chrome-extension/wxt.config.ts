@@ -66,6 +66,9 @@ export default defineConfig({
       'storage',
       'declarativeNetRequest',
       'alarms',
+      // chrome_watch_start readings without the debugger banner (needs the
+      // per-extension "Allow User Scripts" toggle; falls back to CDP without it)
+      'userScripts',
     ],
     host_permissions: ['<all_urls>'],
     options_ui: {

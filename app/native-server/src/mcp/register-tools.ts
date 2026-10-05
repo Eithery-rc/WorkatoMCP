@@ -68,6 +68,8 @@ import {
   withLeaseToolSchemas,
   type TabLease,
 } from './tab-leases';
+import { handleWatchToolCall, isWatchTool } from './browser-watch';
+import { watchManager } from './watch-instance';
 
 export const PROFILE_ROUTING_ARG = 'profile';
 export const TAB_ROUTING_ARG = 'tabId';
@@ -923,6 +925,17 @@ export function createToolRouter(): ToolRouter {
         leaseProfile = applied.lease.profile;
       }
       const routingProfile = getRoutingProfile(leaseProfile ?? routed.profile);
+
+      // Watches live in the bridge, outside any one session; start reads its tabs
+      // in the routed profile.
+      if (isWatchTool(name)) {
+        return await handleWatchToolCall(
+          watchManager,
+          name,
+          routed.args,
+          routingProfile ?? profileRegistry.getActiveProfile(),
+        );
+      }
 
       // A profile that reconnected may be a different browser session; the
       // pinned tab id can now belong to another workspace. Re-check once per

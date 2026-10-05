@@ -6,6 +6,11 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+### Added
+
+- **Background watches**: `chrome_watch_start` runs an agent-written script in chosen tabs (by tab id or url pattern, any profile) every N seconds and records an event when the result changes: an array wakes only on items not seen before, any other value when it differs. The agent sleeps on `watch-wait` (a CLI that long-polls the bridge and exits with the events), so a quiet page costs no tokens. One wait can cover several watches. Watches survive bridge restarts and expire after `ttl_minutes`. Also `chrome_watch_list`, `chrome_watch_stop`, `chrome_watch_events`.
+- Readings run through `chrome.userScripts` when "Allow User Scripts" is on for the extension (no debugging banner, page CSP does not apply), otherwise through the debugger.
+
 ## bridge 1.10.0 · shared 1.8.0 (2026-09-30)
 
 Agents that know what their actions did. Ideas taken from chrome-devtools-mcp and browser-use.

@@ -51,6 +51,10 @@ export const TOOL_NAMES = {
     SEARCH_PAGE: 'chrome_search_page',
     FIND_ELEMENTS: 'chrome_find_elements',
     RELEASE_TAB: 'chrome_release_tab',
+    WATCH_START: 'chrome_watch_start',
+    WATCH_STOP: 'chrome_watch_stop',
+    WATCH_LIST: 'chrome_watch_list',
+    WATCH_EVENTS: 'chrome_watch_events',
     SNAPSHOT_CLICK: 'chrome_snapshot_click',
     SNAPSHOT_FILL: 'chrome_snapshot_fill',
     SNAPSHOT_HOVER: 'chrome_snapshot_hover',
@@ -844,6 +848,86 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['lease'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.WATCH_START,
+    description:
+      'Watch tabs in the background without spending tokens: the bridge runs `script` in each target tab every `every_seconds` and records an event when its result changes, so an agent can sleep until something happens (new mail, a chat message, a job finishing) instead of polling with snapshots. The script is the body of an async function (return and await work) that returns a JSON value; return null while the page is not ready. An array result wakes only on items not seen before (identified by `key`, else the whole item), so return e.g. the visible rows as {id, from, subject} and each new row is one event; any other value wakes when it differs from the last reading. The first reading of each tab is the baseline. Runs once right away and reports that reading, so a broken script is caught now. Returns {watch_id, cursor, wait_command}: run wait_command in the background (Bash run_in_background) and the process exits with the events when something changes; then handle them and run the re-arm command it prints. Watches survive bridge restarts and expire after ttl_minutes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        script: {
+          type: 'string',
+          description:
+            'Body of an async function run in the page (full DOM access; do not rely on page JS globals): e.g. return [...document.querySelectorAll("tr.zE")].map(r => ({id: r.id, text: r.innerText.slice(0, 200)})). Keep results small: they are what the agent reads.',
+        },
+        tabIds: {
+          type: 'array',
+          items: { type: 'number' },
+          description:
+            'Tabs to watch, in the routed profile. Each stays tied to the site it showed at its first reading (a tab that moves to another site is not read). Tab ids change when Chrome restarts, so prefer url for long watches.',
+        },
+        url: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Chrome match patterns, e.g. ["https://mail.google.com/*"]: every matching tab of the profile is watched, looked up again on each tick (survives reloads and browser restarts). Give tabIds, url, or both.',
+        },
+        name: { type: 'string', description: 'Short label shown in events.' },
+        every_seconds: {
+          type: 'number',
+          description: 'Interval between readings. Default 30, minimum 10.',
+        },
+        key: {
+          type: 'string',
+          description:
+            'For array results of objects: the field that identifies an item (e.g. "id"). Default: the whole item.',
+        },
+        ttl_minutes: {
+          type: 'number',
+          description: 'Stop watching after this long. Default 720 (12 h), maximum 10080 (7 days).',
+        },
+      },
+      required: ['script'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.WATCH_STOP,
+    description: 'Stop a watch from chrome_watch_start (or all of them with all:true).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        watch_id: { type: 'string', description: 'Watch to stop.' },
+        all: { type: 'boolean', description: 'Stop every watch. Default false.', default: false },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.WATCH_LIST,
+    description:
+      'List active watches with their status: last reading per tab (short preview), errors, events so far, expiry, and the current event cursor.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.WATCH_EVENTS,
+    description:
+      'Read watch events after `cursor` (all watches, or watch_ids), optionally waiting up to wait_seconds for the first one. Returns {events, cursor}; pass the returned cursor next time. For long waits use the wait_command from chrome_watch_start in the background instead of holding this call.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        watch_ids: { type: 'array', items: { type: 'string' }, description: 'Default: all.' },
+        cursor: {
+          type: 'number',
+          description: 'Return events after this one. Default: the oldest kept.',
+        },
+        wait_seconds: {
+          type: 'number',
+          description: 'Wait this long for an event when there is none yet. Default 0, max 100.',
+        },
+      },
+      required: [],
     },
   },
   {

@@ -29,6 +29,8 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { createMcpServer } from '../mcp/mcp-server';
 import { profileRegistry } from './profile-registry';
 import { markMcpActivity } from '../update-checker';
+import { watchManager } from '../mcp/watch-instance';
+import { parseWaitQuery } from '../mcp/browser-watch';
 
 // ============================================================
 // Types
@@ -108,7 +110,8 @@ export class Server {
     // Any request except health checks counts as activity; the update
     // checker's idle restart waits for this to go quiet.
     this.fastify.addHook('onRequest', async (request) => {
-      if (request.url !== '/ping') markMcpActivity();
+      // A held /watch/wait poll is not activity: it must not block an idle update.
+      if (request.url !== '/ping' && !request.url.startsWith('/watch/')) markMcpActivity();
     });
     this.fastify.register(fastifyWebsocket);
     this.fastify.register(cors, {
@@ -143,6 +146,26 @@ export class Server {
 
     // WebSocket routes for Chrome profiles
     this.setupWebSocketRoutes();
+
+    // Long poll for chrome_watch_* events (cli watch-wait)
+    this.setupWatchRoutes();
+  }
+
+  private setupWatchRoutes(): void {
+    this.fastify.get('/watch/wait', async (request: FastifyRequest, reply: FastifyReply) => {
+      const { ids, cursor, timeoutMs } = parseWaitQuery((request.query ?? {}) as any);
+      let abort: (() => void) | null = null;
+      // The waiter goes away with its client (a killed watch-wait process).
+      reply.raw.on('close', () => {
+        if (!reply.raw.writableFinished) abort?.();
+      });
+      const result = await watchManager.waitEvents(ids, cursor, timeoutMs, {
+        onAbort: (fn) => {
+          abort = fn;
+        },
+      });
+      return reply.status(HTTP_STATUS.OK).send(result);
+    });
   }
 
   private setupWebSocketRoutes(): void {
@@ -469,6 +492,9 @@ export class Server {
       process.env.MCP_HTTP_PORT = String(port);
 
       this.isRunning = true;
+      // Watches (chrome_watch_start) are persisted and resume with the process
+      // that owns the port; a host that lost the port race never runs them.
+      watchManager.init();
     } catch (err) {
       this.isRunning = false;
       throw err;
@@ -481,6 +507,9 @@ export class Server {
     }
 
     try {
+      // Held long polls would keep close() waiting for minutes.
+      watchManager.releaseWaiters();
+      watchManager.flush();
       await this.fastify.close();
       this.isRunning = false;
     } catch (err) {
