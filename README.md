@@ -82,11 +82,20 @@ WorkatoMCP also inherits ~32 general browser-automation tools from its upstream 
 ### Prerequisites
 
 - Node.js 20+
-- pnpm 8+
 - Google Chrome or Chromium
 - A Workato account you can sign into in that browser
 
-### 1. Build the extension
+### 1. Get the extension
+
+Download `workatomcp-extension-<version>.zip` from the [latest release](https://github.com/Eithery-rc/WorkatoMCP/releases/latest) and unzip it into a folder you will keep, for example `%LOCALAPPDATA%\WorkatoMCP\extension` on Windows. Chrome loads an unpacked extension from that folder on every start, so not your Downloads folder.
+
+GitHub Actions builds the zip from the release tag and attests it. To check a download came from this repository's release workflow:
+
+```bash
+gh attestation verify workatomcp-extension-<version>.zip --repo Eithery-rc/WorkatoMCP
+```
+
+**From source** (unreleased changes from `master`, or development; needs pnpm 8+):
 
 ```bash
 git clone https://github.com/Eithery-rc/WorkatoMCP
@@ -98,16 +107,18 @@ pnpm build:extension
 
 The unpacked extension lands in `app/chrome-extension/dist/chrome-mv3`.
 
-The extension's public RSA key is pinned in `app/chrome-extension/wxt.config.ts`, so every clone builds to the same deterministic extension ID — `bpjpdgkeelhkijkllcmogemkmndgeana` — which is what the bridge's native-messaging allowlist expects.
+The extension's public RSA key is pinned in `app/chrome-extension/wxt.config.ts`, so the release zip and every clone build to the same extension ID, `bpjpdgkeelhkijkllcmogemkmndgeana`, which is what the bridge's native-messaging allowlist expects.
 
 ### 2. Load it in Chrome
 
 1. Open `chrome://extensions/`
 2. Enable **Developer mode**
-3. **Load unpacked** → select `app/chrome-extension/dist/chrome-mv3`
+3. **Load unpacked** → select the folder you unzipped into (or `app/chrome-extension/dist/chrome-mv3` for a source build)
 4. Confirm the ID reads `bpjpdgkeelhkijkllcmogemkmndgeana`
 
-If Chrome shows a different ID, delete `app/chrome-extension/dist/` and `app/chrome-extension/.wxt/`, then rebuild — and check that `CHROME_EXTENSION_KEY` isn't overriding the pinned key.
+If a source build shows a different ID, delete `app/chrome-extension/dist/` and `app/chrome-extension/.wxt/`, then rebuild, and check that `CHROME_EXTENSION_KEY` isn't overriding the pinned key.
+
+To update, replace the folder's contents with the new release zip and press reload on the extension card. Keep the extension and the bridge on the same release: each release names the bridge version it pairs with.
 
 ### 3. Install the bridge
 

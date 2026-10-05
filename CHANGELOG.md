@@ -1,10 +1,14 @@
 # Changelog
 
-All notable changes to WorkatoMCP. Versions refer to the published npm packages `workatomcp-bridge` (the local bridge) and `workatomcp-shared` (tool schemas). The Chrome extension is built from source and versioned alongside them.
+All notable changes to WorkatoMCP. Versions refer to the published npm packages `workatomcp-bridge` (the local bridge) and `workatomcp-shared` (tool schemas). The Chrome extension is versioned alongside them, and each GitHub release carries it as a CI-built zip.
 
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions. Dates are the commit dates of the corresponding release.
 
 ## Unreleased
+
+### Added
+
+- **Extension releases**: pushing a `vX.Y.Z` tag (the extension version) publishes a GitHub release with `workatomcp-extension-X.Y.Z.zip`, built by GitHub Actions from that tag and attested (`gh attestation verify`). Installing the extension no longer needs a clone and a pnpm build.
 
 ## bridge 1.11.0 · shared 1.9.0 (2026-10-05)
 

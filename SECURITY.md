@@ -11,7 +11,7 @@ Please include the affected version (`workatomcp-bridge --version` and the exten
 
 ## Supported versions
 
-Only the latest published `workatomcp-bridge` and `workatomcp-shared` releases, paired with an extension built from `master`, receive security fixes.
+Only the latest published `workatomcp-bridge` and `workatomcp-shared` releases, paired with the extension from the matching [GitHub release](https://github.com/Eithery-rc/WorkatoMCP/releases) (or one built from `master`), receive security fixes. Check a downloaded extension zip with `gh attestation verify <zip> --repo Eithery-rc/WorkatoMCP` before loading it.
 
 ## What this software can do
 

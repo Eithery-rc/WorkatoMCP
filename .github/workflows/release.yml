@@ -1,0 +1,123 @@
+name: Release
+
+# A pushed tag vX.Y.Z publishes a GitHub release carrying the Chrome extension
+# built from that tag, so installing it no longer needs a clone and a pnpm
+# build. The bridge and the shared schemas still ship through npm.
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create the release, upload the zip
+  id-token: write # Sigstore certificate for the provenance attestation
+  attestations: write # store the attestation
+
+jobs:
+  extension:
+    name: Publish the extension zip
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tag names the extension version. A mismatch means the tag landed on
+      # the wrong commit or the release bump was skipped, and the zip would
+      # carry a manifest version that disagrees with the release it sits in.
+      - name: Check the tag against the extension version
+        id: version
+        run: |
+          ext=$(node -p "require('./app/chrome-extension/package.json').version")
+          bridge=$(node -p "require('./app/native-server/package.json').version")
+          if [ "${GITHUB_REF_NAME#v}" != "$ext" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match extension version $ext"
+            exit 1
+          fi
+          echo "extension=$ext" >> "$GITHUB_OUTPUT"
+          echo "bridge=$bridge" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # build:extension chains check:bundle, the same gate CI runs.
+      - name: Build the extension
+        run: |
+          pnpm build:shared
+          pnpm build:extension
+
+      # Files sit at the zip root, so the folder it unzips into is the one
+      # Load unpacked picks.
+      - name: Zip
+        id: zip
+        run: |
+          name="workatomcp-extension-${{ steps.version.outputs.extension }}.zip"
+          (cd app/chrome-extension/dist/chrome-mv3 && zip -r -X -q "$GITHUB_WORKSPACE/$name" .)
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$name" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      # The extension holds debugger and all-sites access, so a downloaded zip
+      # must be checkable against this workflow:
+      # gh attestation verify <zip> --repo <owner>/<repo>
+      - uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.zip.outputs.name }}
+
+      - name: Write release notes
+        env:
+          EXTENSION: ${{ steps.version.outputs.extension }}
+          BRIDGE: ${{ steps.version.outputs.bridge }}
+          ZIP: ${{ steps.zip.outputs.name }}
+          SHA256: ${{ steps.zip.outputs.sha256 }}
+          REPO: ${{ github.repository }}
+        run: |
+          cat > notes.md <<EOF
+          Chrome extension ${EXTENSION}, built by GitHub Actions from this tag. Pairs with [\`workatomcp-bridge\`](https://www.npmjs.com/package/workatomcp-bridge) ${BRIDGE} on npm.
+
+          ## Install
+
+          1. Unzip \`${ZIP}\` into a folder you will keep, for example \`%LOCALAPPDATA%\WorkatoMCP\extension\`. Chrome loads the extension from there on every start.
+          2. Open \`chrome://extensions\`, turn on **Developer mode**, click **Load unpacked** and pick that folder.
+          3. Check the ID reads \`bpjpdgkeelhkijkllcmogemkmndgeana\`.
+          4. Install the bridge and connect your MCP client: [quick start](https://github.com/${REPO}#3-install-the-bridge), step 3 on.
+
+          To update, replace the folder's contents with the new zip and press reload on the extension card.
+
+          ## Verify
+
+          \`gh attestation verify ${ZIP} --repo ${REPO}\` confirms the zip was built by this repository's release workflow.
+
+          SHA-256: \`${SHA256}\`
+          EOF
+          # The matching CHANGELOG section, keyed by the bridge version.
+          changes=$(awk -v h="## bridge ${BRIDGE} " 'index($0, h) == 1 { on = 1; next } on && /^## / { exit } on { print }' CHANGELOG.md)
+          if [ -n "$changes" ]; then
+            printf '\n## Changes\n%s\n' "$changes" >> notes.md
+          fi
+
+      # Idempotent, so a re-run replaces the zip instead of failing on an
+      # existing release.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ZIP: ${{ steps.zip.outputs.name }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$ZIP" --clobber
+            gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" "$ZIP" --verify-tag \
+              --title "WorkatoMCP $GITHUB_REF_NAME" --notes-file notes.md
+          fi
