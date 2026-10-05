@@ -37,7 +37,7 @@ Each of these is a gap a shipped package named for itself rather than hid.
 
 **The extension does not typecheck cleanly.** `pnpm typecheck` reports around 107 errors, all in code inherited from the upstream project: `record-replay-v3` and its tests, `element-marker`, `gif-recorder`, and a few browser tools. None are in the Workato tool families, and the build is unaffected (WXT/Vite transpiles without typechecking), which is why the errors went unnoticed for so long.
 
-Paying this down means either fixing the inherited code or dropping the parts of the record-replay feature this fork doesn't use. The second is probably the better trade, since none of it serves the Workato use case.
+Paying this down means either fixing the inherited code or dropping the parts of the record-replay feature this project doesn't use. The second is probably the better trade, since none of it serves the Workato use case.
 
 **CI now runs both test suites.** The extension vitest suite and the bridge jest suite gate the build after Lint, alongside the typecheck of `workatomcp-shared` and `workatomcp-bridge`. The extension typecheck is still reported without failing the run. Bridge coverage thresholds are explicitly non-gating: a red test should fail the build, a percentage should not.
 
