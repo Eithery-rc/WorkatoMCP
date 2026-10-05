@@ -1,7 +1,18 @@
 {
   "name": "workatomcp-shared",
   "version": "1.9.0",
+  "description": "Tool schemas shared by the WorkatoMCP bridge and Chrome extension",
   "author": "Roman Chikalenko <chikalenkor@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Eithery-rc/WorkatoMCP.git",
+    "directory": "packages/shared"
+  },
+  "homepage": "https://github.com/Eithery-rc/WorkatoMCP#readme",
+  "bugs": {
+    "url": "https://github.com/Eithery-rc/WorkatoMCP/issues"
+  },
   "main": "dist/index.js",
   "module": "./dist/index.mjs",
   "types": "dist/index.d.ts",
