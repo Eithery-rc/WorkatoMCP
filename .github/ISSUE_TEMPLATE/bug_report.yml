@@ -30,16 +30,16 @@ body:
     attributes:
       label: Bridge version
       description: Output of `workatomcp-bridge --version`
-      placeholder: 1.3.9
+      placeholder: 1.11.0
     validations:
       required: true
 
   - type: input
     id: extension-version
     attributes:
-      label: Extension version and commit
-      description: Version shown in chrome://extensions, plus the commit you built from
-      placeholder: 1.3.8 (150b97b)
+      label: Extension version
+      description: Version shown in chrome://extensions. For a source build, add the commit you built from.
+      placeholder: 1.11.0 (release zip) or 1.11.0 (f7bc59e)
 
   - type: dropdown
     id: os
@@ -82,4 +82,4 @@ body:
       options:
         - label: A signed-in Workato app tab was open when the tool was called
         - label: Only one Workato region was open at the time
-        - label: The extension was reloaded and the MCP client restarted after the last build
+        - label: The extension and the bridge are on the same release, and the MCP client was restarted after the last update

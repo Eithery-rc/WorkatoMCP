@@ -6,8 +6,10 @@
 
 **An MCP server that gives AI agents typed, first-class access to your Workato workspace — through the browser session you are already signed in to.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/Eithery-rc/WorkatoMCP/actions/workflows/ci.yml/badge.svg)](https://github.com/Eithery-rc/WorkatoMCP/actions/workflows/ci.yml)
+[![Extension release](https://img.shields.io/github/v/release/Eithery-rc/WorkatoMCP?label=extension)](https://github.com/Eithery-rc/WorkatoMCP/releases/latest)
 [![npm](https://img.shields.io/npm/v/workatomcp-bridge?label=workatomcp-bridge)](https://www.npmjs.com/package/workatomcp-bridge)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![MCP](https://img.shields.io/badge/Model%20Context%20Protocol-compatible-6E56CF)](https://modelcontextprotocol.io)
 

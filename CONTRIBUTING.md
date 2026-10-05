@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in WorkatoMCP. Bug reports, tool contributions, and documentation fixes are all welcome.
+Thanks for your interest in WorkatoMCP. Bug reports, tool contributions, and documentation fixes are all welcome. Taking part means following the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Getting set up
 
