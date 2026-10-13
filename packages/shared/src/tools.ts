@@ -39,6 +39,7 @@ export const TOOL_NAMES = {
     COMPUTER: 'chrome_computer',
     HANDLE_DIALOG: 'chrome_handle_dialog',
     HANDLE_DOWNLOAD: 'chrome_handle_download',
+    FETCH_TO_FILE: 'chrome_fetch_to_file',
     USERSCRIPT: 'chrome_userscript',
     PERFORMANCE_START_TRACE: 'performance_start_trace',
     PERFORMANCE_STOP_TRACE: 'performance_stop_trace',
@@ -571,7 +572,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         settle: {
           type: 'boolean',
           description:
-            'Wait for the navigation to load and for the DOM to go quiet, then report the page (url, title, navigated, open dialog, new tabs it opened). Default true.',
+            'Wait for the navigation to load and for the DOM to go quiet, then report the page (url, title, navigated, open dialog, new tabs it opened). Default true. When the server has not answered by the end of the wait (a slow page, a PDF being generated), pending_url names where the tab is going and url/title are still the previous page: do not navigate again.',
           default: true,
         },
         settleTimeoutMs: {
@@ -627,7 +628,8 @@ export const TOOL_SCHEMAS: Tool[] = [
       '[Prefer read_page over taking a screenshot and Prefer chrome_computer] Take a screenshot of the current page or a specific element. For new usage, use chrome_computer with action="screenshot". Use this tool if you need advanced options. ' +
       'storeBase64:true returns the capture as an MCP image block; the accompanying text block holds metadata only (tabId, url, name, width, height, mimeType, bytes, fileSaved, fullPath), never the base64 payload. ' +
       'storeBase64 and savePng are independent flags: setting both returns the image and writes a PNG to the Downloads folder. ' +
-      'out_file writes the image bytes to an absolute path of your choosing and returns a saved_to summary; add no_inline:true to keep the image out of the response.',
+      'out_file writes the image bytes to an absolute path of your choosing and returns a saved_to summary; add no_inline:true to keep the image out of the response. ' +
+      'A hidden tab of the agents window (a leased tab that is not the visible one) is moved to an unfocused window of its own when the capture needs a visible tab (fullPage, selector, or a failed CDP viewport capture); the metadata then carries moved_to_window. A hidden tab outside the agents window is never moved.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -813,7 +815,7 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.LEASE_TAB,
     description:
-      'Get a tab of your own for parallel work: several agents sharing one MCP server and one Chrome profile must each lease a tab and pass the returned `lease` on every browser call, instead of relying on the active tab. Opens the tab in a separate, unfocused agents window (own_window:true gives the tab a window of its own, needed for screenshots and chrome_computer, which only work on a visible tab). The bridge turns `lease` into the right profile and tabId, never activates or focuses the tab, and while this MCP session holds any lease it REFUSES tab-targeting calls that carry neither `lease` nor tabId. Calls on the same tab run one at a time. Leases end with chrome_release_tab, when the tab is closed, or after 30 minutes unused. Returns {lease, tabId, windowId, profile}.',
+      'Get a tab of your own for parallel work: several agents sharing one MCP server and one Chrome profile must each lease a tab and pass the returned `lease` on every browser call, instead of relying on the active tab. Opens the tab in a separate, unfocused agents window. Screenshots that need a visible tab move a hidden agents-window tab to a window of its own by themselves; own_window:true (that window up front) is still the choice for chrome_computer mouse/keyboard input, which a hidden tab drops. The bridge turns `lease` into the right profile and tabId, never activates or focuses the tab, and while this MCP session holds any lease it REFUSES tab-targeting calls that carry neither `lease` nor tabId. Calls on the same tab run one at a time. Leases end with chrome_release_tab, when the tab is closed, or after 30 minutes unused. Returns {lease, tabId, windowId, profile}.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -826,7 +828,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         own_window: {
           type: 'boolean',
           description:
-            'Open the tab in its own unfocused window so it stays visible (screenshots, chrome_computer). Default false: a shared agents window.',
+            'Open the tab in its own unfocused window so it is visible from the start (chrome_computer input, screenshots). Default false: a shared agents window; a screenshot that needs a visible tab moves it out then.',
           default: false,
         },
       },
@@ -1101,7 +1103,8 @@ export const TOOL_SCHEMAS: Tool[] = [
   },
   {
     name: TOOL_NAMES.BROWSER.HANDLE_DOWNLOAD,
-    description: 'Wait for a browser download and return details (id, filename, url, state, size)',
+    description:
+      'Wait for a browser download and return details (id, filename, url, state, size). Only downloads that start after the call, or are already in progress, count. An interrupted download fails at once with its reason. A timeout says which case it was: no matching download ever started (script-started downloads are often held or dropped by the "multiple automatic downloads" site permission, with no event), or one started and did not finish (state, bytes received, error). To save the body of a URL, chrome_fetch_to_file is the reliable route.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1110,6 +1113,42 @@ export const TOOL_SCHEMAS: Tool[] = [
         waitForComplete: { type: 'boolean', description: 'Wait until completed (default true)' },
       },
       required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.FETCH_TO_FILE,
+    description:
+      'Fetch a URL in the tab and write the response body straight to a local file. The request runs in the page (main world) with the session cookies, so it works for anything the logged-in page could fetch: PDF print URLs, CSV/XLSX exports, template or script sources. The bytes go to disk only, never into the reply and never through the output redaction, so binary files and text with query strings or tokens arrive intact. Use it instead of Blob + anchor.click() downloads, which Chrome blocks after the first. Returns {saved_to, bytes, sha256, status, ok, content_type, filename (from Content-Disposition), final_url (after redirects), magic (the first bytes when printable, e.g. "%PDF-1.7")}. A non-2xx response is still written (it is diagnostic) and reported as an error with its status; check content_type and magic too, because a login or error page often comes back as HTML with status 200. A cross-origin URL needs CORS with credentials, and the page CSP applies. Pages that take no scripts (chrome://, the built-in PDF viewer) cannot fetch: navigate the tab to an HTML page of the same site first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'URL to fetch. A relative URL resolves against the page.',
+        },
+        out_file: {
+          type: 'string',
+          description:
+            'Absolute path to write the body to; its directory must exist. An existing file is replaced.',
+        },
+        tabId: {
+          type: 'number',
+          description: 'Tab whose page and session make the request. Omit for the active tab.',
+        },
+        method: { type: 'string', description: 'HTTP method (default GET).' },
+        headers: { type: 'object', description: 'Request headers.' },
+        body: { type: 'string', description: 'Request body, for POST and the like.' },
+        timeoutMs: {
+          type: 'number',
+          description: 'Request timeout in ms (default 60000, max 110000).',
+        },
+        max_bytes: {
+          type: 'number',
+          description:
+            'Refuse a body larger than this, writing nothing (default 26214400 = 25 MB, max 41943040 = 40 MB).',
+        },
+      },
+      required: ['url', 'out_file'],
     },
   },
   {
@@ -1287,10 +1326,31 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.JAVASCRIPT,
     description:
-      'Execute JavaScript code in a browser tab and return the result. Uses CDP Runtime.evaluate with awaitPromise and returnByValue; automatically falls back to chrome.scripting.executeScript if the debugger is busy. Output is sanitized (sensitive data redacted) and truncated by default.',
+      'Execute JavaScript code in a browser tab and return the result. Uses CDP Runtime.evaluate with awaitPromise and returnByValue; automatically falls back to chrome.scripting.executeScript if the debugger is busy. Inline output is sanitized (sensitive data redacted) and truncated by default; an explicit out_file gets the returned value itself, unredacted. ' +
+      'For work that outlasts one call (a page busy 40+ s), start it with async_job:true, which returns {job_id, state:"running"} at once, then poll with job_id (+ wait_ms): state is running, busy (the page main thread is blocked, poll again), done (result as usual), error, or lost (the page navigated or reloaded, outcome unknown). A finished job can be read once more within 60 s, then it is dropped. Jobs need CDP (no fallback).',
     inputSchema: {
       type: 'object',
       properties: {
+        async_job: {
+          type: 'boolean',
+          description:
+            'Start the code in the page and return a job_id immediately instead of waiting for it (default false). The code starts after the call returns, so synchronous page work cannot block the reply. Poll with job_id. Not combinable with uids.',
+        },
+        job_id: {
+          type: 'string',
+          description:
+            'Poll a job started with async_job, on the same tab. Pass it instead of code.',
+        },
+        wait_ms: {
+          type: 'number',
+          description:
+            'With job_id: how long to wait for the job to finish before answering (default 0, one look; max 100000).',
+        },
+        out_file: {
+          type: 'string',
+          description:
+            'Absolute path (its directory must exist) to write the returned value itself to: a string verbatim, anything else as indented JSON, unredacted, up to 32 MB. The response becomes a summary {saved_to, bytes, sha256, raw, tabId, engine, metrics}. Works on a job_id poll too (written once the job is done).',
+        },
         uids: {
           type: 'array',
           items: { type: 'number' },
@@ -1300,7 +1360,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         code: {
           type: 'string',
           description:
-            'JavaScript code to execute. Runs inside an async function body, so top-level await and "return ..." are supported.',
+            'JavaScript code to execute. Runs inside an async function body, so top-level await and "return ..." are supported. Required unless job_id is given.',
         },
         tabId: {
           type: 'number',
@@ -1319,7 +1379,7 @@ export const TOOL_SCHEMAS: Tool[] = [
             'Maximum output size in bytes after sanitization (default: 51200). Output exceeding this limit will be truncated.',
         },
       },
-      required: ['code'],
+      required: [],
     },
   },
   {
@@ -1632,7 +1692,7 @@ export const TOOL_SCHEMAS: Tool[] = [
   {
     name: TOOL_NAMES.BROWSER.FILE_UPLOAD,
     description:
-      'Upload files to web forms with file input elements using Chrome DevTools Protocol',
+      'Upload files to web forms with file input elements using Chrome DevTools Protocol. Target the input by selector (top document only) or by uid from chrome_snapshot, which also reaches inputs inside same-process iframes (an embedded uploader page). Inputs inside out-of-process (cross-site) iframes are not reachable either way.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1643,7 +1703,13 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
         selector: {
           type: 'string',
-          description: 'CSS selector for the file input element (input[type="file"])',
+          description:
+            'CSS selector for the file input element (input[type="file"]) in the top document. Pass this or uid.',
+        },
+        uid: {
+          type: 'number',
+          description:
+            'uid of the file input from chrome_snapshot of this tab; use it for an input inside an iframe. Pass this or selector.',
         },
         filePath: {
           type: 'string',
@@ -1666,7 +1732,7 @@ export const TOOL_SCHEMAS: Tool[] = [
           description: 'Whether the input accepts multiple files (default: false)',
         },
       },
-      required: ['selector'],
+      required: [],
     },
   },
   {

@@ -13,11 +13,14 @@
  *   <read tool>(auto_file)  -> same, but only once the result crosses a
  *                              character threshold (on by default for reads)
  *   chrome_screenshot(out_file) -> writes the decoded image bytes
+ *   chrome_javascript(out_file) -> writes the returned value itself, unredacted
+ *                              (inline results and auto_file spills stay redacted)
  *
  * It runs in the native-server (a Node process with `fs`); the Chrome
  * extension never sees the file params. See register-tools.ts for the wiring.
  */
 
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -26,6 +29,14 @@ import { isWorkatoFileTool } from './workato-file-io';
 import { isWorkatoLcapFileTool } from './workato-lcap-io';
 
 export const SCREENSHOT_TOOL = 'chrome_screenshot';
+export const JAVASCRIPT_TOOL = 'chrome_javascript';
+
+/**
+ * Internal arg the bridge adds to a chrome_javascript call with an explicit
+ * out_file: the extension then returns the value unredacted, for the file only.
+ * Never accepted from the caller.
+ */
+export const RAW_OUTPUT_ARG = 'rawOutput';
 
 /** Default spill threshold, in characters of response text. */
 export const DEFAULT_AUTO_FILE_THRESHOLD_CHARS = 60000;
@@ -89,6 +100,8 @@ export interface AutoFilePlan {
   thresholdChars: number;
   /** For image results: leave the image block out of the response. */
   noInline: boolean;
+  /** chrome_javascript with an explicit out_file: write the unredacted value itself. */
+  raw?: boolean;
   /** Recipe/job/table id used to name an auto-generated file. */
   idHint?: string;
 }
@@ -165,6 +178,11 @@ function resolveOutFile(raw: string): string {
   const dir = path.dirname(outFile);
   if (!fs.existsSync(dir)) {
     throw new Error(`${OUT_FILE_ARG} directory does not exist: ${dir}`);
+  }
+  // Caught here, before any browser work: a write onto a directory fails only
+  // after the result came back, and a job result is not read again for long.
+  if (fs.existsSync(outFile) && fs.statSync(outFile).isDirectory()) {
+    throw new Error(`${OUT_FILE_ARG} is a directory, not a file path: ${outFile}`);
   }
   return outFile;
 }
@@ -279,6 +297,10 @@ export function prepareAutoFileCall(
   delete args[AUTO_FILE_THRESHOLD_ARG];
   // no_inline is read here, like the rest: the extension never sees a file param.
   delete args[NO_INLINE_ARG];
+  // Unredacted output is only ever produced for a file the caller named.
+  delete args[RAW_OUTPUT_ARG];
+  const raw = name === JAVASCRIPT_TOOL && outFile !== undefined;
+  if (raw) args[RAW_OUTPUT_ARG] = true;
 
   return {
     args,
@@ -289,6 +311,7 @@ export function prepareAutoFileCall(
       thresholdChars,
       noInline,
       idHint: readIdHint(rawArgs),
+      ...(raw ? { raw: true } : {}),
     },
   };
 }
@@ -433,7 +456,9 @@ export function applyAutoFile(
   try {
     const written = image
       ? writeImageResult(name, plan, image, texts)
-      : writeTextResult(name, plan, body, texts);
+      : plan.raw && explicit
+        ? writeRawValueResult(name, plan, body, texts)
+        : writeTextResult(name, plan, body, texts);
     if (written === body) return result;
     return contextBlock
       ? { ...written, content: [...written.content, contextBlock as any] }
@@ -483,6 +508,70 @@ function writeImageResult(
   if (!plan.noInline) content.push(image as any);
   content.push(summaryBlock(summary) as any);
   return { content, isError: false };
+}
+
+/**
+ * Envelope fields of a chrome_javascript reply worth keeping next to the file.
+ * warnings matters most: it says when the code ran in the isolated world (the
+ * debugger was busy), which changes what the file contains.
+ */
+const RAW_ENVELOPE_KEYS = [
+  'tabId',
+  'engine',
+  'job_id',
+  'state',
+  'job_ms',
+  'truncated',
+  'warnings',
+  'message',
+  'metrics',
+];
+
+/**
+ * chrome_javascript(out_file): the file gets the returned value itself (the
+ * `result` string), not the JSON envelope around it. A reply without a result
+ * (a job poll that is still running) writes nothing and goes back as is.
+ */
+function writeRawValueResult(
+  name: string,
+  plan: AutoFilePlan,
+  result: CallToolResult,
+  texts: TextBlock[],
+): CallToolResult {
+  if (texts.length === 0 || !plan.outFile) return result;
+  const payload = parseResultPayload(texts.map((block) => block.text).join('\n'));
+  if (!isRecord(payload) || typeof payload.result !== 'string') return result;
+
+  const text = payload.result;
+  writeAtomic(plan.outFile, text);
+  let isJson = false;
+  try {
+    JSON.parse(text);
+    isJson = true;
+  } catch {
+    isJson = false;
+  }
+
+  // An extension build older than rawOutput still redacts: say so.
+  const redacted = payload.redacted === true;
+  const summary: Record<string, unknown> = {
+    tool: name,
+    mode: 'out_file',
+    saved_to: plan.outFile,
+    bytes: Buffer.byteLength(text, 'utf8'),
+    sha256: crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
+    raw: !redacted,
+    content_type: isJson ? 'application/json' : 'text/plain',
+  };
+  for (const key of RAW_ENVELOPE_KEYS) {
+    if (payload[key] !== undefined) summary[key] = payload[key];
+  }
+  if (redacted) summary.redacted = true;
+  summary.note = redacted
+    ? 'returned value written to file, but the extension redacted it (reload the extension)'
+    : 'returned value written to file unredacted; read it with your file tools';
+
+  return { content: [summaryBlock(summary) as any], isError: false };
 }
 
 function writeTextResult(

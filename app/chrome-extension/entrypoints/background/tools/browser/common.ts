@@ -29,7 +29,20 @@ interface NavigateToolParams {
 
 /** The JSON a navigate reply carries about the page it ended on. */
 function pageFields(page: PageReport | null, fallbackUrl?: string) {
-  return page ? { url: page.url, title: page.title, page } : { url: fallbackUrl };
+  if (!page) return { url: fallbackUrl };
+  if (!page.pending_url) return { url: page.url, title: page.title, page };
+  // url/title still name the page being left; without this an agent reads the
+  // reply as "the navigation did nothing" and navigates again.
+  return {
+    url: page.url,
+    title: page.title,
+    pending_url: page.pending_url,
+    note:
+      'The navigation started, but the server has not answered yet (a slow page, e.g. a PDF ' +
+      'being generated), so url and title are still the previous page. Do not navigate again: ' +
+      'check the tab again later (get_windows_and_tabs shows its url once it loads).',
+    page,
+  };
 }
 
 /**

@@ -538,7 +538,9 @@ export async function clickUid(tabId: number, uid: number, double = false): Prom
     );
   }
   if (info.tag === 'INPUT' && info.type === 'file') {
-    throw new Error(`uid ${uid} is a file input; use chrome_upload_file instead of clicking it.`);
+    throw new Error(
+      `uid ${uid} is a file input; use chrome_upload_file(uid ${uid}) instead of clicking it.`,
+    );
   }
   if (info.disabled) throw new Error(`uid ${uid} is disabled; nothing was clicked.`);
   const before = isCheckable(info) ? info.checked : null;

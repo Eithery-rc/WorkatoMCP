@@ -25,6 +25,12 @@ export interface PageReport {
   title: string;
   /** The action caused a navigation (a new document, not a same-document hash change). */
   navigated: boolean;
+  /**
+   * A navigation started but its server had not answered when the wait ended
+   * (a slow page, a PDF still being generated): the url it is going to. url and
+   * title then still describe the previous page.
+   */
+  pending_url?: string;
   /** The page was still loading when the settle wait ran out. */
   loading?: boolean;
   /** A JS dialog is open now; input tools are refused until chrome_handle_dialog. */
@@ -125,6 +131,8 @@ interface NavigationWatch {
   /** A new document committed in the main frame. */
   committed: () => boolean;
   finished: () => boolean;
+  /** Where the last main-frame navigation that started is going. */
+  targetUrl: () => string | undefined;
   newTabs: () => Array<{ tabId: number; url: string }>;
   stop: () => void;
 }
@@ -133,12 +141,14 @@ function watchTab(tabId: number): NavigationWatch {
   let started = false;
   let committed = false;
   let finished = false;
+  let target: string | undefined;
   const created: chrome.tabs.Tab[] = [];
 
   const onBefore = (d: chrome.webNavigation.WebNavigationParentedCallbackDetails) => {
     if (d.tabId !== tabId || d.frameId !== 0) return;
     started = true;
     finished = false;
+    target = d.url;
   };
   const onCommitted = (d: chrome.webNavigation.WebNavigationTransitionCallbackDetails) => {
     if (d.tabId !== tabId || d.frameId !== 0) return;
@@ -178,6 +188,7 @@ function watchTab(tabId: number): NavigationWatch {
     started: () => started,
     committed: () => committed,
     finished: () => finished,
+    targetUrl: () => target,
     newTabs: () =>
       created.map((t) => ({ tabId: t.id as number, url: t.pendingUrl || t.url || '' })),
     stop: () => {
@@ -394,14 +405,42 @@ export async function settleTab(
   const started = Date.now();
   const deadline = started + (options.settleTimeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS);
   const loaded = await waitForLoad(tabId, deadline);
-  return finishReport(tabId, started, deadline, { navigated: true, loaded, newTabs: [] });
+  const report = await finishReport(tabId, started, deadline, {
+    navigated: true,
+    loaded,
+    newTabs: [],
+  });
+  // Still waiting on its server: the tab has not reached the page yet.
+  if (report.pending_url) report.navigated = false;
+  return report;
+}
+
+/**
+ * The url a navigation is still waiting on, if any. Chrome's own pendingUrl
+ * wins; the watched start is the fallback for a tab that does not expose it.
+ * A navigation that ended (failed, or turned into a download) is not pending.
+ */
+function pendingNavigationUrl(
+  tab: chrome.tabs.Tab | null,
+  watched: string | undefined,
+): string | undefined {
+  if (!tab) return undefined;
+  if (tab.pendingUrl && tab.pendingUrl !== tab.url) return tab.pendingUrl;
+  if (watched && tab.status === 'loading' && watched !== tab.url) return watched;
+  return undefined;
 }
 
 async function finishReport(
   tabId: number,
   started: number,
   deadline: number,
-  state: { navigated: boolean; loaded: boolean; newTabs: Array<{ tabId: number; url: string }> },
+  state: {
+    navigated: boolean;
+    loaded: boolean;
+    newTabs: Array<{ tabId: number; url: string }>;
+    /** A navigation the watch saw start but not commit. */
+    pendingUrl?: string;
+  },
 ): Promise<PageReport> {
   let timedOut = !state.loaded;
   if (state.loaded) {
@@ -417,6 +456,8 @@ async function finishReport(
     dialog: openDialog(tabId),
     settled_ms: Date.now() - started,
   };
+  const pendingUrl = pendingNavigationUrl(tab, state.pendingUrl);
+  if (pendingUrl) report.pending_url = pendingUrl;
   if (tab && tab.status === 'loading') report.loading = true;
   if (timedOut) report.timed_out = true;
   if (state.newTabs.length) report.new_tabs = state.newTabs;
@@ -496,6 +537,10 @@ export async function runWithSettle<T>(
         navigated,
         loaded,
         newTabs: watch.newTabs(),
+        pendingUrl:
+          watch.started() && !watch.committed() && !watch.finished()
+            ? watch.targetUrl()
+            : undefined,
       }),
     };
   } finally {
@@ -509,6 +554,11 @@ export function formatPageReport(page: PageReport | null): string {
   const parts = [
     `page: ${page.navigated ? 'navigated to ' : ''}${page.url}${page.title ? ` (${page.title})` : ''}`,
   ];
+  if (page.pending_url) {
+    parts.push(
+      `navigation to ${page.pending_url} still waiting for the server (the page above is the previous one)`,
+    );
+  }
   if (page.loading) parts.push('still loading');
   if (page.timed_out) parts.push(`did not settle within ${page.settled_ms} ms`);
   if (page.dialog) {

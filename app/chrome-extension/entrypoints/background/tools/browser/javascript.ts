@@ -7,9 +7,13 @@
  * - With `uids`: CDP Runtime.callFunctionOn, the snapshot elements handed to
  *   the code as `elements` (no fallback: a uid only means something over CDP)
  *
+ * - With `async_job`: the code starts in the page and the call returns a job id
+ *   at once; `job_id` polls it later (CDP only)
+ *
  * Features:
  * - Async code support (top-level await via async wrapper)
- * - Output sanitization (sensitive data redaction)
+ * - Output sanitization (sensitive data redaction); `rawOutput`, set by the
+ *   bridge for an explicit out_file, returns the value unredacted for the file
  * - Output truncation (configurable max bytes)
  * - Timeout handling
  * - Detailed error classification
@@ -23,8 +27,10 @@ import { resolveElement } from './snapshot/element-actions';
 import { sendCommand as snapshotSendCommand } from './snapshot/debugger-session';
 import {
   DEFAULT_MAX_OUTPUT_BYTES,
+  formatRawOutput,
   sanitizeAndLimitOutput,
   sanitizeText,
+  type SanitizedOutput,
 } from '@/utils/output-sanitizer';
 
 // ============================================================================
@@ -56,12 +62,23 @@ type ErrorKind =
   | 'scripting_error';
 
 interface JavaScriptToolParams {
-  code: string;
+  code?: string;
   tabId?: number;
   timeoutMs?: number;
   maxOutputBytes?: number;
   /** Snapshot uids, handed to the code as the array `elements`. */
   uids?: number[];
+  /** Start the code as a page job and return its id instead of waiting. */
+  async_job?: boolean;
+  /** Poll a job started with async_job. */
+  job_id?: string;
+  /** How long a poll waits for the job to finish (default 0: one look). */
+  wait_ms?: number;
+  /**
+   * Internal, set by the native-server when out_file is given explicitly, and
+   * absent from the served schema: return the value unredacted, for the file.
+   */
+  rawOutput?: boolean;
 }
 
 interface ExecutionError {
@@ -82,6 +99,10 @@ interface JavaScriptToolResult {
   success: boolean;
   tabId: number;
   engine: ExecutionEngine;
+  job_id?: string;
+  state?: JobState;
+  message?: string;
+  job_ms?: number;
   result?: string;
   truncated?: boolean;
   redacted?: boolean;
@@ -93,6 +114,15 @@ interface JavaScriptToolResult {
 interface ExecutionOptions {
   timeoutMs: number;
   maxOutputBytes: number;
+  /** Unredacted output for a file (the bridge's explicit out_file). */
+  raw: boolean;
+}
+
+/** Format a returned value: redacted for the model, or raw for a file. */
+function limitOutput(value: unknown, options: ExecutionOptions): SanitizedOutput {
+  return options.raw
+    ? formatRawOutput(value)
+    : sanitizeAndLimitOutput(value, { maxBytes: options.maxOutputBytes });
 }
 
 // Discriminated union for execution results
@@ -264,7 +294,7 @@ async function executeViaCdp(
 
     // Extract and sanitize the result
     const value = extractReturnValue(response?.result);
-    const sanitized = sanitizeAndLimitOutput(value, { maxBytes: options.maxOutputBytes });
+    const sanitized = limitOutput(value, options);
 
     return {
       ok: true,
@@ -336,9 +366,7 @@ ${code}
     if (response?.exceptionDetails) {
       return { ok: false, engine: 'cdp', error: parseExceptionDetails(response.exceptionDetails) };
     }
-    const sanitized = sanitizeAndLimitOutput(extractReturnValue(response?.result), {
-      maxBytes: options.maxOutputBytes,
-    });
+    const sanitized = limitOutput(extractReturnValue(response?.result), options);
     return {
       ok: true,
       engine: 'cdp',
@@ -433,7 +461,7 @@ async function executeViaScripting(
     }
 
     // Sanitize the successful result
-    const sanitized = sanitizeAndLimitOutput(result.value, { maxBytes: options.maxOutputBytes });
+    const sanitized = limitOutput(result.value, options);
 
     return {
       ok: true,
@@ -465,6 +493,446 @@ async function executeViaScripting(
 }
 
 // ============================================================================
+// Page jobs (async_job / job_id)
+// ============================================================================
+
+type JobState = 'running' | 'done' | 'error' | 'busy' | 'lost';
+
+/** Page global holding the jobs this tool started in that document. */
+const JOB_STORE = '__workatomcpJobs';
+/**
+ * Budget for one look at the job store. A page whose main thread is blocked
+ * (a sync XHR) cannot answer any evaluate, so a slower probe reports busy.
+ */
+const JOB_PROBE_TIMEOUT_MS = 2500;
+/** A start the page does not accept in this long is reported busy (it stays queued). */
+const JOB_START_TIMEOUT_MS = 10_000;
+const JOB_POLL_INTERVAL_MS = 500;
+const MAX_JOB_WAIT_MS = 100_000;
+const MAX_TRACKED_JOBS = 500;
+/**
+ * A delivered result stays readable once more for this long: a reply that
+ * never reached the agent (a failed out_file write, a bridge timeout) must not
+ * lose a job that took a minute to run.
+ */
+const JOB_REREAD_WINDOW_MS = 60_000;
+/** Finished jobs nobody polled, and unread late start failures, are dropped after this. */
+const JOB_RETENTION_MS = 30 * 60_000;
+
+interface JobRecord {
+  tabId: number;
+  startedAt: number;
+  /** When the result was first handed out (the page keeps it for one re-read). */
+  deliveredAt?: number;
+}
+
+/** Jobs started from this service worker. A restart loses it; the page store survives. */
+const startedJobs = new Map<string, JobRecord>();
+/** A probe still waiting on a blocked page, reused instead of queueing another. */
+const inflightProbes = new Map<string, Promise<CDPEvaluateResult>>();
+/** A start reported busy that failed once the page answered (a syntax error, CDP). */
+const lateStartFailures = new Map<string, { error: ExecutionError; at: number }>();
+
+interface PageJobEntry {
+  state?: string;
+  value?: unknown;
+  error?: { name?: string; message?: string; stack?: string };
+  started?: number;
+  finished?: number;
+  /** Page time of the first delivery; set by buildJobDeliveredExpression. */
+  delivered?: number;
+  /** Milliseconds since that delivery, computed by the probe in the page. */
+  deliveredAgo?: number;
+}
+
+type JobOutcome =
+  | { ok: true; state: 'running' | 'busy'; message?: string; jobMs?: number }
+  | { ok: true; state: 'done'; output: SanitizedOutput; jobMs?: number; reread?: boolean }
+  | { ok: false; state?: 'error' | 'lost'; error: ExecutionError; jobMs?: number };
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Resolve with the promise's outcome, or with `onTimeout` once ms pass first. */
+function raceTimeout<T, U>(promise: Promise<T>, ms: number, onTimeout: U): Promise<T | U> {
+  return new Promise<T | U>((resolve, reject) => {
+    const timer = setTimeout(() => resolve(onTimeout), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function newJobId(): string {
+  return `job_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function trackJob(jobId: string, tabId: number): void {
+  startedJobs.set(jobId, { tabId, startedAt: Date.now() });
+  while (startedJobs.size > MAX_TRACKED_JOBS) {
+    const oldest = startedJobs.keys().next().value;
+    if (oldest === undefined) break;
+    startedJobs.delete(oldest);
+  }
+}
+
+function pruneLateStartFailures(now: number): void {
+  for (const [jobId, failure] of lateStartFailures) {
+    if (now - failure.at > JOB_RETENTION_MS) lateStartFailures.delete(jobId);
+  }
+}
+
+/**
+ * The page side of a job start. The user code runs from a timer, so this
+ * evaluate returns before any synchronous work in it (a sync XHR) blocks the
+ * page. A syntax error in the code fails the whole expression, so it is
+ * reported by the start call and nothing is registered. Each start also drops
+ * jobs that finished long ago and were never polled, so a long-lived tab does
+ * not keep their results forever.
+ */
+function buildJobStartExpression(jobId: string, code: string): string {
+  return `(function () {
+var key = ${JSON.stringify(JOB_STORE)};
+if (!window[key]) Object.defineProperty(window, key, { value: {}, configurable: true, writable: true });
+var store = window[key];
+var id = ${JSON.stringify(jobId)};
+var started = Date.now();
+Object.keys(store).forEach(function (old) {
+  var entry = store[old];
+  if (entry && typeof entry.finished === 'number' && started - entry.finished > ${JOB_RETENTION_MS}) {
+    delete store[old];
+  }
+});
+store[id] = { state: 'running', started: started };
+setTimeout(function () {
+  var run;
+  try {
+    run = (async () => {
+${code}
+})();
+  } catch (e) {
+    run = Promise.reject(e);
+  }
+  Promise.resolve(run).then(function (value) {
+    store[id] = { state: 'done', value: value, started: started, finished: Date.now() };
+  }, function (err) {
+    store[id] = {
+      state: 'error',
+      error: {
+        name: err && err.name ? String(err.name) : undefined,
+        message: err && err.message !== undefined ? String(err.message) : String(err),
+        stack: err && err.stack ? String(err.stack) : undefined
+      },
+      started: started,
+      finished: Date.now()
+    };
+  });
+}, 0);
+return id;
+})()`;
+}
+
+function buildJobProbeExpression(jobId: string): string {
+  return `(function () {
+var store = window[${JSON.stringify(JOB_STORE)}];
+var entry = store && store[${JSON.stringify(jobId)}];
+if (!entry) return null;
+if (typeof entry.delivered !== 'number') return entry;
+return Object.assign({}, entry, { deliveredAgo: Date.now() - entry.delivered });
+})()`;
+}
+
+/**
+ * Mark a result as handed out. The page keeps it for one more read within the
+ * re-read window, then drops it on its own.
+ */
+function buildJobDeliveredExpression(jobId: string): string {
+  return `(function () {
+var store = window[${JSON.stringify(JOB_STORE)}];
+var id = ${JSON.stringify(jobId)};
+var entry = store && store[id];
+if (entry && typeof entry.delivered !== 'number') {
+  entry.delivered = Date.now();
+  setTimeout(function () {
+    if (store[id] === entry) delete store[id];
+  }, ${JOB_REREAD_WINDOW_MS});
+}
+return true;
+})()`;
+}
+
+function buildJobForgetExpression(jobId: string): string {
+  return `(function () {
+var store = window[${JSON.stringify(JOB_STORE)}];
+if (store) delete store[${JSON.stringify(jobId)}];
+return true;
+})()`;
+}
+
+function evaluateForJob(tabId: number, expression: string): Promise<CDPEvaluateResult> {
+  return cdpSessionManager.withSession(tabId, CDP_SESSION_KEY, async () => {
+    return (await cdpSessionManager.sendCommand(tabId, 'Runtime.evaluate', {
+      expression,
+      returnByValue: true,
+    })) as CDPEvaluateResult;
+  });
+}
+
+function jobCdpError(error: unknown): ExecutionError {
+  const message = sanitizeText(error instanceof Error ? error.message : String(error)).text;
+  if (isDebuggerConflictError(error)) {
+    return {
+      kind: 'debugger_conflict',
+      message:
+        `${message}. async_job and job_id need the CDP debugger (there is no scripting ` +
+        'fallback for jobs): close DevTools on this tab and try again.',
+    };
+  }
+  return { kind: 'cdp_error', message };
+}
+
+type StartOutcome =
+  | { ok: true; jobId: string; state: 'running' | 'busy'; message: string }
+  | { ok: false; error: ExecutionError };
+
+async function startJob(tabId: number, code: string): Promise<StartOutcome> {
+  const jobId = newJobId();
+  pruneLateStartFailures(Date.now());
+  // Tracked before sending: a start that is still queued behind a blocked page
+  // must be pollable, never started a second time.
+  trackJob(jobId, tabId);
+  try {
+    const sent = evaluateForJob(tabId, buildJobStartExpression(jobId, code));
+    const response = await raceTimeout(sent, JOB_START_TIMEOUT_MS, 'late' as const);
+    if (response === 'late') {
+      // The start may still fail once the page answers; keep that for the poll.
+      sent.then(
+        (late) => {
+          if (late?.exceptionDetails) {
+            lateStartFailures.set(jobId, {
+              error: parseExceptionDetails(late.exceptionDetails),
+              at: Date.now(),
+            });
+          }
+        },
+        (error: unknown) =>
+          lateStartFailures.set(jobId, { error: jobCdpError(error), at: Date.now() }),
+      );
+      return {
+        ok: true,
+        jobId,
+        state: 'busy',
+        message:
+          `The page did not accept the start within ${JOB_START_TIMEOUT_MS} ms: its main thread ` +
+          'is blocked. The start stays queued and runs once the page frees up. Poll this job_id; ' +
+          'do not start the code again.',
+      };
+    }
+    if (response?.exceptionDetails) {
+      startedJobs.delete(jobId);
+      return { ok: false, error: parseExceptionDetails(response.exceptionDetails) };
+    }
+    return {
+      ok: true,
+      jobId,
+      state: 'running',
+      message: 'Started. Poll it with chrome_javascript({job_id, wait_ms}) on the same tab.',
+    };
+  } catch (error) {
+    startedJobs.delete(jobId);
+    return { ok: false, error: jobCdpError(error) };
+  }
+}
+
+type ProbeOutcome =
+  | { kind: 'entry'; entry: PageJobEntry }
+  | { kind: 'missing' }
+  | { kind: 'busy' }
+  | { kind: 'failed'; error: ExecutionError };
+
+async function probeJob(tabId: number, jobId: string): Promise<ProbeOutcome> {
+  let pending = inflightProbes.get(jobId);
+  if (!pending) {
+    const probe = evaluateForJob(tabId, buildJobProbeExpression(jobId));
+    pending = probe;
+    inflightProbes.set(jobId, probe);
+    const clear = () => {
+      if (inflightProbes.get(jobId) === probe) inflightProbes.delete(jobId);
+    };
+    probe.then(clear, clear);
+  }
+  let response: CDPEvaluateResult | 'busy';
+  try {
+    response = await raceTimeout(pending, JOB_PROBE_TIMEOUT_MS, 'busy' as const);
+  } catch (error) {
+    return { kind: 'failed', error: jobCdpError(error) };
+  }
+  if (response === 'busy') return { kind: 'busy' };
+  if (response?.exceptionDetails) {
+    return { kind: 'failed', error: parseExceptionDetails(response.exceptionDetails) };
+  }
+  const value = extractReturnValue(response?.result);
+  if (!value || typeof value !== 'object') return { kind: 'missing' };
+  return { kind: 'entry', entry: value as PageJobEntry };
+}
+
+/** Drop a job from the page and from the tracker for good (best effort). */
+function forgetJob(tabId: number, jobId: string): void {
+  startedJobs.delete(jobId);
+  evaluateForJob(tabId, buildJobForgetExpression(jobId)).catch(() => undefined);
+}
+
+/**
+ * Hand out a finished job. The first read leaves it in the page for one
+ * re-read within JOB_REREAD_WINDOW_MS; that re-read, or a read after the
+ * window, drops it. Returns false when the window has passed (nothing to hand out).
+ */
+function deliverJob(
+  tabId: number,
+  jobId: string,
+  entry: PageJobEntry,
+  record: JobRecord | undefined,
+): { reread: boolean } | false {
+  if (typeof entry.delivered === 'number') {
+    forgetJob(tabId, jobId);
+    const ago = typeof entry.deliveredAgo === 'number' ? entry.deliveredAgo : Infinity;
+    return ago <= JOB_REREAD_WINDOW_MS ? { reread: true } : false;
+  }
+  if (record) record.deliveredAt = Date.now();
+  evaluateForJob(tabId, buildJobDeliveredExpression(jobId)).catch(() => undefined);
+  return { reread: false };
+}
+
+function alreadyDeliveredError(jobId: string, tabId: number): ExecutionError {
+  return {
+    kind: 'runtime_error',
+    message:
+      `Unknown job_id ${jobId} in tab ${tabId}: it was not started in this document, or its ` +
+      `result was already delivered (a finished job can be read again for ${JOB_REREAD_WINDOW_MS / 1000} s ` +
+      'after the first read, once, and is then dropped).',
+  };
+}
+
+function jobDuration(entry: PageJobEntry): number | undefined {
+  if (typeof entry.started !== 'number') return undefined;
+  const end = typeof entry.finished === 'number' ? entry.finished : Date.now();
+  return Math.max(0, end - entry.started);
+}
+
+async function pollJob(
+  tabId: number,
+  jobId: string,
+  waitMs: number,
+  options: ExecutionOptions,
+): Promise<JobOutcome> {
+  const record = startedJobs.get(jobId);
+  if (record && record.tabId !== tabId) {
+    return {
+      ok: false,
+      error: {
+        kind: 'runtime_error',
+        message: `Job ${jobId} was started in tab ${record.tabId}, not tab ${tabId}. Poll it there (same tabId or lease).`,
+      },
+    };
+  }
+  // One debugger session for the whole wait: the probes inside only add a
+  // reference to it, so a long wait_ms does not attach and detach per probe.
+  try {
+    return await cdpSessionManager.withSession(tabId, CDP_SESSION_KEY, () =>
+      pollJobLoop(tabId, jobId, waitMs, options, record),
+    );
+  } catch (error) {
+    return { ok: false, error: jobCdpError(error) };
+  }
+}
+
+async function pollJobLoop(
+  tabId: number,
+  jobId: string,
+  waitMs: number,
+  options: ExecutionOptions,
+  record: JobRecord | undefined,
+): Promise<JobOutcome> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const startFailure = lateStartFailures.get(jobId);
+    if (startFailure) {
+      lateStartFailures.delete(jobId);
+      startedJobs.delete(jobId);
+      return { ok: false, state: 'error', error: startFailure.error };
+    }
+    const probe = await probeJob(tabId, jobId);
+    let last: JobOutcome;
+    if (probe.kind === 'failed') return { ok: false, error: probe.error };
+    if (probe.kind === 'missing') {
+      // Delivered, then dropped by the page once the re-read window passed.
+      if (record?.deliveredAt !== undefined) {
+        startedJobs.delete(jobId);
+        return { ok: false, error: alreadyDeliveredError(jobId, tabId) };
+      }
+      if (record) {
+        startedJobs.delete(jobId);
+        return {
+          ok: false,
+          state: 'lost',
+          error: {
+            kind: 'runtime_error',
+            message:
+              `Job ${jobId} is gone from the page: the tab navigated or reloaded after it started, ` +
+              'so its outcome is unknown. Check the resulting state before running the code again.',
+          },
+        };
+      }
+      return { ok: false, error: alreadyDeliveredError(jobId, tabId) };
+    }
+    if (probe.kind === 'busy') {
+      last = {
+        ok: true,
+        state: 'busy',
+        message:
+          `The page did not answer within ${JOB_PROBE_TIMEOUT_MS} ms: its main thread is blocked, ` +
+          'most likely by this job (synchronous work such as a sync XHR). Poll again.',
+      };
+    } else {
+      const entry = probe.entry;
+      const jobMs = jobDuration(entry);
+      if (entry.state === 'done' || entry.state === 'error') {
+        const delivered = deliverJob(tabId, jobId, entry, record);
+        if (!delivered) return { ok: false, error: alreadyDeliveredError(jobId, tabId) };
+        if (entry.state === 'done') {
+          const output = limitOutput(entry.value, options);
+          return { ok: true, state: 'done', output, jobMs, reread: delivered.reread };
+        }
+        const rawMessage = entry.error?.message ?? 'JavaScript job failed';
+        const message = sanitizeText(rawMessage).text;
+        const stack = entry.error?.stack ? sanitizeText(entry.error.stack).text : undefined;
+        const isSyntaxError = entry.error?.name === 'SyntaxError';
+        return {
+          ok: false,
+          state: 'error',
+          error: {
+            kind: isSyntaxError ? 'syntax_error' : 'runtime_error',
+            message: stack && !stack.includes(message) ? `${message}\n${stack}` : stack || message,
+          },
+          jobMs,
+        };
+      }
+      last = { ok: true, state: 'running', jobMs };
+    }
+    if (Date.now() + JOB_POLL_INTERVAL_MS > deadline) return last;
+    await delay(JOB_POLL_INTERVAL_MS);
+  }
+}
+
+// ============================================================================
 // Tool Implementation
 // ============================================================================
 
@@ -477,8 +945,21 @@ class JavaScriptTool extends BaseBrowserToolExecutor {
     try {
       // Validate required parameter
       const code = typeof args?.code === 'string' ? args.code.trim() : '';
-      if (!code) {
-        return createErrorResponse('Parameter [code] is required');
+      const jobId = typeof args?.job_id === 'string' ? args.job_id.trim() : '';
+      const asyncJob = args?.async_job === true;
+      const hasUids = Array.isArray(args?.uids) && args.uids.length > 0;
+      if (jobId && code) {
+        return createErrorResponse(
+          'Pass code (to run it, or to start it with async_job) or job_id (to poll a job), not both.',
+        );
+      }
+      if (!code && !jobId) {
+        return createErrorResponse(
+          'Parameter [code] is required (or job_id, to poll a job started with async_job)',
+        );
+      }
+      if ((jobId || asyncJob) && hasUids) {
+        return createErrorResponse('uids cannot be combined with async_job or job_id.');
       }
 
       // Resolve target tab
@@ -498,9 +979,36 @@ class JavaScriptTool extends BaseBrowserToolExecutor {
       const options: ExecutionOptions = {
         timeoutMs: normalizePositiveInt(args.timeoutMs, DEFAULT_TIMEOUT_MS),
         maxOutputBytes: normalizePositiveInt(args.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES),
+        raw: args.rawOutput === true,
       };
 
-      if (Array.isArray(args.uids) && args.uids.length > 0) {
+      if (jobId) {
+        const waitMs =
+          typeof args.wait_ms === 'number' && Number.isFinite(args.wait_ms)
+            ? Math.min(Math.max(0, Math.floor(args.wait_ms)), MAX_JOB_WAIT_MS)
+            : 0;
+        const outcome = await pollJob(tabId, jobId, waitMs, options);
+        return this.buildJobResponse(tabId, jobId, outcome, startTime);
+      }
+
+      if (asyncJob) {
+        const started = await startJob(tabId, code);
+        if (!started.ok) {
+          return this.buildErrorResponse(
+            tabId,
+            { ok: false, engine: 'cdp', error: started.error },
+            startTime,
+          );
+        }
+        return this.buildJobResponse(
+          tabId,
+          started.jobId,
+          { ok: true, state: started.state, message: started.message },
+          startTime,
+        );
+      }
+
+      if (args.uids && hasUids) {
         const withElements = await executeWithElements(tabId, code, args.uids, options);
         return withElements.ok
           ? this.buildSuccessResponse(tabId, withElements, startTime)
@@ -589,7 +1097,8 @@ class JavaScriptTool extends BaseBrowserToolExecutor {
       allWarnings.push(
         'The script was NOT cancelled — it keeps running in the page and its side effects (fetches, ' +
           'writes) may still land. Do not blindly retry non-idempotent code: check the resulting state ' +
-          'first, or re-run with a larger timeoutMs.',
+          'first, or re-run with a larger timeoutMs. For work longer than the call allows, start it ' +
+          'with async_job:true and poll the returned job_id.',
       );
     }
 
@@ -605,6 +1114,63 @@ class JavaScriptTool extends BaseBrowserToolExecutor {
     return {
       content: [{ type: 'text', text: JSON.stringify(payload) }],
       isError: true,
+    };
+  }
+
+  /**
+   * A job start or poll. running and busy are successful answers (poll again);
+   * done carries the result like a plain run; error and lost are errors.
+   */
+  private buildJobResponse(
+    tabId: number,
+    jobId: string,
+    outcome: JobOutcome,
+    startTime: number,
+  ): ToolResult {
+    const metrics = { elapsedMs: Math.round(performance.now() - startTime) };
+    let payload: JavaScriptToolResult;
+    if (!outcome.ok) {
+      payload = {
+        success: false,
+        tabId,
+        engine: 'cdp',
+        job_id: jobId,
+        state: outcome.state,
+        job_ms: outcome.jobMs,
+        error: outcome.error,
+        metrics,
+      };
+    } else if (outcome.state === 'done') {
+      payload = {
+        success: true,
+        tabId,
+        engine: 'cdp',
+        job_id: jobId,
+        state: 'done',
+        job_ms: outcome.jobMs,
+        result: outcome.output.text,
+        truncated: outcome.output.truncated || undefined,
+        redacted: outcome.output.redacted || undefined,
+        message: outcome.reread
+          ? 'Second read of a result that was already delivered; it is now dropped from the page.'
+          : undefined,
+        metrics,
+      };
+    } else {
+      payload = {
+        success: true,
+        tabId,
+        engine: 'cdp',
+        job_id: jobId,
+        state: outcome.state,
+        job_ms: outcome.jobMs,
+        message: outcome.message,
+        metrics,
+      };
+    }
+    return {
+      content: [{ type: 'text', text: JSON.stringify(payload) }],
+      isError: !outcome.ok,
     };
   }
 }

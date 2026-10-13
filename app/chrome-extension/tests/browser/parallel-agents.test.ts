@@ -7,7 +7,11 @@ import {
   getTabUids,
   lookupUid,
 } from '@/entrypoints/background/tools/browser/snapshot/uid-store';
-import { closeAgentTab, openAgentTab } from '@/entrypoints/background/agent-tabs';
+import {
+  closeAgentTab,
+  openAgentTab,
+  promoteToOwnWindow,
+} from '@/entrypoints/background/agent-tabs';
 
 function deferred() {
   let resolve!: () => void;
@@ -123,5 +127,28 @@ describe('agent tabs', () => {
   it('closing a tab that is already gone is not an error', async () => {
     (chrome.tabs.remove as any) = vi.fn().mockRejectedValue(new Error('No tab with id'));
     await expect(closeAgentTab(5)).resolves.toEqual({ closed: false });
+  });
+
+  it('moves a tab of the agents window to an unfocused window of its own', async () => {
+    const opened = await openAgentTab({});
+    (chrome.tabs.get as any) = vi.fn().mockResolvedValue({ id: 902, windowId: opened.windowId });
+    (chrome.windows.create as any).mockResolvedValue({ id: 950 });
+    await expect(promoteToOwnWindow(902)).resolves.toBe(950);
+    expect(chrome.windows.create).toHaveBeenLastCalledWith({ tabId: 902, focused: false });
+  });
+
+  it('never moves a tab outside the agents window', async () => {
+    await openAgentTab({});
+    (chrome.tabs.get as any) = vi.fn().mockResolvedValue({ id: 5, windowId: 1 });
+    (chrome.windows.create as any).mockClear();
+    await expect(promoteToOwnWindow(5)).resolves.toBeNull();
+    expect(chrome.windows.create).not.toHaveBeenCalled();
+  });
+
+  it('moves nothing when the agents window is gone', async () => {
+    (chrome.windows.get as any).mockRejectedValue(new Error('No window with id'));
+    (chrome.tabs.get as any) = vi.fn().mockResolvedValue({ id: 902, windowId: 900 });
+    await expect(promoteToOwnWindow(902)).resolves.toBeNull();
+    expect(chrome.windows.create).not.toHaveBeenCalled();
   });
 });

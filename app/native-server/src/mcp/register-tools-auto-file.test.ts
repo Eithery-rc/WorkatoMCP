@@ -94,6 +94,24 @@ describe('register-tools image and auto-file wiring', () => {
     fs.rmSync(summary.saved_to, { force: true });
   });
 
+  test('drops a caller-supplied rawOutput before the call reaches the extension', async () => {
+    const sendRequest = stubResponse({
+      content: [{ type: 'text', text: JSON.stringify({ success: true, result: 'x' }) }],
+      isError: false,
+    });
+    const router = await pinnedRouter();
+
+    await router.handleToolCall('chrome_javascript', { tabId: 4, code: 'x', rawOutput: true });
+    // chrome_click_element is outside the auto-file stage: only the router strips it.
+    await router.handleToolCall('chrome_click_element', { tabId: 4, rawOutput: true });
+
+    const sent = sendRequest.mock.calls.map((call) => (call as any[])[1]);
+    const jsCall = sent.find((request: any) => request.name === 'chrome_javascript');
+    const clickCall = sent.find((request: any) => request.name === 'chrome_click_element');
+    expect(jsCall.args).toEqual({ tabId: 4, code: 'x' });
+    expect(clickCall.args).toEqual({ tabId: 4 });
+  });
+
   test('leaves a normal-sized read result inline', async () => {
     const payload = { jobs: [{ id: 1 }] };
     stubResponse({ content: [{ type: 'text', text: JSON.stringify(payload) }], isError: false });

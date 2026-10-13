@@ -70,6 +70,117 @@ describe('browser read tools', () => {
   });
 });
 
+describe('chrome_javascript out_file', () => {
+  const jsResult = (payload: Record<string, unknown>) => textResult(JSON.stringify(payload));
+
+  test('asks the extension for raw output only when out_file is explicit', () => {
+    const outFile = path.join(tmpDir, 'template.html');
+    const explicit = prepareAutoFileCall('chrome_javascript', {
+      tabId: 3,
+      code: 'x',
+      out_file: outFile,
+    });
+    expect(explicit.args).toEqual({ tabId: 3, code: 'x', rawOutput: true });
+    expect(explicit.plan?.raw).toBe(true);
+
+    // A caller cannot ask for unredacted inline output by passing the internal arg.
+    const inline = prepareAutoFileCall('chrome_javascript', {
+      tabId: 3,
+      code: 'x',
+      rawOutput: true,
+    });
+    expect(inline.args).toEqual({ tabId: 3, code: 'x' });
+    expect(inline.plan?.raw).toBeUndefined();
+
+    // Other read tools never get it.
+    const snapshot = prepareAutoFileCall('chrome_snapshot', { out_file: outFile });
+    expect(snapshot.args).toEqual({});
+  });
+
+  test('writes the returned value itself, not the envelope', () => {
+    const outFile = path.join(tmpDir, 'template.html');
+    const { plan } = prepareAutoFileCall('chrome_javascript', { tabId: 3, out_file: outFile });
+    const value = '<a href="/x?id=1&c=2">x</a>\n<p>a=1; b=2</p>';
+
+    const result = applyAutoFile(
+      'chrome_javascript',
+      plan,
+      jsResult({
+        success: true,
+        tabId: 3,
+        engine: 'cdp',
+        result: value,
+        metrics: { elapsedMs: 5 },
+      }),
+    ) as any;
+
+    expect(fs.readFileSync(outFile, 'utf8')).toBe(value);
+    expect(result.content).toHaveLength(1);
+    expect(parseSummary(result)).toEqual({
+      tool: 'chrome_javascript',
+      mode: 'out_file',
+      saved_to: path.resolve(outFile),
+      bytes: Buffer.byteLength(value, 'utf8'),
+      sha256: require('crypto').createHash('sha256').update(value, 'utf8').digest('hex'),
+      raw: true,
+      content_type: 'text/plain',
+      tabId: 3,
+      engine: 'cdp',
+      metrics: { elapsedMs: 5 },
+      note: expect.stringContaining('unredacted'),
+    });
+  });
+
+  test('keeps a job poll that has no result yet inline and writes nothing', () => {
+    const outFile = path.join(tmpDir, 'job.json');
+    const { plan } = prepareAutoFileCall('chrome_javascript', {
+      job_id: 'job_1',
+      out_file: outFile,
+    });
+    const running = jsResult({ success: true, tabId: 3, job_id: 'job_1', state: 'running' });
+    expect(applyAutoFile('chrome_javascript', plan, running)).toBe(running);
+    expect(fs.existsSync(outFile)).toBe(false);
+  });
+
+  test('keeps the warnings of an isolated-world fallback next to the file', () => {
+    const outFile = path.join(tmpDir, 'isolated.txt');
+    const { plan } = prepareAutoFileCall('chrome_javascript', { out_file: outFile });
+    const warning =
+      'Debugger is busy. Falling back to chrome.scripting.executeScript (ISOLATED world).';
+    const result = applyAutoFile(
+      'chrome_javascript',
+      plan,
+      jsResult({ success: true, engine: 'scripting', result: 'value', warnings: [warning] }),
+    ) as any;
+    expect(fs.readFileSync(outFile, 'utf8')).toBe('value');
+    expect(parseSummary(result)).toMatchObject({ engine: 'scripting', warnings: [warning] });
+  });
+
+  test('flags a value an older extension build still redacted', () => {
+    const outFile = path.join(tmpDir, 'old.txt');
+    const { plan } = prepareAutoFileCall('chrome_javascript', { out_file: outFile });
+    const result = applyAutoFile(
+      'chrome_javascript',
+      plan,
+      jsResult({ success: true, result: '[BLOCKED: Cookie/query string data]', redacted: true }),
+    ) as any;
+    expect(parseSummary(result)).toMatchObject({ raw: false, redacted: true });
+  });
+
+  test('an auto_file spill keeps the redacted envelope', () => {
+    const { args, plan } = prepareAutoFileCall('chrome_javascript', {
+      tabId: 3,
+      auto_file_threshold_chars: 10,
+    });
+    expect(args).toEqual({ tabId: 3 });
+    const envelope = JSON.stringify({ success: true, result: 'x'.repeat(50), redacted: true });
+    const summary = parseSummary(applyAutoFile('chrome_javascript', plan, textResult(envelope)));
+    expect(summary.mode).toBe('auto_file');
+    expect(fs.readFileSync(summary.saved_to, 'utf8')).toBe(envelope);
+    fs.rmSync(summary.saved_to, { force: true });
+  });
+});
+
 describe('isAutoFileEligible', () => {
   test('claims workato tools and chrome_screenshot, never an existing out_file tool', () => {
     expect(isAutoFileEligible('workato_job_trace')).toBe(true);
@@ -132,6 +243,12 @@ describe('prepareAutoFileCall', () => {
         out_file: path.join(tmpDir, 'nope', 'trace.json'),
       }),
     ).toThrow(/directory does not exist/);
+  });
+
+  test('rejects an out_file that is an existing directory', () => {
+    expect(() => prepareAutoFileCall('chrome_javascript', { code: 'x', out_file: tmpDir })).toThrow(
+      /is a directory/,
+    );
   });
 
   test('rejects a non-numeric threshold', () => {

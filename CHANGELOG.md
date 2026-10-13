@@ -9,6 +9,20 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 ### Added
 
 - **Extension releases**: pushing a `vX.Y.Z` tag (the extension version) publishes a GitHub release with `workatomcp-extension-X.Y.Z.zip`, built by GitHub Actions from that tag and attested (`gh attestation verify`). Installing the extension no longer needs a clone and a pnpm build.
+- **`chrome_fetch_to_file`**: fetches a URL in the tab's page with the session cookies and writes the body straight to a local file (up to 40 MB). The bytes never enter the reply or the output redaction, so PDFs from print URLs, CSV exports and template sources arrive intact. The reply is a summary: path, size, sha256, status, content type, filename and the first bytes (`%PDF-1.4`). It replaces Blob plus `anchor.click()` downloads.
+- **Async jobs in `chrome_javascript`**: `async_job:true` starts the code and returns a `job_id` at once; `job_id` with `wait_ms` polls it. A page whose main thread is blocked (a sync XHR) reports `busy` instead of timing the call out, and a job whose page navigated away reports `lost`.
+- **`chrome_upload_file` by `uid`**: a file input from `chrome_snapshot` is reached by its uid, including inputs inside same-process iframes.
+
+### Changed
+
+- `chrome_javascript` with an explicit `out_file` writes the returned value itself to the file, unredacted, and returns its size and sha256. Inline results and automatic spills are still redacted.
+- A full-page or element screenshot of a hidden tab in the shared agents window moves that tab into its own unfocused window first and reports `moved_to_window`. Leasing with `own_window` up front is no longer needed for screenshots. Tabs outside the agents window are never moved.
+- `chrome_handle_download` says why it timed out: no download started (and that Chrome's "multiple automatic downloads" permission holds script-started ones silently), or which download started and how far it got. An interrupted download fails at once with its reason.
+
+### Fixed
+
+- The output redaction replaced any text with two `&`- or `;`-separated pieces containing `=` with `[BLOCKED: Cookie/query string data]`, which swallowed whole HTML templates and full URLs. Only a string that is itself a cookie, Set-Cookie or query string is blocked now, and URL paths are no longer taken for base64.
+- `chrome_navigate` to a slow page (a PDF still being generated) reported the previous page with `navigated:false`, which read as "nothing happened". The reply now carries `pending_url` and a note not to navigate again.
 
 ## bridge 1.11.0 · shared 1.9.0 (2026-10-05)
 

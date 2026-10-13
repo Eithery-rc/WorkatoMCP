@@ -5,7 +5,9 @@
  * focusing anything, so agents working in parallel do not fight over the
  * user's active tab. By default every agent tab lives in one shared "agents"
  * window per profile; own_window gives a tab a window of its own, which keeps
- * it the visible tab of that window (screenshots, chrome_computer).
+ * it the visible tab of that window (screenshots, chrome_computer). A capture
+ * that needs a visible tab moves a hidden agents-window tab out on its own
+ * (promoteToOwnWindow), so own_window is an optimisation, not a requirement.
  */
 
 const AGENT_WINDOW_KEY = 'agentWindowId';
@@ -78,6 +80,29 @@ export async function openAgentTab(args: AgentTabOpenArgs): Promise<AgentTab> {
   const created = await openWindow(url);
   await rememberAgentWindow(created.windowId);
   return created;
+}
+
+/**
+ * Move a tab out of the shared agents window into an unfocused window of its
+ * own, where it is the visible tab (captureVisibleTab only shoots that one).
+ * Returns the new window id, or null when the tab is not in the agents window:
+ * a tab anywhere else is the user's (or adopted from the user) and stays put.
+ */
+export async function promoteToOwnWindow(tabId: number): Promise<number | null> {
+  const windowId = await rememberedAgentWindow();
+  if (windowId === null) return null;
+  let tab: chrome.tabs.Tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return null;
+  }
+  if (tab.windowId !== windowId) return null;
+  const win = await chrome.windows.create({ tabId, focused: false });
+  if (!win || typeof win.id !== 'number') {
+    throw new Error('Chrome did not return the window the tab was moved to.');
+  }
+  return win.id;
 }
 
 export async function closeAgentTab(tabId: unknown): Promise<{ closed: boolean }> {

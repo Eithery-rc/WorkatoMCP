@@ -20,6 +20,7 @@ export { readPageTool } from './read-page';
 export { computerTool } from './computer';
 export { handleDialogTool } from './dialog';
 export { handleDownloadTool } from './download';
+export { fetchToFileTool } from './fetch-to-file';
 export { userscriptTool } from './userscript';
 export {
   performanceStartTraceTool,

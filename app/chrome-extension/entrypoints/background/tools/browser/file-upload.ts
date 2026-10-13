@@ -2,9 +2,12 @@ import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
+import { resolveElement } from './snapshot/element-actions';
+import { sendCommand as snapshotSendCommand } from './snapshot/debugger-session';
 
 interface FileUploadToolParams {
-  selector: string; // CSS selector for the file input element
+  selector?: string; // CSS selector for the file input element
+  uid?: number; // chrome_snapshot uid of the file input (reaches same-process iframes)
   filePath?: string; // Local file path
   fileUrl?: string; // URL to download file from
   base64Data?: string; // Base64 encoded file data
@@ -28,13 +31,16 @@ class FileUploadTool extends BaseBrowserToolExecutor {
    * Execute file upload operation using Chrome DevTools Protocol
    */
   async execute(args: FileUploadToolParams): Promise<ToolResult> {
-    const { selector, filePath, fileUrl, base64Data, fileName, multiple = false } = args;
+    const { selector, uid, filePath, fileUrl, base64Data, fileName, multiple = false } = args;
 
     console.log(`Starting file upload operation with options:`, args);
 
     // Validate input
-    if (!selector) {
-      return createErrorResponse('Selector is required for file upload');
+    const hasUid = uid !== undefined && uid !== null;
+    if (!selector && !hasUid) {
+      return createErrorResponse(
+        'One of selector or uid (from chrome_snapshot) is required for file upload',
+      );
     }
 
     if (!filePath && !fileUrl && !base64Data) {
@@ -68,6 +74,26 @@ class FileUploadTool extends BaseBrowserToolExecutor {
         files = [tempFilePath];
       }
 
+      if (hasUid) {
+        await this.setFilesByUid(tabId, uid, files);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                message: 'File(s) uploaded successfully',
+                files: files,
+                uid: uid,
+                fileCount: files.length,
+              }),
+            },
+          ],
+          isError: false,
+        };
+      }
+
+      const cssSelector = selector as string;
       // Use shared CDP session manager to attach/do work/detach safely
       await cdpSessionManager.withSession(tabId, 'file-upload', async () => {
         // Enable necessary CDP domains
@@ -83,11 +109,14 @@ class FileUploadTool extends BaseBrowserToolExecutor {
         // Find the file input element using the selector
         const { nodeId } = (await cdpSessionManager.sendCommand(tabId, 'DOM.querySelector', {
           nodeId: root.nodeId,
-          selector: selector,
+          selector: cssSelector,
         })) as { nodeId: number };
 
         if (!nodeId || nodeId === 0) {
-          throw new Error(`Element with selector "${selector}" not found`);
+          throw new Error(
+            `Element with selector "${cssSelector}" not found. If the input is inside an iframe, ` +
+              'take chrome_snapshot of this tab and pass its uid instead (same-process iframes only).',
+          );
         }
 
         // Verify it's actually a file input
@@ -96,7 +125,7 @@ class FileUploadTool extends BaseBrowserToolExecutor {
         })) as { node: { nodeName: string; attributes?: string[] } };
 
         if (node.nodeName !== 'INPUT') {
-          throw new Error(`Element with selector "${selector}" is not an input element`);
+          throw new Error(`Element with selector "${cssSelector}" is not an input element`);
         }
 
         // Check if it's a file input by looking for type="file" in attributes
@@ -110,7 +139,9 @@ class FileUploadTool extends BaseBrowserToolExecutor {
         }
 
         if (!isFileInput) {
-          throw new Error(`Element with selector "${selector}" is not a file input (type="file")`);
+          throw new Error(
+            `Element with selector "${cssSelector}" is not a file input (type="file")`,
+          );
         }
 
         // Set the files on the input element
@@ -123,7 +154,7 @@ class FileUploadTool extends BaseBrowserToolExecutor {
         await cdpSessionManager.sendCommand(tabId, 'Runtime.evaluate', {
           expression: `
             (function() {
-              const element = document.querySelector('${selector.replace(/'/g, "\\'")}');
+              const element = document.querySelector('${cssSelector.replace(/'/g, "\\'")}');
               if (element) {
                 const event = new Event('change', { bubbles: true });
                 element.dispatchEvent(event);
@@ -143,7 +174,7 @@ class FileUploadTool extends BaseBrowserToolExecutor {
               success: true,
               message: 'File(s) uploaded successfully',
               files: files,
-              selector: selector,
+              selector: cssSelector,
               fileCount: files.length,
             }),
           },
@@ -162,6 +193,49 @@ class FileUploadTool extends BaseBrowserToolExecutor {
   }
 
   // All debugger attach/detach is centrally managed by cdpSessionManager
+
+  /**
+   * Set the files on a chrome_snapshot element. The snapshot reaches into
+   * same-process iframes, which DOM.querySelector on the top document does
+   * not. The objectId belongs to the snapshot debugger session, so every
+   * command on it goes through that session, as chrome_javascript(uids) does.
+   */
+  private async setFilesByUid(tabId: number, uid: unknown, files: string[]): Promise<void> {
+    const el = await resolveElement(tabId, Number(uid));
+    const described = await snapshotSendCommand<{ node?: { nodeName?: string } }>(
+      tabId,
+      'DOM.describeNode',
+      { objectId: el.objectId },
+    );
+    const nodeName = described?.node?.nodeName ?? 'unknown';
+    if (nodeName !== 'INPUT') {
+      throw new Error(`uid ${uid} is not an input element (it is ${nodeName})`);
+    }
+    // The type property, not the attribute: it is what the browser acts on.
+    const typed = await snapshotSendCommand<{ result?: { value?: unknown } }>(
+      tabId,
+      'Runtime.callFunctionOn',
+      {
+        objectId: el.objectId,
+        functionDeclaration: 'function(){ return String(this.type || "").toLowerCase(); }',
+        returnByValue: true,
+      },
+    );
+    const inputType = typed?.result?.value;
+    if (inputType !== 'file') {
+      throw new Error(`uid ${uid} is not a file input (type="${String(inputType)}")`);
+    }
+
+    await snapshotSendCommand(tabId, 'DOM.setFileInputFiles', { objectId: el.objectId, files });
+
+    // Same change event the selector path dispatches.
+    await snapshotSendCommand(tabId, 'Runtime.callFunctionOn', {
+      objectId: el.objectId,
+      functionDeclaration:
+        "function(){ this.dispatchEvent(new Event('change', { bubbles: true })); return true; }",
+      returnByValue: true,
+    });
+  }
 
   /**
    * Prepare file from URL or base64 data using native messaging host

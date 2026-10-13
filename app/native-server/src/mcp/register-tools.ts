@@ -50,6 +50,7 @@ import { handleWorkatoStepSchemaApplyCall, isStepSchemaApplyCall } from './worka
 import {
   applyAutoFile,
   prepareAutoFileCall,
+  RAW_OUTPUT_ARG,
   withOutFileToolSchemas,
   type AutoFilePlan,
 } from './workato-auto-file';
@@ -70,6 +71,11 @@ import {
 } from './tab-leases';
 import { handleWatchToolCall, isWatchTool } from './browser-watch';
 import { watchManager } from './watch-instance';
+import {
+  finishFetchToFile,
+  isFetchToFileTool,
+  prepareFetchToFileCall,
+} from './chrome-fetch-to-file';
 
 export const PROFILE_ROUTING_ARG = 'profile';
 export const TAB_ROUTING_ARG = 'tabId';
@@ -1034,6 +1040,13 @@ export function createToolRouter(): ToolRouter {
       const closeRefusal = leasedTabCloseGuard(name, routed.args || {}, routingProfile);
       if (closeRefusal) return routeError(closeRefusal);
       let effectiveArgs: any = withSessionTarget(name, routed.args || {}, session, routingProfile);
+      // Unredacted output is the bridge's call, never the caller's: drop any
+      // rawOutput here, whatever the tool. prepareAutoFileCall sets it again
+      // only for chrome_javascript with an explicit out_file.
+      if (effectiveArgs && RAW_OUTPUT_ARG in effectiveArgs) {
+        effectiveArgs = { ...effectiveArgs };
+        delete effectiveArgs[RAW_OUTPUT_ARG];
+      }
       let pullOutFile: string | undefined;
       if (isWorkatoFileTool(name)) {
         const prepared = prepareWorkatoCall(name, effectiveArgs || {});
@@ -1048,6 +1061,15 @@ export function createToolRouter(): ToolRouter {
         const prepared = prepareLcapCall(name, effectiveArgs || {});
         effectiveArgs = prepared.args;
         lcapOutFile = prepared.outFile;
+      }
+
+      // chrome_fetch_to_file(out_file): the extension replies with the body as
+      // base64, which only the file writer below may see. See chrome-fetch-to-file.ts.
+      let fetchOutFile: string | undefined;
+      if (isFetchToFileTool(name)) {
+        const prepared = prepareFetchToFileCall(effectiveArgs || {});
+        effectiveArgs = prepared.args;
+        fetchOutFile = prepared.outFile;
       }
 
       // Generic out_file / auto-file for every other read tool and for
@@ -1165,6 +1187,7 @@ export function createToolRouter(): ToolRouter {
           );
         }
         if (lcapOutFile) return writeLcapOutFile(lcapOutFile, response.data);
+        if (fetchOutFile) return finishFetchToFile(fetchOutFile, response.data);
         // Single return path for a routed tool response: spill a large result
         // to disk first (the context block is kept out of the file), then stamp
         // the profile into the context block (only this side knows the name).

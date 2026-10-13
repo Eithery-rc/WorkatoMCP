@@ -89,6 +89,37 @@ export function sanitizeAndLimitOutput(
   };
 }
 
+/** Cap for an unredacted value bound for a file (chrome_javascript out_file). */
+export const RAW_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Format a value for a file the caller asked for, with no redaction: a string
+ * verbatim, anything else as indented JSON. Only the size is capped. Never use
+ * this for text that goes back to the model inline.
+ */
+export function formatRawOutput(
+  value: unknown,
+  maxBytes: number = RAW_MAX_OUTPUT_BYTES,
+): SanitizedOutput {
+  let text: string;
+  if (typeof value === 'string') text = value;
+  else if (value === undefined) text = '';
+  else {
+    try {
+      text = JSON.stringify(value, null, 2) ?? String(value);
+    } catch {
+      text = String(value);
+    }
+  }
+  const truncated = truncateTextBytes(text, normalizePositiveInt(maxBytes, RAW_MAX_OUTPUT_BYTES));
+  return {
+    text: truncated.text,
+    truncated: truncated.truncated,
+    redacted: false,
+    originalBytes: truncated.originalBytes,
+  };
+}
+
 /**
  * Redact sensitive information from a string.
  * Handles Bearer tokens, JWTs, Base64/Hex credentials, cookie strings, and query strings.
@@ -99,7 +130,7 @@ export function sanitizeText(text: string): { text: string; redacted: boolean } 
 
   const replace = (
     re: RegExp,
-    replacement: string | ((substring: string, ...args: string[]) => string),
+    replacement: string | ((substring: string, ...args: any[]) => string),
   ) => {
     const next = out.replace(re, replacement as Parameters<typeof String.prototype.replace>[1]);
     if (next !== out) {
@@ -108,7 +139,9 @@ export function sanitizeText(text: string): { text: string; redacted: boolean } 
     }
   };
 
-  // 1. Whole-string checks: cookie/query string shape (contains = and ; or &)
+  // 1. Whole-string checks: the string IS a cookie or query string, nothing else.
+  // Text that merely contains '=' and '&' (an HTML template with links, prose,
+  // a full URL) is left to the targeted rules below.
   if (out.includes('=') && (out.includes(';') || out.includes('&'))) {
     if (looksLikeCookieString(out)) {
       return { text: '[BLOCKED: Cookie/query string data]', redacted: true };
@@ -146,8 +179,16 @@ export function sanitizeText(text: string): { text: string; redacted: boolean } 
     (_m, key) => `${key}=<redacted>`,
   );
 
-  // 6. Embedded Base64 data in mixed content
-  replace(/\b[A-Za-z0-9+/]{40,}={0,2}\b/g, '<redacted_base64>');
+  // 6. Embedded Base64 data in mixed content. Encoded bytes mix upper case,
+  // lower case and digits; a long URL path ("app/common/custom/...") does not,
+  // and one that starts right after a '/' ("/SuiteScripts/Acme2/...") is a
+  // path too. Both are left alone.
+  replace(/\b[A-Za-z0-9+/]{40,}={0,2}\b/g, (match, offset: number, whole: string) => {
+    if (offset > 0 && whole[offset - 1] === '/') return match;
+    return /[A-Z]/.test(match) && /[a-z]/.test(match) && /[0-9]/.test(match)
+      ? '<redacted_base64>'
+      : match;
+  });
 
   // 7. Embedded long hex strings (API keys, hashes, etc.)
   replace(/\b[a-f0-9]{40,}\b/gi, '<redacted_hex>');
@@ -155,22 +196,44 @@ export function sanitizeText(text: string): { text: string; redacted: boolean } 
   return { text: out, redacted };
 }
 
+/** A cookie name or query key: no spaces, slashes, colons or markup. */
+const PLAIN_KEY = /^[\w.\-[\]%$]+$/;
+
+/** A segment without a value: a cookie attribute (Secure, HttpOnly) or a query flag. */
+const BARE_TOKEN = /^[\w.-]+$/;
+
 /**
- * Returns true if the string looks like a URL query string (key=value&key2=value2).
+ * True when every non-empty segment is a `key=value` pair with a plain key and
+ * a value without whitespace (or a bare token such as `Secure`), and there are
+ * at least two pairs. A single segment that is anything else (a URL path, a
+ * tag, a sentence) means the text is not a pair list. A Set-Cookie `Expires`
+ * date is the one value allowed to hold spaces.
  */
-function looksLikeQueryString(text: string): boolean {
-  const s = (text || '').trim();
-  if (!s || !s.includes('=') || !s.includes('&')) return false;
-
-  const parts = s.split('&');
-  if (parts.length < 2) return false;
-
+function isPairList(text: string, separator: string): boolean {
+  if (/[\r\n]/.test(text)) return false;
   let pairs = 0;
-  for (const part of parts) {
+  for (const raw of text.split(separator)) {
+    const part = raw.trim();
+    if (!part) continue;
     const idx = part.indexOf('=');
-    if (idx > 0) pairs += 1;
+    if (idx < 0 && BARE_TOKEN.test(part)) continue;
+    if (idx <= 0) return false;
+    const key = part.slice(0, idx);
+    if (!PLAIN_KEY.test(key)) return false;
+    if (/\s/.test(part.slice(idx + 1)) && key.toLowerCase() !== 'expires') return false;
+    pairs += 1;
   }
   return pairs >= 2;
+}
+
+/**
+ * Returns true if the string is a URL query string (key=value&key2=value2, with
+ * an optional leading '?'). A full URL is not: its first segment carries the path.
+ */
+function looksLikeQueryString(text: string): boolean {
+  const s = (text || '').trim().replace(/^\?/, '');
+  if (!s || !s.includes('=') || !s.includes('&')) return false;
+  return isPairList(s, '&');
 }
 
 function sanitizeValue(
@@ -261,22 +324,13 @@ function normalizeKey(key: string): string {
 }
 
 /**
- * Returns true if the string looks like a cookie string (key=value; key2=value2).
+ * Returns true if the string is a cookie string (key=value; key2=value2).
  */
 function looksLikeCookieString(text: string): boolean {
   const s = (text || '').trim();
   if (!s) return false;
   if (!s.includes('=') || !s.includes(';')) return false;
-
-  const parts = s.split(';');
-  if (parts.length < 2) return false;
-
-  let pairs = 0;
-  for (const part of parts) {
-    const idx = part.indexOf('=');
-    if (idx > 0) pairs += 1;
-  }
-  return pairs >= 2;
+  return isPairList(s, ';');
 }
 
 function formatValueForOutput(value: unknown): string {

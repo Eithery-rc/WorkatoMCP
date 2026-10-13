@@ -10,6 +10,7 @@ import {
   compressImage,
 } from '../../../../utils/image-utils';
 import { screenshotContextManager } from '@/utils/screenshot-context';
+import { promoteToOwnWindow } from '../../agent-tabs';
 
 // Screenshot-specific constants
 const SCREENSHOT_CONSTANTS = {
@@ -117,6 +118,8 @@ export interface ScreenshotContentInput {
   fullPath?: string;
   downloadId?: number;
   saveError?: string;
+  /** The hidden tab was moved out of the agents window into this window to be captured. */
+  movedToWindow?: number;
 }
 
 /** Decoded byte count of a base64 string, without decoding it. */
@@ -160,6 +163,7 @@ export function buildScreenshotContent(input: ScreenshotContentInput): ToolResul
   if (input.fullPath !== undefined) metadata.fullPath = input.fullPath;
   if (input.downloadId !== undefined) metadata.downloadId = input.downloadId;
   if (input.saveError !== undefined) metadata.saveError = input.saveError;
+  if (input.movedToWindow !== undefined) metadata.moved_to_window = input.movedToWindow;
 
   content.push({ type: 'text', text: JSON.stringify(metadata) });
   return content;
@@ -168,9 +172,28 @@ export function buildScreenshotContent(input: ScreenshotContentInput): ToolResul
 function notVisibleMessage(tabId: number): string {
   return (
     `Tab ${tabId} is not the visible tab of its window, so it cannot be captured this way. ` +
-    'Lease it with chrome_lease_tab own_window:true (its own window keeps it visible), or ' +
-    'take a plain viewport screenshot, which uses CDP for hidden tabs.'
+    'Only a tab in the agents window is moved to a window of its own for a capture; this one ' +
+    'is not (a tab of your own window is never moved). Make it the active tab of its window, ' +
+    'or take a plain viewport screenshot, which uses CDP for hidden tabs.'
   );
+}
+
+/** Time for a tab that just got its own window to paint before captureVisibleTab. */
+const PROMOTE_PAINT_DELAY_MS = 400;
+
+/**
+ * A hidden tab of the agents window gets a window of its own, where it is the
+ * visible tab. Returns the moved tab and its new window, or null when the tab
+ * is not in the agents window (it then keeps the not-visible error).
+ */
+async function promoteHiddenTab(
+  tabId: number,
+): Promise<{ tab: chrome.tabs.Tab; windowId: number } | null> {
+  const windowId = await promoteToOwnWindow(tabId);
+  if (windowId === null) return null;
+  await new Promise((resolve) => setTimeout(resolve, PROMOTE_PAINT_DELAY_MS));
+  const tab = await chrome.tabs.get(tabId);
+  return { tab, windowId };
 }
 
 /** Active in a window that is not minimized: what captureVisibleTab would show. */
@@ -206,7 +229,8 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
 
     // Resolve target tab (explicit or active)
     const explicit = await this.tryGetTab(args.tabId);
-    const tab = explicit || (await this.getActiveTabOrThrowInWindow(args.windowId));
+    // Reassigned when a hidden agents-window tab is moved to its own window.
+    let tab = explicit || (await this.getActiveTabOrThrowInWindow(args.windowId));
 
     // Check URL restrictions
     if (
@@ -234,10 +258,23 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
 
     // captureVisibleTab shoots whatever tab is showing in the window. When the
     // target is not that tab (a background or leased tab), only CDP can capture
-    // it, and a failure must be an error, never another tab's pixels.
-    const targetVisible = await isTabVisible(tab);
+    // it, and a failure must be an error, never another tab's pixels. A hidden
+    // tab of the agents window is moved to a window of its own instead, where
+    // it is the visible tab.
+    let targetVisible = await isTabVisible(tab);
+    let movedToWindow: number | undefined;
     if (!targetVisible && (fullPage || selector)) {
-      return createErrorResponse(notVisibleMessage(tab.id!));
+      try {
+        const promoted = await promoteHiddenTab(tab.id!);
+        if (!promoted) return createErrorResponse(notVisibleMessage(tab.id!));
+        tab = promoted.tab;
+        movedToWindow = promoted.windowId;
+        targetVisible = true;
+      } catch (e) {
+        return createErrorResponse(
+          `${notVisibleMessage(tab.id!)} Moving it to its own window failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
 
     try {
@@ -276,9 +313,21 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
           });
         } catch (e) {
           if (!targetVisible) {
-            throw new Error(
-              `${notVisibleMessage(tab.id!)} CDP capture failed: ${e instanceof Error ? e.message : String(e)}`,
-            );
+            // The helper path below shoots the visible tab, so it can only take
+            // over once this tab is the visible one.
+            const reason = e instanceof Error ? e.message : String(e);
+            let promoted: { tab: chrome.tabs.Tab; windowId: number } | null = null;
+            try {
+              promoted = await promoteHiddenTab(tab.id!);
+            } catch {
+              promoted = null;
+            }
+            if (!promoted) {
+              throw new Error(`${notVisibleMessage(tab.id!)} CDP capture failed: ${reason}`);
+            }
+            tab = promoted.tab;
+            movedToWindow = promoted.windowId;
+            targetVisible = true;
           }
           console.warn('CDP viewport capture failed, falling back to helper path:', e);
         }
@@ -484,6 +533,7 @@ class ScreenshotTool extends BaseBrowserToolExecutor {
         fullPath: results.fullPath,
         downloadId: results.downloadId,
         saveError: results.saveError,
+        movedToWindow,
       }),
       isError: false,
     };
