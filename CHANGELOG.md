@@ -6,6 +6,10 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+## bridge 1.12.0 · shared 1.10.0 (2026-10-13)
+
+Files that reach the disk intact, page scripts that outlive the call, and redaction that no longer swallows templates.
+
 ### Added
 
 - **Extension releases**: pushing a `vX.Y.Z` tag (the extension version) publishes a GitHub release with `workatomcp-extension-X.Y.Z.zip`, built by GitHub Actions from that tag and attested (`gh attestation verify`). Installing the extension no longer needs a clone and a pnpm build.
