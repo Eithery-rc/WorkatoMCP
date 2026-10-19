@@ -1,4 +1,5 @@
 import { initNativeHostListener } from './native-host';
+import { removeLegacyData } from './legacy-cleanup';
 
 /**
  * Background script entry point
@@ -12,6 +13,10 @@ export default defineBackground(() => {
       chrome.tabs.create({
         url: chrome.runtime.getURL('/welcome.html'),
       });
+    }
+    if (details.reason === 'update') {
+      // Drop data only the removed upstream features wrote (best effort)
+      void removeLegacyData();
     }
   });
 
