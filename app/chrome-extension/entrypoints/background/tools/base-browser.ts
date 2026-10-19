@@ -13,6 +13,10 @@ export abstract class BaseBrowserToolExecutor implements ToolExecutor {
 
   /**
    * Inject content script into tab
+   *
+   * The script is skipped when the tab already answers the ping with a pong.
+   * The ping is `<tool name>_ping` unless `pingAction` names the one the
+   * script itself answers, which a tool injecting a second helper needs.
    */
   protected async injectContentScript(
     tabId: number,
@@ -21,6 +25,7 @@ export abstract class BaseBrowserToolExecutor implements ToolExecutor {
     world: 'MAIN' | 'ISOLATED' = 'ISOLATED',
     allFrames: boolean = false,
     frameIds?: number[],
+    pingAction: string = `${this.name}_ping`,
   ): Promise<void> {
     console.log(`Injecting ${files.join(', ')} into tab ${tabId}`);
 
@@ -29,12 +34,8 @@ export abstract class BaseBrowserToolExecutor implements ToolExecutor {
       const pingFrameId = frameIds?.[0];
       const response = await Promise.race([
         typeof pingFrameId === 'number'
-          ? chrome.tabs.sendMessage(
-              tabId,
-              { action: `${this.name}_ping` },
-              { frameId: pingFrameId },
-            )
-          : chrome.tabs.sendMessage(tabId, { action: `${this.name}_ping` }),
+          ? chrome.tabs.sendMessage(tabId, { action: pingAction }, { frameId: pingFrameId })
+          : chrome.tabs.sendMessage(tabId, { action: pingAction }),
         new Promise((_, reject) =>
           setTimeout(
             () => reject(new Error(`${this.name} Ping action to tab ${tabId} timed out`)),

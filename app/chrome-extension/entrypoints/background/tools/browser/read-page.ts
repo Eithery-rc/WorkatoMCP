@@ -4,6 +4,13 @@ import { TOOL_NAMES } from 'workatomcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { ERROR_MESSAGES } from '@/common/constants';
 
+/**
+ * The ping interactive-elements-helper.js answers. The accessibility helper
+ * injected first answers chrome_read_page_ping, so pinging with the tool's own
+ * name would report the second helper as present and skip injecting it.
+ */
+const INTERACTIVE_ELEMENTS_HELPER_PING = 'chrome_get_interactive_elements_ping';
+
 interface ReadPageStats {
   processed: number;
   included: number;
@@ -156,7 +163,15 @@ class ReadPageTool extends BaseBrowserToolExecutor {
 
       // Fallback path: try get_interactive_elements once
       try {
-        await this.injectContentScript(tab.id, ['inject-scripts/interactive-elements-helper.js']);
+        await this.injectContentScript(
+          tab.id,
+          ['inject-scripts/interactive-elements-helper.js'],
+          false,
+          'ISOLATED',
+          false,
+          undefined,
+          INTERACTIVE_ELEMENTS_HELPER_PING,
+        );
         const fallback = await this.sendMessageToTab(tab.id, {
           action: TOOL_MESSAGE_TYPES.GET_INTERACTIVE_ELEMENTS,
           includeCoordinates: true,
