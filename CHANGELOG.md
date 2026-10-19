@@ -6,6 +6,18 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+Browser flows saved once and run by name.
+
+### Added
+
+- **Browser functions**: `chrome_fn_list`, `chrome_fn_get`, `chrome_fn_run`, `chrome_fn_save`, `chrome_fn_runs`. A function is a named, versioned sequence of steps (`navigate`, `wait_for`, `js`, `verify`, `tool`, `pause`, `finish`, `fail`) with JSON Schema params, kept as one YAML file in a private git registry (`~/.workatomcp/functions`, every save a commit). A run opens a window of its own and closes it at the end. A `write` or `send` without `confirm` returns a preview and a `run_id`, and the confirmed call commits exactly that in the same window; a failure at or after a commit is reported as `unknown` with a hint on how to check, never retried. Saves are refused on top of a newer version. Optional dedupe keys, host checks before commits, and a run log that records param hashes, not values. See [TOOLS.md](docs/TOOLS.md#browser-functions).
+- **Logins from the vault**: a function can type values from the user's Bitwarden vault (`vault` in the definition, `"{vault.password}"` as a fill value). The bridge reads them with the `bw` CLI at the step that types them, only on pages that match the vault item's URIs, and scrubs them from everything it returns; no model sees them. Such functions are written and committed by a person: `chrome_fn_save` refuses them and a run requires the committed file. The first one, `netsuite.login`, replaces the login subagent.
+- Extension messages `agent_tab_info` and `agent_tab_navigate`: a tab's URL and load state, and navigation that waits for the new page, through the tabs API only. Closing an agent tab reports whether it is really gone.
+
+### Fixed
+
+- Output redaction no longer hides ordinary fields whose names merely contain a short marker: `subsidiary` (holds `sid`) and `author` (holds `auth`) came back as `<redacted>`. `sid` and `auth` now match a word of the key; longer markers still match anywhere, so `cookies`, `credentials` or `passwordhash` stay redacted. The sanitizer moved to `workatomcp-shared` so the bridge redacts with the same rules.
+
 ## bridge 1.12.0 · shared 1.10.0 (2026-10-13)
 
 Files that reach the disk intact, page scripts that outlive the call, and redaction that no longer swallows templates.

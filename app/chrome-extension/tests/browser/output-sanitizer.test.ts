@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeAndLimitOutput, sanitizeText } from '@/utils/output-sanitizer';
+import { isSensitiveKey, sanitizeAndLimitOutput, sanitizeText } from '@/utils/output-sanitizer';
 
 const BLOCKED = '[BLOCKED: Cookie/query string data]';
 
@@ -59,6 +59,69 @@ describe('sanitizeText whole-string blocks', () => {
   it('applies the same rule to strings nested in a returned value', () => {
     const out = sanitizeAndLimitOutput({ src: '<a href="/x?a=1&b=2">x</a>', c: 'a=1; b=2' });
     expect(JSON.parse(out.text)).toEqual({ src: '<a href="/x?a=1&b=2">x</a>', c: BLOCKED });
+  });
+});
+
+describe('sensitive keys', () => {
+  it('redacts credential-shaped keys in every spelling', () => {
+    for (const key of [
+      'password',
+      'sessionId',
+      'JSESSIONID',
+      'x_api_key',
+      'APIKey',
+      'csrftoken',
+      'access_token',
+      'Set-Cookie',
+      'authToken',
+      'client_secret',
+      'auth',
+      'sid',
+      // Plurals and compounds, which a word-only match would miss.
+      'cookies',
+      'credentials',
+      'tokens',
+      'secrets',
+      'passwords',
+      'sessions',
+      'authentication',
+      'oauth2',
+      'apikeys',
+      'sessionkey',
+      'secretkey',
+      'passwordhash',
+      'authcode',
+      'cookie2',
+      '.AspNetCore.Cookies',
+      'PHPSESSID',
+      'connect.sid',
+      'sid2',
+      '__Secure-3PSIDTS',
+      'SAPISID',
+      'x-auth-token',
+    ]) {
+      expect(isSensitiveKey(key), key).toBe(true);
+    }
+  });
+
+  it('keeps ordinary fields that merely contain a marker', () => {
+    for (const key of [
+      'subsidiary',
+      'author',
+      'authorId',
+      'authority',
+      'consideration',
+      'insider',
+      'subsidiaryId',
+    ]) {
+      expect(isSensitiveKey(key), key).toBe(false);
+    }
+    const out = sanitizeAndLimitOutput({ subsidiary: 'Parent Co', author: 'Jane', token: 'abc' });
+    expect(JSON.parse(out.text)).toEqual({
+      subsidiary: 'Parent Co',
+      author: 'Jane',
+      token: '<redacted>',
+    });
   });
 });
 

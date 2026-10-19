@@ -24,6 +24,10 @@ export enum NativeMessageType {
   // Bridge -> extension: tabs for chrome_lease_tab / chrome_release_tab
   AGENT_TAB_OPEN = 'agent_tab_open',
   AGENT_TAB_CLOSE = 'agent_tab_close',
+  // Bridge -> extension: browser function windows (chrome_fn_run). Tab API
+  // only, so they work on pages CDP cannot attach to.
+  AGENT_TAB_INFO = 'agent_tab_info',
+  AGENT_TAB_NAVIGATE = 'agent_tab_navigate',
   // Bridge -> extension: run a chrome_watch_start script in its tabs (one tick)
   WATCH_PROBE = 'watch_probe',
 }

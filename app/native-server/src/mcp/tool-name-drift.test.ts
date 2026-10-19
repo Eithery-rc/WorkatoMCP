@@ -35,6 +35,13 @@ import {
   LCAP_PAGE_SAVE_TOOL,
   LCAP_PAGE_VALIDATE_TOOL,
 } from './workato-lcap-io';
+import {
+  FN_GET_TOOL,
+  FN_LIST_TOOL,
+  FN_RUN_TOOL,
+  FN_RUNS_TOOL,
+  FN_SAVE_TOOL,
+} from './browser-functions';
 
 /**
  * `workato_*` strings in the bridge that are Workato PROVIDER names (a step's
@@ -79,6 +86,7 @@ const NAME_SETS: Record<string, string[]> = {
     SAVE_WITH_DEPENDENTS_TOOL,
   ],
   screenshot: [SCREENSHOT_TOOL],
+  'browser-functions': [FN_LIST_TOOL, FN_GET_TOOL, FN_RUN_TOOL, FN_SAVE_TOOL, FN_RUNS_TOOL],
 };
 
 describe('bridge-side tool name sets match TOOL_NAMES', () => {

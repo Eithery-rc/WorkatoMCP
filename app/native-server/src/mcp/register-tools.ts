@@ -76,6 +76,30 @@ import {
   isFetchToFileTool,
   prepareFetchToFileCall,
 } from './chrome-fetch-to-file';
+import { handleFnToolCall, isFnTool, profileDriver, type FnDeps } from './browser-functions';
+import { FnRegistry } from './fn-registry';
+import { FnRunsLog } from './fn-runs-log';
+import { bitwardenVault } from './fn-vault';
+
+// One registry and run log per bridge process, shared by every MCP session.
+let fnDepsInstance: FnDeps | null = null;
+function fnDeps(): FnDeps {
+  if (!fnDepsInstance) {
+    fnDepsInstance = {
+      registry: new FnRegistry(),
+      log: new FnRunsLog(),
+      vault: bitwardenVault(),
+      driverFor: (profile) =>
+        profileDriver(profile, (target, payload, type, timeoutMs) =>
+          profileRegistry.sendRequest(target, payload, type, timeoutMs),
+        ),
+      connectedProfiles: () => profileRegistry.getConnectedProfiles(),
+      activeProfile: () => profileRegistry.getActiveProfile(),
+      now: () => Date.now(),
+    };
+  }
+  return fnDepsInstance;
+}
 
 export const PROFILE_ROUTING_ARG = 'profile';
 export const TAB_ROUTING_ARG = 'tabId';
@@ -940,6 +964,17 @@ export function createToolRouter(): ToolRouter {
           name,
           routed.args,
           routingProfile ?? profileRegistry.getActiveProfile(),
+        );
+      }
+
+      // Browser functions run here: registry files, the run log, and a window
+      // of their own driven through tab and tool messages.
+      if (isFnTool(name)) {
+        return await handleFnToolCall(
+          name,
+          routed.args,
+          { callProfile: routed.profile, sessionProfile: session?.profile ?? null, signal },
+          fnDeps(),
         );
       }
 

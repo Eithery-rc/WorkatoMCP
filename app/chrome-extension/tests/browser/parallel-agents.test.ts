@@ -9,6 +9,7 @@ import {
 } from '@/entrypoints/background/tools/browser/snapshot/uid-store';
 import {
   closeAgentTab,
+  navigateAgentTab,
   openAgentTab,
   promoteToOwnWindow,
 } from '@/entrypoints/background/agent-tabs';
@@ -126,7 +127,64 @@ describe('agent tabs', () => {
 
   it('closing a tab that is already gone is not an error', async () => {
     (chrome.tabs.remove as any) = vi.fn().mockRejectedValue(new Error('No tab with id'));
-    await expect(closeAgentTab(5)).resolves.toEqual({ closed: false });
+    (chrome.tabs.get as any) = vi.fn().mockRejectedValue(new Error('No tab with id'));
+    await expect(closeAgentTab(5)).resolves.toEqual({ closed: false, gone: true });
+  });
+
+  describe('navigateAgentTab', () => {
+    type Listener = (id: number, change: { status?: string; url?: string }, tab: any) => void;
+    let listeners: Listener[];
+
+    beforeEach(() => {
+      listeners = [];
+      (chrome.tabs as any).onUpdated = {
+        addListener: vi.fn((fn: Listener) => listeners.push(fn)),
+        removeListener: vi.fn((fn: Listener) => (listeners = listeners.filter((l) => l !== fn))),
+      };
+      (chrome.tabs as any).onRemoved = { addListener: vi.fn(), removeListener: vi.fn() };
+      (chrome.tabs.get as any) = vi
+        .fn()
+        .mockResolvedValue({ id: 7, url: 'https://a.example/old', status: 'complete' });
+    });
+
+    it('waits for the new page: the old page finishing its load does not count', async () => {
+      const emit = (change: { status?: string; url?: string }, url: string) =>
+        listeners.forEach((l) => l(7, change, { id: 7, url, status: change.status, title: 'T' }));
+      (chrome.tabs.update as any) = vi.fn(async () => {
+        // The page being replaced reports complete first, then the new load runs.
+        emit({ status: 'complete' }, 'https://a.example/old');
+        setTimeout(() => {
+          emit({ status: 'loading', url: 'https://a.example/new' }, 'https://a.example/new');
+          emit({ status: 'complete' }, 'https://a.example/new');
+        }, 5);
+      });
+      const info = await navigateAgentTab({
+        tabId: 7,
+        url: 'https://a.example/new',
+        timeout_ms: 1000,
+      });
+      expect(info).toMatchObject({ exists: true, url: 'https://a.example/new' });
+      expect(listeners).toHaveLength(0);
+    });
+
+    it('a hash-only change returns at once instead of waiting for a load that never comes', async () => {
+      (chrome.tabs.update as any) = vi.fn().mockResolvedValue({});
+      const started = Date.now();
+      const info = await navigateAgentTab({
+        tabId: 7,
+        url: 'https://a.example/old#x',
+        timeout_ms: 5000,
+      });
+      expect(info.exists).toBe(true);
+      expect(Date.now() - started).toBeLessThan(1000);
+      expect(chrome.tabs.update).toHaveBeenCalledWith(7, { url: 'https://a.example/old#x' });
+    });
+  });
+
+  it('a tab that survives its close (a leave-page prompt) is reported as not gone', async () => {
+    (chrome.tabs.remove as any) = vi.fn().mockResolvedValue(undefined);
+    (chrome.tabs.get as any) = vi.fn().mockResolvedValue({ id: 5 });
+    await expect(closeAgentTab(5)).resolves.toEqual({ closed: true, gone: false });
   });
 
   it('moves a tab of the agents window to an unfocused window of its own', async () => {

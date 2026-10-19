@@ -56,6 +56,11 @@ export const TOOL_NAMES = {
     WATCH_STOP: 'chrome_watch_stop',
     WATCH_LIST: 'chrome_watch_list',
     WATCH_EVENTS: 'chrome_watch_events',
+    FN_LIST: 'chrome_fn_list',
+    FN_GET: 'chrome_fn_get',
+    FN_RUN: 'chrome_fn_run',
+    FN_SAVE: 'chrome_fn_save',
+    FN_RUNS: 'chrome_fn_runs',
     SNAPSHOT_CLICK: 'chrome_snapshot_click',
     SNAPSHOT_FILL: 'chrome_snapshot_fill',
     SNAPSHOT_HOVER: 'chrome_snapshot_hover',
@@ -928,6 +933,127 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'number',
           description: 'Wait this long for an event when there is none yet. Default 0, max 100.',
         },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.FN_LIST,
+    description:
+      'List saved browser functions: named, versioned flows (open a page, wait, run JS, check, commit) that replace rebuilding the same chrome_javascript sequence every session. Check here before scripting a flow by hand. Shows name, kind (read | write | send), version, description and draft (true until a run committed successfully). Functions that never ran successfully at all are hidden unless include_drafts:true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Words that must all appear in name, description or tags.',
+        },
+        tag: { type: 'string', description: 'Only functions with this tag.' },
+        include_drafts: {
+          type: 'boolean',
+          description: 'Also list functions that never ran successfully.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.FN_GET,
+    description:
+      'Read a browser function definition (current, or version N), with history:true its versions and changelogs. out_file writes it as YAML to edit and save back with chrome_fn_save(source_path). Definition: {name, description, tags, kind, params (JSON Schema), target {url template, profile, host}, helpers, steps [{id, type: navigate | wait_for | js | verify | tool | pause | finish | fail, when, commit, ...}], preview, result, dedupe_key, verify_hint}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Function name, e.g. "netsuite.case.read_messages".' },
+        version: { type: 'number', description: 'An older version. Default: current.' },
+        history: { type: 'boolean', description: 'Include the version history.' },
+        out_file: {
+          type: 'string',
+          description: 'Absolute path: write the definition there as YAML.',
+        },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.FN_RUN,
+    description:
+      'Run a saved browser function in a background window of its own (it never touches other tabs; the window closes when the run ends). Returns {status, result | preview | needs | error, trace}. status: ok; preview (write/send without confirm: stopped before its first commit step, nothing changed, window kept 10 min: show the preview to your user, then call again with run_id and confirm:true to commit exactly that); paused (pass the named params with run_id); failed (nothing committed); unknown (a commit step failed or timed out: it MAY have landed; check with verify_hint before anything else, never just rerun). A write may also run in one call with confirm:true; a send always needs the preview first. A failure names the step: fix the definition with chrome_fn_save.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Function to run. Not needed with run_id.' },
+        params: {
+          type: 'object',
+          description: 'Values for the function params (see chrome_fn_get).',
+        },
+        confirm: {
+          type: 'boolean',
+          description:
+            'Commit: with run_id after a preview, or a write in one call. Only after your user approved.',
+        },
+        run_id: {
+          type: 'string',
+          description: 'Continue a preview (with confirm) or a pause (with params).',
+        },
+        cancel: {
+          type: 'boolean',
+          description: 'With run_id: drop the pending run and close its window.',
+        },
+        allow_duplicate: {
+          type: 'boolean',
+          description: 'Commit even though the same dedupe key was committed in the last 24 h.',
+        },
+        keep_open: {
+          type: 'boolean',
+          description:
+            'Leave the window open when the run ends (to inspect a failure); returns its tabId.',
+        },
+        caller: { type: 'string', description: 'Your session name, for the run log.' },
+        out_file: {
+          type: 'string',
+          description: 'Absolute path for a large result (written unredacted).',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.FN_SAVE,
+    description:
+      'Create a browser function, save a new version, or roll back (from_version: N saves version N again as the newest). Pass base_version = the version you read (omit for a new name); a save on top of a newer version is refused. Each save is a git commit in the private registry with changelog as its message. The definition is validated first (step ids, templates, JS syntax, no embedded credentials); all problems come back at once. Save a fix after a real failure with a changelog that says what broke. Helpers ("_helpers.<word>", {name, description, code}) are saved the same way.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Function name (dotted, lower case) or "_helpers.<word>".',
+        },
+        definition: { type: 'object', description: 'The definition (see chrome_fn_get).' },
+        source_path: {
+          type: 'string',
+          description: 'Absolute path of a YAML or JSON definition to save.',
+        },
+        from_version: {
+          type: 'number',
+          description: 'Roll back: save this old version as the newest.',
+        },
+        base_version: { type: 'number', description: 'The current version this save builds on.' },
+        changelog: { type: 'string', description: 'What changed and why (required).' },
+        caller: { type: 'string', description: 'Your session name, recorded in the commit.' },
+      },
+      required: ['name', 'changelog'],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.FN_RUNS,
+    description:
+      'The browser function run log, newest first: time, function and version, phase, status, committed, caller, failed step, duration. Param values are never logged (only a hash).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Only runs of this function.' },
+        limit: { type: 'number', description: 'Default 20, max 200.' },
       },
       required: [],
     },

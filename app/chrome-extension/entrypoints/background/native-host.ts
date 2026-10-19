@@ -13,7 +13,7 @@ import { handleCallTool } from './tools';
 import { listPublished, getFlow } from './record-replay/flow-store';
 import { acquireKeepalive } from './keepalive-manager';
 import { getExtensionBuildInfo, scheduleExtensionReload } from './dev-reload';
-import { closeAgentTab, openAgentTab } from './agent-tabs';
+import { agentTabInfo, closeAgentTab, navigateAgentTab, openAgentTab } from './agent-tabs';
 import { runWatchProbe } from './watch-probe';
 
 const LOG_PREFIX = '[NativeHost]';
@@ -514,7 +514,9 @@ async function connectWebSocket(port: number): Promise<boolean> {
           ws.send(JSON.stringify({ responseToRequestId: message.requestId, payload }));
         } else if (
           (message.type === NativeMessageType.AGENT_TAB_OPEN ||
-            message.type === NativeMessageType.AGENT_TAB_CLOSE) &&
+            message.type === NativeMessageType.AGENT_TAB_CLOSE ||
+            message.type === NativeMessageType.AGENT_TAB_INFO ||
+            message.type === NativeMessageType.AGENT_TAB_NAVIGATE) &&
           message.requestId
         ) {
           let payload: Record<string, unknown>;
@@ -522,7 +524,11 @@ async function connectWebSocket(port: number): Promise<boolean> {
             const data =
               message.type === NativeMessageType.AGENT_TAB_OPEN
                 ? await openAgentTab(message.payload ?? {})
-                : await closeAgentTab(message.payload?.tabId);
+                : message.type === NativeMessageType.AGENT_TAB_INFO
+                  ? await agentTabInfo(message.payload ?? {})
+                  : message.type === NativeMessageType.AGENT_TAB_NAVIGATE
+                    ? await navigateAgentTab(message.payload ?? {})
+                    : await closeAgentTab(message.payload?.tabId);
             payload = { status: 'success', data };
           } catch (error) {
             payload = {
