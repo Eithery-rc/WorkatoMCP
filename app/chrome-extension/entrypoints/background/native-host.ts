@@ -27,6 +27,13 @@ let nativePort: chrome.runtime.Port | null = null;
 let ownsBridge = false;
 export const HOST_NAME = NATIVE_HOST.NAME;
 
+/**
+ * Compatibility shim for bridges before 2.0, to be removed later: those
+ * bridges ask for the record-replay flow list on every tools/list and wait
+ * 20 s for an answer. Answering with an empty list keeps tools/list instant.
+ */
+const LEGACY_FLOW_LIST_REQUEST = 'rr_list_published_flows';
+
 // ==================== WebSocket Aggregator Client State ====================
 let wsClient: WebSocket | null = null;
 let isWsConnecting = false;
@@ -456,6 +463,14 @@ async function connectWebSocket(port: number): Promise<boolean> {
               }),
             );
           }
+        } else if (message.type === LEGACY_FLOW_LIST_REQUEST && message.requestId) {
+          // Compatibility shim for bridges before 2.0 (see LEGACY_FLOW_LIST_REQUEST).
+          ws.send(
+            JSON.stringify({
+              responseToRequestId: message.requestId,
+              payload: { status: 'success', items: [] },
+            }),
+          );
         } else if (message.type === NativeMessageType.DEV_EXTENSION_INFO && message.requestId) {
           ws.send(
             JSON.stringify({
@@ -617,6 +632,12 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
             },
           });
         }
+      } else if (message.type === LEGACY_FLOW_LIST_REQUEST && message.requestId) {
+        // Compatibility shim for bridges before 2.0 (see LEGACY_FLOW_LIST_REQUEST).
+        nativePort?.postMessage({
+          responseToRequestId: message.requestId,
+          payload: { status: 'success', items: [] },
+        });
       } else if (message.type === NativeMessageType.SERVER_STARTED) {
         ownsBridge = true;
         const port = message.payload?.port;
