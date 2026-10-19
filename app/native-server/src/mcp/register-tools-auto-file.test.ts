@@ -8,8 +8,10 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import { TOOL_SCHEMAS } from 'workatomcp-shared';
 import { createToolRouter } from './register-tools';
 import { profileRegistry } from '../server/profile-registry';
+import nativeMessagingHostInstance from '../native-messaging-host';
 
 const PIXEL = 'AAECAwQFBgcICQoLDA0ODw==';
 
@@ -121,9 +123,21 @@ describe('register-tools image and auto-file wiring', () => {
     expect(JSON.parse(result.content[0].text)).toEqual(payload);
   });
 
+  test('lists exactly the shared schemas without asking the extension', async () => {
+    const viaProfile = jest.spyOn(profileRegistry, 'sendRequest');
+    const viaNative = jest.spyOn(nativeMessagingHostInstance, 'sendRequestToExtensionAndWait');
+    const router = createToolRouter();
+
+    const { tools } = await router.listTools();
+
+    expect(viaProfile).not.toHaveBeenCalled();
+    expect(viaNative).not.toHaveBeenCalled();
+    expect(tools).toHaveLength(TOOL_SCHEMAS.length);
+    expect(tools.map((tool) => tool.name)).toEqual(TOOL_SCHEMAS.map((tool) => tool.name));
+  });
+
   test('serves out_file and auto_file on read tools, not on write tools', async () => {
-    stubResponse({ content: [] });
-    const router = await pinnedRouter();
+    const router = createToolRouter();
 
     const { tools } = await router.listTools();
     const trace = tools.find((tool) => tool.name === 'workato_job_trace');
