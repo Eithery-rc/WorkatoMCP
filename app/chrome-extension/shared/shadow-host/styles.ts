@@ -144,7 +144,7 @@ export const SHADOW_HOST_STYLES = /* css */ `
   }
 
   /* ===========================================
-   * Dark Console Theme
+   * Dark variant, applied when the system prefers a dark color scheme
    * =========================================== */
   .qp-root.agent-theme[data-agent-theme='dark-console'] {
     --ac-font-body: var(--ac-font-mono);
