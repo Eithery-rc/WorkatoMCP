@@ -47,10 +47,17 @@ interface StrippedLine {
   code: string;
   /** Leading-whitespace width, tabs expanded to 8 (CPython's rule). */
   indent: number;
+  /**
+   * The same width with a tab counted as 1. CPython compares both: a line is
+   * consistent only when both widths order the same way against the block.
+   */
+  altIndent: number;
   /** True when the line is blank or comment-only. */
   ignorable: boolean;
   /** Bracket depth *before* this line — >0 means it continues the previous one. */
   depthBefore: number;
+  /** Bracket depth at the end of this line — >0 means the next line continues it. */
+  depthAfter: number;
   /** True when this line uses a tab in its leading whitespace. */
   leadingTab: boolean;
 }
@@ -152,8 +159,10 @@ export function stripPythonSource(source: string): {
         raw,
         code,
         indent: 0,
+        altIndent: 0,
         ignorable: false,
         depthBefore,
+        depthAfter: depth,
         leadingTab: false,
       });
       return {
@@ -173,8 +182,10 @@ export function stripPythonSource(source: string): {
       raw,
       code,
       indent,
+      altIndent: leading.length,
       ignorable: code.trim().length === 0,
       depthBefore,
+      depthAfter: depth,
       leadingTab: leading.includes('\t'),
     });
   }
@@ -254,39 +265,50 @@ export function lintPyEvalSource(source: string, codeInputKeys: string[] = []): 
     });
   }
 
-  // Indentation. CPython rejects a dedent that lands between levels, and
-  // rejects tabs mixed with spaces — both are exactly what a bad string
-  // replace produces.
-  const usesSpaces = lines.some((l) => !l.ignorable && !l.leadingTab && l.indent > 0);
-  const stack: number[] = [0];
+  // Indentation, the way CPython's tokenizer checks it. It rejects a dedent
+  // that lands between levels, and a line whose indent orders differently
+  // against its block with a tab counted as 8 and as 1 (TabError). Mixing
+  // tabs and spaces is otherwise legal. Both errors are exactly what a bad
+  // string replace produces.
+  const stack: Array<{ col: number; alt: number }> = [{ col: 0, alt: 0 }];
+  const tabError = (line: number) =>
+    errors.push({ line, message: 'inconsistent use of tabs and spaces in indentation' });
   let expectIndent = 0; // line number of a `:` awaiting its suite
+  let continued = false; // the previous physical line did not end its statement
   for (const l of lines) {
-    if (l.ignorable || l.depthBefore > 0) continue;
-
-    if (l.leadingTab && usesSpaces) {
-      errors.push({
-        line: l.line,
-        message: 'inconsistent use of tabs and spaces in indentation',
-      });
+    const isContinuation = continued || l.depthBefore > 0;
+    // Open brackets or a trailing backslash carry the statement onto the next line.
+    continued = l.depthAfter > 0 || l.code.trimEnd().endsWith('\\');
+    const trimmed = l.code.trimEnd();
+    if (isContinuation) {
+      // Only the last physical line of a statement says whether it opens a block:
+      // "if (a and\n    b):" ends with ':' on its second line.
+      if (!continued && !l.ignorable) expectIndent = trimmed.endsWith(':') ? l.line : 0;
+      continue;
     }
+    if (l.ignorable) continue;
 
     const top = stack[stack.length - 1];
-    if (l.indent > top) {
+    if (l.indent > top.col) {
+      if (l.altIndent <= top.alt) tabError(l.line);
       if (expectIndent === 0) {
         errors.push({
           line: l.line,
-          message: `unexpected indent (line is indented ${l.indent}, enclosing block is ${top}, and the previous statement does not open a block)`,
+          message: `unexpected indent (line is indented ${l.indent}, enclosing block is ${top.col}, and the previous statement does not open a block)`,
         });
       }
-      stack.push(l.indent);
+      stack.push({ col: l.indent, alt: l.altIndent });
     } else {
-      while (stack.length > 1 && l.indent < stack[stack.length - 1]) stack.pop();
-      if (l.indent !== stack[stack.length - 1]) {
+      while (stack.length > 1 && l.indent < stack[stack.length - 1].col) stack.pop();
+      const level = stack[stack.length - 1];
+      if (l.indent !== level.col) {
         errors.push({
           line: l.line,
-          message: `unindent does not match any outer indentation level (got ${l.indent}, open levels are ${stack.join(', ')})`,
+          message: `unindent does not match any outer indentation level (got ${l.indent}, open levels are ${stack.map((s) => s.col).join(', ')})`,
         });
-        stack.push(l.indent);
+        stack.push({ col: l.indent, alt: l.altIndent });
+      } else if (l.altIndent !== level.alt) {
+        tabError(l.line);
       }
       if (expectIndent !== 0) {
         errors.push({
@@ -296,8 +318,7 @@ export function lintPyEvalSource(source: string, codeInputKeys: string[] = []): 
       }
     }
 
-    const trimmed = l.code.trimEnd();
-    expectIndent = trimmed.endsWith(':') ? l.line : 0;
+    expectIndent = continued ? 0 : trimmed.endsWith(':') ? l.line : 0;
   }
   if (expectIndent !== 0) {
     errors.push({ line: expectIndent, message: 'block opened here has no body' });
@@ -385,6 +406,45 @@ export function compilePythonSource(source: string): PyCompileResult {
     }
   }
   return { available: false, ok: false };
+}
+
+export interface PyEvalCheck {
+  /** Refusal text when the code must not be saved, else null. */
+  refusal: string | null;
+  /** Shadowing warnings, and lint findings Python overruled. */
+  notes: PyLintIssue[];
+}
+
+/**
+ * Lint and compile one py_eval source and decide. A real Python is the
+ * authority whenever one is on PATH: what it compiles is saved, and the
+ * structural lint's own findings become notes (the lint is a heuristic and
+ * has been stricter than CPython). Without Python the lint decides.
+ */
+export function checkPyEvalSource(
+  source: string,
+  codeInputKeys: string[],
+  label: string,
+  compile: (src: string) => PyCompileResult = compilePythonSource,
+): PyEvalCheck {
+  const lint = lintPyEvalSource(source, codeInputKeys);
+  const compiled = compile(source);
+  if (compiled.available && compiled.ok) {
+    return {
+      refusal: null,
+      notes: [
+        ...lint.warnings,
+        ...lint.errors.map((issue) => ({
+          line: issue.line,
+          message: `${issue.message} (structural lint only; ${compiled.interpreter} compiled it)`,
+        })),
+      ],
+    };
+  }
+  if (lint.errors.length > 0 || (compiled.available && !compiled.ok)) {
+    return { refusal: describePyEvalFailure(lint, compiled, label), notes: lint.warnings };
+  }
+  return { refusal: null, notes: lint.warnings };
 }
 
 /** Format lint + compile output into the error text a refusal carries. */

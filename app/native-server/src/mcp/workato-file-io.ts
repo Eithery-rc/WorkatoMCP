@@ -15,11 +15,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import {
-  compilePythonSource,
-  describePyEvalFailure,
-  lintPyEvalSource,
-} from './workato-pyeval-lint';
+import { checkPyEvalSource } from './workato-pyeval-lint';
 
 export const PULL_RECIPE_TOOL = 'workato_pull_recipe';
 export const SAVE_RECIPE_CODE_TOOL = 'workato_ui_save_recipe_code';
@@ -234,14 +230,9 @@ function validatePyEvalSteps(code: unknown): string[] {
           input.code_input && typeof input.code_input === 'object'
             ? Object.keys(input.code_input as Record<string, unknown>)
             : [];
-        const lint = lintPyEvalSource(input.code, codeInput);
-        const compiled = compilePythonSource(input.code);
-        if (lint.errors.length > 0 || (compiled.available && !compiled.ok)) {
-          throw new Error(`${label}: ${describePyEvalFailure(lint, compiled, label)}`);
-        }
-        for (const warning of lint.warnings) {
-          notes.push(`${label} line ${warning.line}: ${warning.message}`);
-        }
+        const check = checkPyEvalSource(input.code, codeInput, label);
+        if (check.refusal) throw new Error(`${label}: ${check.refusal}`);
+        for (const note of check.notes) notes.push(`${label} line ${note.line}: ${note.message}`);
       }
     }
     if (Array.isArray(step.block)) walk(step.block);

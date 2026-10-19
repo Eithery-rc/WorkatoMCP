@@ -1,6 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
 
 import {
+  checkPyEvalSource,
   collectAssignedNames,
   compilePythonSource,
   describePyEvalFailure,
@@ -80,9 +81,57 @@ describe('lintPyEvalSource', () => {
     expect(lintPyEvalSource('x = 1)\n').errors[0].message).toMatch(/no matching opener/);
   });
 
-  test('catches tabs mixed with spaces', () => {
-    const src = ['if a:', '    x = 1', 'if b:', '\ty = 2', ''].join('\n');
-    expect(lintPyEvalSource(src).errors.some((e) => /tabs and spaces/.test(e.message))).toBe(true);
+  test('flags tabs and spaces only where CPython raises TabError', () => {
+    const tabError = (src: string) =>
+      lintPyEvalSource(src).errors.some((e) => /tabs and spaces/.test(e.message));
+    // A tab and eight spaces in one block: equal at tab size 8, not at tab size 1.
+    expect(tabError(['if a:', '        x = 1', '\ty = 2', ''].join('\n'))).toBe(true);
+    // Separate blocks, and spaces followed by a tab one level deeper: CPython accepts both.
+    expect(tabError(['if a:', '    x = 1', 'if b:', '\ty = 2', ''].join('\n'))).toBe(false);
+    expect(
+      lintPyEvalSource(['if a:', '  if b:', '  \tx = 1', '  \ty = 2', ''].join('\n')).errors,
+    ).toEqual([]);
+  });
+
+  test('a block opened by a multi-line or backslash-continued statement is not an unexpected indent', () => {
+    const multiLine = [
+      'for x in rows:',
+      '    if (x.get("a") not in [None, ""] and',
+      '        x.get("b") not in [None, ""]):',
+      '        out.append(x)',
+      '    elif (',
+      '        x.get("c")',
+      '    ):',
+      '        pass',
+      '',
+    ].join('\n');
+    expect(lintPyEvalSource(multiLine).errors).toEqual([]);
+    const backslash = ['if a and \\', '        b:', '    x = 1', ''].join('\n');
+    expect(lintPyEvalSource(backslash).errors).toEqual([]);
+  });
+
+  test('a real Python decides; the lint only decides when there is none', () => {
+    const flagged = 'a = 1\n    b = 2\n';
+    const accepted = checkPyEvalSource(flagged, [], 'step 1', () => ({
+      available: true,
+      ok: true,
+      interpreter: 'python3',
+    }));
+    expect(accepted.refusal).toBeNull();
+    expect(accepted.notes[0].message).toMatch(/structural lint only; python3 compiled it/);
+    const noPython = checkPyEvalSource(flagged, [], 'step 1', () => ({
+      available: false,
+      ok: false,
+    }));
+    expect(noPython.refusal).toMatch(/unexpected indent/);
+    const rejected = checkPyEvalSource('x = (', [], 'step 1', () => ({
+      available: true,
+      ok: false,
+      interpreter: 'python3',
+      error: "'(' was never closed",
+      line: 1,
+    }));
+    expect(rejected.refusal).toMatch(/Python \(python3\) rejected step 1/);
   });
 
   test('empty source is an error, not a silent no-op', () => {

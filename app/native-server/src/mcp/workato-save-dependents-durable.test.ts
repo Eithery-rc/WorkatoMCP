@@ -17,6 +17,9 @@ import * as path from 'path';
 
 const journalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wops-durable-'));
 process.env.WORKATOMCP_OPERATIONS_DIR = journalDir;
+// A real recipe file: save_with_dependents checks code_path before it stops anything.
+const codeFile = path.join(journalDir, 'r.json');
+fs.writeFileSync(codeFile, JSON.stringify({ recipe_id: 999, code: { block: [] } }));
 
 import {
   classifySaveResult,
@@ -515,7 +518,7 @@ describe('interruption', () => {
     });
     const result = await handleWorkatoSaveWithDependentsCall(
       'workato_recipe_save_with_dependents',
-      { recipe_id: 999, code_path: '/tmp/r.json', dependent_recipe_ids: [111, 222] },
+      { recipe_id: 999, code_path: codeFile, dependent_recipe_ids: [111, 222] },
       wk.call,
     );
 
@@ -562,7 +565,7 @@ describe('interruption', () => {
 
     const first = await handleWorkatoSaveWithDependentsCall(
       'workato_recipe_save_with_dependents',
-      { recipe_id: 999, code_path: '/tmp/r.json', dependent_recipe_ids: [111] },
+      { recipe_id: 999, code_path: codeFile, dependent_recipe_ids: [111] },
       wk.call,
     );
     expect(first.isError).toBe(true);
@@ -578,7 +581,7 @@ describe('interruption', () => {
     // Exactly one re-issue, under the journalled lock.
     expect(saves).toHaveLength(2);
     expect(saves[1].args.expected_base_version_no).toBe(3);
-    expect(saves[1].args.code_path).toBe('/tmp/r.json');
+    expect(saves[1].args.code_path).toBe(codeFile);
     expect(saves[1].args.restart_if_running).toBe(false);
     expect((outcome.save as any).classification).toBe('already_applied');
     expect(outcome.restarted).toEqual([111]);
@@ -596,7 +599,7 @@ describe('interruption', () => {
 
     const first = await handleWorkatoSaveWithDependentsCall(
       'workato_recipe_save_with_dependents',
-      { recipe_id: 999, code_path: '/tmp/r.json', dependent_recipe_ids: [111] },
+      { recipe_id: 999, code_path: codeFile, dependent_recipe_ids: [111] },
       wk.call,
     );
     const operationId = parse(first).operation_id;
@@ -617,7 +620,7 @@ describe('interruption', () => {
     });
     const first = await handleWorkatoSaveWithDependentsCall(
       'workato_recipe_save_with_dependents',
-      { recipe_id: 999, code_path: '/tmp/r.json', dependent_recipe_ids: [111, 222] },
+      { recipe_id: 999, code_path: codeFile, dependent_recipe_ids: [111, 222] },
       wk.call,
     );
     const operationId = parse(first).operation_id;

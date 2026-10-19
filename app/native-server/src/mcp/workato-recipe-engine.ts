@@ -15,7 +15,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
-import { describePyEvalFailure, lintPyEvalSource, type PyLintIssue } from './workato-pyeval-lint';
+import { checkPyEvalSource, type PyLintIssue } from './workato-pyeval-lint';
 import { applyDerivedSchemas, type DerivedSchemaEntry } from './workato-recipe-schema';
 
 export type PathSegment = string | number;
@@ -961,12 +961,10 @@ export function applySetPyEvalCode(
   // the save outright.
   const input = ensureInput(step);
   const codeInput = isRecord(input.code_input) ? Object.keys(input.code_input) : [];
-  const lint = lintPyEvalSource(args.code, codeInput);
-  if (lint.errors.length > 0) {
-    throw new Error(describePyEvalFailure(lint, null, 'the code being written'));
-  }
+  const check = checkPyEvalSource(args.code, codeInput, 'the code being written');
+  if (check.refusal) throw new Error(check.refusal);
   input.code = args.code;
-  return { warnings: lint.warnings };
+  return { warnings: check.notes };
 }
 
 export function applySetExtendedSchema(step: RecipeStep, args: JsonObject): { kind: string } {

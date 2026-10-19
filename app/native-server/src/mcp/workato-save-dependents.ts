@@ -66,6 +66,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { parseToolJson } from './workato-recipe-mutators';
 import { NEUTRAL_VERSION_COMMENT } from './workato-callable-schema';
 import { discoverCallers, type CallerDiscovery } from './workato-recipe-callers';
+import { SAVE_RECIPE_CODE_TOOL, prepareWorkatoCall } from './workato-file-io';
 import {
   beginPhase,
   endPhase,
@@ -656,6 +657,17 @@ export async function handleWorkatoSaveWithDependentsCall(
     return errorResult(
       'pass code (object) or code_path (file). This tool saves a recipe, it does not ' +
         'edit one in place.',
+    );
+  }
+
+  // The save's own checks (code_path, py_eval compile) run here first: a tree
+  // that the save would refuse must not cost the callers a stop and a restart.
+  try {
+    prepareWorkatoCall(SAVE_RECIPE_CODE_TOOL, { ...args });
+  } catch (err: any) {
+    return errorResult(
+      `${SAVE_WITH_DEPENDENTS_TOOL}: ${err?.message || String(err)}\n` +
+        'Nothing was stopped and nothing was saved.',
     );
   }
 

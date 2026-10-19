@@ -16,6 +16,8 @@ Browser flows saved once and run by name.
 
 ### Fixed
 
+- The py_eval check refused valid Python and blocked recipe saves: a block opened by a multi-line `if (...):` condition (or a backslash continuation) read as "unexpected indent", and any tab in a file that also used spaces read as a TabError. The indentation check now follows CPython's tokenizer (both tab widths, statement ends across brackets and backslashes), and when a real Python compiles the code, the structural lint's findings become notes instead of blocking the save.
+- `workato_recipe_save_with_dependents` stopped the callers before the save's own checks ran (code_path, py_eval), so a refused save left them stopped until the restore. Those checks now run first; a refused tree stops nothing.
 - Output redaction no longer hides ordinary fields whose names merely contain a short marker: `subsidiary` (holds `sid`) and `author` (holds `auth`) came back as `<redacted>`. `sid` and `auth` now match a word of the key; longer markers still match anywhere, so `cookies`, `credentials` or `passwordhash` stay redacted. The sanitizer moved to `workatomcp-shared` so the bridge redacts with the same rules.
 
 ## bridge 1.12.0 · shared 1.10.0 (2026-10-13)

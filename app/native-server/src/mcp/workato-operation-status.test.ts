@@ -6,6 +6,9 @@ import * as path from 'path';
 
 const journalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wops-status-'));
 process.env.WORKATOMCP_OPERATIONS_DIR = journalDir;
+// A real recipe file: save_with_dependents checks code_path before it stops anything.
+const codeFile = path.join(journalDir, 'r.json');
+fs.writeFileSync(codeFile, JSON.stringify({ recipe_id: 999, code: { block: [] } }));
 
 import {
   describeDrift,
@@ -80,7 +83,7 @@ function makeWorkato(opts: { running: Record<number, boolean>; throwOnce?: strin
 const runSave = async (wk: ReturnType<typeof makeWorkato>, args: Record<string, unknown> = {}) =>
   handleWorkatoSaveWithDependentsCall(
     'workato_recipe_save_with_dependents',
-    { recipe_id: 999, code_path: '/tmp/r.json', dependent_recipe_ids: [111], ...args },
+    { recipe_id: 999, code_path: codeFile, dependent_recipe_ids: [111], ...args },
     wk.call,
   );
 

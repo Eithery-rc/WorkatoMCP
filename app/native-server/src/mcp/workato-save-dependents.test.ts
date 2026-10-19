@@ -464,15 +464,37 @@ describe('handleWorkatoSaveWithDependentsCall', () => {
 
   test('passes code_path and a neutral default comment to the save tool', async () => {
     const wk = makeWorkato({ running: {} });
+    const codePath = path.join(journalDir, 'r.json');
+    fs.writeFileSync(codePath, JSON.stringify({ recipe_id: 999, code: { block: [] } }));
     await handleWorkatoSaveWithDependentsCall(
       'workato_recipe_save_with_dependents',
-      { recipe_id: 999, code_path: '/tmp/r.json', dependent_recipe_ids: [] },
+      { recipe_id: 999, code_path: codePath, dependent_recipe_ids: [] },
       wk.call,
     );
     const save = wk.calls.find((c) => c.name === 'workato_ui_save_recipe_code')!;
-    expect(save.args.code_path).toBe('/tmp/r.json');
+    expect(save.args.code_path).toBe(codePath);
     expect(save.args.comment).toBe('schema refresh');
     expect(save.args.restart_if_running).toBe(true);
+  });
+
+  test('a tree the save would refuse stops nothing', async () => {
+    const wk = makeWorkato({ running: { 111: true } });
+    const pyEval = {
+      provider: 'py_eval',
+      name: 'invoke_custom_py_code',
+      number: 3,
+      as: 'abc',
+      input: { code: 'x = (\n' },
+    };
+    const result = await handleWorkatoSaveWithDependentsCall(
+      'workato_recipe_save_with_dependents',
+      { recipe_id: 999, code: { block: [pyEval] }, dependent_recipe_ids: [111] },
+      wk.call,
+    );
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as any).text).toMatch(/Nothing was stopped and nothing was saved/);
+    expect(wk.calls.some((c) => c.name === 'workato_stop_recipe')).toBe(false);
+    expect(wk.running[111]).toBe(true);
   });
 
   test('isWorkatoSaveWithDependentsTool matches only its own tool', () => {
