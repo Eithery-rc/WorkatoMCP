@@ -35,7 +35,7 @@ Each of these is a gap a shipped package named for itself rather than hid.
 
 ## Known debt
 
-**The extension does not typecheck cleanly.** `pnpm typecheck` reports 14 errors. Removing the unused upstream features (record-replay, the element marker, the userscript manager) took it down from about 120. What remains: five in inherited browser code (`gif-recorder`, the offscreen GIF encoder and keepalive, network capture), one in `workato/properties.ts` (an error code missing from its union), and eight in two Workato test files that read `.text` off an MCP content block without narrowing it. The build is unaffected (WXT/Vite transpiles without typechecking).
+**The extension does not typecheck cleanly.** `pnpm typecheck` reports 14 errors. Removing the unused upstream features (record-replay, the element marker, the userscript manager) took it down from 119, as measured on master before the pruning. What remains: five in inherited browser code (`gif-recorder`, the offscreen GIF encoder and keepalive, network capture), one in `workato/properties.ts` (an error code missing from its union), and eight in two Workato test files that read `.text` off an MCP content block without narrowing it. The build is unaffected (WXT/Vite transpiles without typechecking).
 
 All of them are small, local fixes. Once they are done, the extension typecheck can gate CI like the bridge and shared ones.
 

@@ -44,7 +44,8 @@ jobs:
           pnpm --filter workatomcp-bridge exec tsc --noEmit
 
       # The extension still carries 14 type errors (inherited gif-recorder,
-      # offscreen and network capture code, plus two Workato test files).
+      # offscreen and network capture code, workato/properties.ts, and two
+      # Workato test files).
       # Reported in the run summary, not gating, until that debt is paid down.
       # See docs/ROADMAP.md#known-debt.
       - name: Typecheck extension (reported, not gating)

@@ -12,4 +12,3 @@
 # apply-update.cjs ships verbatim in the bridge package and runs via a unix
 # shebang on macOS/Linux, so it must stay LF like the shell scripts.
 *.cjs text eol=lf
-
