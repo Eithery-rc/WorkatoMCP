@@ -14,20 +14,11 @@
 
 import {
   KEEPALIVE_PORT_NAME,
+  KEEPALIVE_CONTROL_MESSAGE_TYPE,
   DEFAULT_KEEPALIVE_PING_INTERVAL_MS,
+  type KeepaliveControlMessage,
   type KeepaliveMessage,
 } from '@/common/keepalive-protocol';
-
-// ==================== Runtime Control Protocol ====================
-
-const KEEPALIVE_CONTROL_MESSAGE_TYPE = 'keepalive.control' as const;
-
-type KeepaliveControlCommand = 'start' | 'stop';
-
-interface KeepaliveControlMessage {
-  type: typeof KEEPALIVE_CONTROL_MESSAGE_TYPE;
-  command: KeepaliveControlCommand;
-}
 
 function isKeepaliveControlMessage(value: unknown): value is KeepaliveControlMessage {
   if (!value || typeof value !== 'object') return false;

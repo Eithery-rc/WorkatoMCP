@@ -6,6 +6,16 @@
 /** Keepalive port name */
 export const KEEPALIVE_PORT_NAME = 'keepalive' as const;
 
+/** Runtime message the background sends to start or stop the offscreen ping loop */
+export const KEEPALIVE_CONTROL_MESSAGE_TYPE = 'keepalive.control' as const;
+
+export type KeepaliveControlCommand = 'start' | 'stop';
+
+export interface KeepaliveControlMessage {
+  type: typeof KEEPALIVE_CONTROL_MESSAGE_TYPE;
+  command: KeepaliveControlCommand;
+}
+
 /** Keepalive message types */
 export type KeepaliveMessageType =
   | 'keepalive.ping'

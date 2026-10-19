@@ -13,18 +13,13 @@
  */
 
 import { offscreenManager } from '@/utils/offscreen-manager';
-import { KEEPALIVE_PORT_NAME, type KeepaliveMessage } from '@/common/keepalive-protocol';
-
-// ==================== Runtime Control Protocol ====================
-
-const KEEPALIVE_CONTROL_MESSAGE_TYPE = 'keepalive.control' as const;
-
-type KeepaliveControlCommand = 'start' | 'stop';
-
-interface KeepaliveControlMessage {
-  type: typeof KEEPALIVE_CONTROL_MESSAGE_TYPE;
-  command: KeepaliveControlCommand;
-}
+import {
+  KEEPALIVE_PORT_NAME,
+  KEEPALIVE_CONTROL_MESSAGE_TYPE,
+  type KeepaliveControlCommand,
+  type KeepaliveControlMessage,
+  type KeepaliveMessage,
+} from '@/common/keepalive-protocol';
 
 // ==================== Types ====================
 
