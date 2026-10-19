@@ -51,6 +51,11 @@ const PROVIDER_LITERALS = new Set([
   'workato_pub_sub',
   'workato_recipe_function',
   'workato_variable',
+  'workato_template',
+  'workato_webhooks',
+  'workato_db_table',
+  'workato_list',
+  'workato_files',
 ]);
 
 function knownToolNames(): Set<string> {

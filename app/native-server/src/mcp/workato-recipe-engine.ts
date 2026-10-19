@@ -86,6 +86,16 @@ export const CONNECTIONLESS_PROVIDERS = new Set([
   'workato_pub_sub',
   'workato_recipe_function',
   'workato_variable',
+  // connection_required:false in /integrations/meta, checked 2026-10-19.
+  'json_parser',
+  'workato_template',
+  'lookup_table',
+  'utility',
+  'workato_webhooks',
+  'workato_db_table',
+  'xml_parser',
+  'workato_list',
+  'workato_files',
 ]);
 
 const AS_HEX = /^[0-9a-f]{8}$/;

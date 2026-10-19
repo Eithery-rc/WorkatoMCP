@@ -312,6 +312,16 @@ export const CONNECTIONLESS_PROVIDERS: ReadonlySet<string> = new Set([
   'workato_pub_sub',
   'workato_recipe_function',
   'workato_variable',
+  // connection_required:false in /integrations/meta, checked 2026-10-19.
+  'json_parser',
+  'workato_template',
+  'lookup_table',
+  'utility',
+  'workato_webhooks',
+  'workato_db_table',
+  'xml_parser',
+  'workato_list',
+  'workato_files',
 ]);
 
 /**
@@ -920,6 +930,26 @@ class WorkatoTestRecipeTool extends BaseBrowserToolExecutor {
           `connection-backed providers (${named}), so the run can create or change records in ` +
           'those systems. Pass allow_writes:true to proceed. Recipes that only use ' +
           'connectionless providers run without the flag.',
+      );
+    }
+
+    // A test ends with the recipe stopped (stop_reason test_run_stop), so a test
+    // of a running recipe could leave it stopped, and its callers failing.
+    const before = await runInWorkatoTab(tabId, readTestStatusInPage, [recipeId], {
+      timeoutMs: SHORT_TIMEOUT_MS,
+    });
+    if (!before.ok || !before.flow) {
+      return createErrorResponse(
+        `${failureText('WorkatoApiError', before.failure)} Could not confirm recipe ${recipeId} ` +
+          'is stopped, so the test was not sent.',
+      );
+    }
+    if (before.flow.running) {
+      return createErrorResponse(
+        `WorkatoRecipeRunning: recipe ${recipeId} is running, and a test run could leave it ` +
+          'stopped. Nothing was sent. Test a copy (workato_copy_recipe), or stop it, test it ' +
+          'and start it again on purpose; a recipe function whose callers are running cannot ' +
+          'be stopped until they are.',
       );
     }
 

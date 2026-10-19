@@ -251,6 +251,27 @@ describe('assessTestWriteGate', () => {
     expect(gate.unbound_providers).toEqual([]);
   });
 
+  it('treats the built-in JSON, template and lookup table adapters as connectionless', () => {
+    const providers = ['json_parser', 'workato_template', 'lookup_table'];
+    const config = JSON.stringify([
+      ...providers.map((provider) => ({ keyword: 'application', name: provider, provider })),
+      { keyword: 'application', name: 'netsuite', provider: 'netsuite', account_id: 784927 },
+    ]);
+    const code = {
+      provider: 'workato_recipe_function',
+      keyword: 'trigger',
+      block: [...providers, 'netsuite'].map((provider, i) => ({
+        number: i + 1,
+        provider,
+        keyword: 'action',
+        name: 'x',
+      })),
+    };
+    const gate = assessTestWriteGate(config, code);
+    expect(gate.unbound_providers).toEqual([]);
+    expect(gate.connection_backed).toEqual(['netsuite']);
+  });
+
   it('does not report an account-less entry no step uses', () => {
     const config = JSON.stringify([
       { keyword: 'application', name: 'logger', provider: 'logger', skip_validation: false },
