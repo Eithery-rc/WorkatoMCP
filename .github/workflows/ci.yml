@@ -43,8 +43,8 @@ jobs:
           pnpm --filter workatomcp-shared exec tsc --noEmit
           pnpm --filter workatomcp-bridge exec tsc --noEmit
 
-      # The extension still carries ~100 type errors in code inherited from
-      # hangwin/mcp-chrome (record-replay-v3, element-marker, gif-recorder).
+      # The extension still carries 14 type errors (inherited gif-recorder,
+      # offscreen and network capture code, plus two Workato test files).
       # Reported in the run summary, not gating, until that debt is paid down.
       # See docs/ROADMAP.md#known-debt.
       - name: Typecheck extension (reported, not gating)
@@ -56,7 +56,7 @@ jobs:
             {
               echo "### Extension typecheck: $count pre-existing errors"
               echo ""
-              echo "Inherited from hangwin/mcp-chrome. See docs/ROADMAP.md#known-debt."
+              echo "See docs/ROADMAP.md#known-debt."
               echo ""
               echo '```'
               printf '%s\n' "$out" | grep -E 'error TS' | head -20

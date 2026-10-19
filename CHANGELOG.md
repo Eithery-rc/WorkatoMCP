@@ -6,6 +6,20 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
+Upstream features this project never used are gone. Every tool in the catalogue works as before.
+
+### Removed
+
+- **Record-replay**: the recorder, both replay engines, saved flows, and the `flow.*` tools the bridge listed for published flows (there were none). Saved browser functions (`chrome_fn_*`) cover the same ground.
+- **Unlisted tools** that the bridge forwarded by name but never listed: `chrome_userscript` and the options page that managed userscripts, `chrome_inject_script`, `chrome_send_command_to_inject_script`, `chrome_get_interactive_elements`, and direct calls to the network capture sub-tools (`chrome_network_capture` still drives them).
+- **The element marker**: the "mark element" context menu and its overlay. `chrome_read_page` still lists markers saved earlier.
+- The agent chat themes. The popup and the welcome page keep the default look.
+- The bridge's `/ask-extension` echo route.
+- Dead code and dependencies: an empty content script, 132 unused UI strings, `chalk`, `pino`, `zod` and the icon plugins, among others.
+- Manifest permissions `contextMenus`, `alarms` and `declarativeNetRequest`, which only the removed code used.
+
+Ship the bridge and the extension of this release together: a 1.13 bridge still asks the extension for its flow list on every `tools/list` and waits 20 s for an answer that no longer comes.
+
 ## bridge 1.13.0 · shared 1.11.0 (2026-10-19)
 
 Browser flows saved once and run by name, logins without a subagent, and a py_eval check that agrees with Python.

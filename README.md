@@ -257,7 +257,7 @@ pnpm format         # prettier
 
 Adding a tool means touching two places: the schema in `packages/shared/src/tools.ts` and the handler under `app/chrome-extension/entrypoints/background/tools/`. Rebuild `shared` before the extension, then call `workato_reload_extension`. It reloads the unpacked extension in every connected profile and restarts the bridge, and the MCP client usually picks up the new schema on its own (only builds older than that tool need one manual reload at `chrome://extensions`).
 
-**Known debt:** `pnpm typecheck` reports around 107 errors, all in code inherited from the upstream project (`record-replay-v3`, `element-marker`, `gif-recorder`). None are in the Workato tool families, and the build is unaffected. CI runs both test suites (extension vitest, bridge jest) and gates on the bridge and shared typechecks, reporting the extension typecheck separately. Details in [docs/ROADMAP.md](docs/ROADMAP.md#known-debt).
+**Known debt:** `pnpm typecheck` reports 14 errors in the extension: five in inherited browser code (`gif-recorder`, the offscreen GIF encoder and keepalive, network capture), one in `workato/properties.ts` and eight in two Workato test files. The build is unaffected. CI runs both test suites (extension vitest, bridge jest) and gates on the bridge and shared typechecks, reporting the extension typecheck separately. Details in [docs/ROADMAP.md](docs/ROADMAP.md#known-debt).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and [docs/ROADMAP.md](docs/ROADMAP.md) for what's planned.
 

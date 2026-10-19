@@ -35,9 +35,9 @@ Each of these is a gap a shipped package named for itself rather than hid.
 
 ## Known debt
 
-**The extension does not typecheck cleanly.** `pnpm typecheck` reports around 107 errors, all in code inherited from the upstream project: `record-replay-v3` and its tests, `element-marker`, `gif-recorder`, and a few browser tools. None are in the Workato tool families, and the build is unaffected (WXT/Vite transpiles without typechecking), which is why the errors went unnoticed for so long.
+**The extension does not typecheck cleanly.** `pnpm typecheck` reports 14 errors. Removing the unused upstream features (record-replay, the element marker, the userscript manager) took it down from about 120. What remains: five in inherited browser code (`gif-recorder`, the offscreen GIF encoder and keepalive, network capture), one in `workato/properties.ts` (an error code missing from its union), and eight in two Workato test files that read `.text` off an MCP content block without narrowing it. The build is unaffected (WXT/Vite transpiles without typechecking).
 
-Paying this down means either fixing the inherited code or dropping the parts of the record-replay feature this project doesn't use. The second is probably the better trade, since none of it serves the Workato use case.
+All of them are small, local fixes. Once they are done, the extension typecheck can gate CI like the bridge and shared ones.
 
 **CI now runs both test suites.** The extension vitest suite and the bridge jest suite gate the build after Lint, alongside the typecheck of `workatomcp-shared` and `workatomcp-bridge`. The extension typecheck is still reported without failing the run. Bridge coverage thresholds are explicitly non-gating: a red test should fail the build, a percentage should not.
 

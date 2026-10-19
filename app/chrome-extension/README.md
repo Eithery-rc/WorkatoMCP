@@ -39,10 +39,9 @@ entrypoints/
 │       ├── workato-session/   # whoami
 │       └── browser/           # inherited browser automation
 ├── popup/                     # status UI
-├── options/                   # settings
 ├── welcome/                   # first-install onboarding page
-├── offscreen/                 # offscreen document
-├── content.ts                 # main content script
+├── offscreen/                 # offscreen document (GIF encoder, service-worker keepalive)
+├── styles/                    # Tailwind entry and the shared popup/welcome theme
 ├── element-picker.content.ts  # interactive element selection
 └── workato-field-outline.content.ts   # optional-fields outline navigator
 ```

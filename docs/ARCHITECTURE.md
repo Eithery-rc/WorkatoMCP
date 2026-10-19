@@ -171,6 +171,6 @@ Two constraints worth knowing before writing in-tab code:
 
 ## Origin
 
-WorkatoMCP started as a fork of [hangwin/mcp-chrome](https://github.com/hangwin/mcp-chrome) and keeps its extension shell, native-messaging bridge, MCP transport handling, and browser-automation tools. It is developed independently and does not track upstream changes. On top of that base it adds the Workato tool families, tab resolution and session model, the multi-profile registry, the file round-trip, write verification and the safety gates, and publishes its own packages, `workatomcp-bridge` and `workatomcp-shared`.
+WorkatoMCP started as a fork of [hangwin/mcp-chrome](https://github.com/hangwin/mcp-chrome) and keeps its extension shell, native-messaging bridge, MCP transport handling, and browser-automation tools. It is developed independently and does not track upstream changes. The upstream features this project never used are gone: record-replay (recorded flows and the `flow.*` tools), the userscript manager and its options page, the element marker, the unlisted `chrome_inject_script`, `chrome_userscript` and `chrome_get_interactive_elements` tools, and the agent chat themes. On top of that base it adds the Workato tool families, tab resolution and session model, the multi-profile registry, the file round-trip, write verification and the safety gates, and publishes its own packages, `workatomcp-bridge` and `workatomcp-shared`.
 
 Historical design specs and implementation plans live in [`docs/design/`](design/).

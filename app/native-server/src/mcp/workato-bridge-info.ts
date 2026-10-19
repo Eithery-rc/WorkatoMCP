@@ -148,7 +148,7 @@ export interface BuildBridgeInfoOptions {
   platform?: string;
 }
 
-/** The catalogue as listTools serves it, minus the per-profile flow tools. */
+/** The catalogue as listTools serves it, without the injected profile and lease params. */
 export function servedToolSchemas(): Tool[] {
   return withOutFileToolSchemas(TOOL_SCHEMAS as Tool[]);
 }
