@@ -16,7 +16,7 @@ Single-row lookup by key column and value, without paging through the whole tabl
 
 ### `workato_create_connection`
 
-Stubbed at [`workato/create-connection.stub.ts`](../app/chrome-extension/entrypoints/background/tools/workato/create-connection.stub.ts) with the endpoint and body shape documented. Held back deliberately: creating a connection means handling auth material, which every other tool in this project is built to never touch. It needs a provider allowlist and a clear story on where credentials come from before it ships.
+The endpoint, body shape and safety rules are written down in Task 9 of the [v1.1 plan](design/plans/2026-05-12-workatomcp-v11.md#task-9-stub-future-write-tool-create-connection). Held back deliberately: creating a connection means handling auth material, which every other tool in this project is built to never touch. It needs a provider allowlist and a clear story on where credentials come from before it ships.
 
 ### Follow-ups the 2026-09-07 release left open
 

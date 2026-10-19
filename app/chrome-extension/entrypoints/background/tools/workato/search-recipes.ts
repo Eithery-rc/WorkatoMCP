@@ -97,7 +97,7 @@ export interface SearchRecipesWalkResult {
 
 /**
  * Runs in the Workato tab's MAIN world. Plain function returning a Promise
- * chain — DO NOT add async/await (see workato/csrf.ts comment + v1 pitfalls).
+ * chain. DO NOT add async/await (see scripts/check-bundle.mjs).
  */
 export function searchRecipesInPage(
   opts: SearchRecipesWalkOptions,

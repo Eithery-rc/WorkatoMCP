@@ -51,7 +51,7 @@ entrypoints/
 Two constraints that are easy to get wrong:
 
 - **In-page functions must be plain, bundler-safe JavaScript.** `chrome.scripting.executeScript` serializes the function before injecting it, so use `function () { ... .then(...) }` rather than `async`/`await` — the bundler rewrites the latter into helpers that don't survive serialization.
-- **Read the CSRF token from the `XSRF-TOKEN-V2` cookie** (see `tools/workato/csrf.ts`). Recipe editor pages carry no meta tag.
+- **Read the CSRF token from the `XSRF-TOKEN-V2` cookie**, inside the in-page function itself, since in-page code cannot import (see the `readCookie` helper in `tools/workato/rename-recipe.ts`, or `getCsrf` in `tools/workato-lookup/handlers.ts`). Recipe editor pages carry no meta tag.
 
 Resolve the target tab through `findWorkatoTab()` in `tools/workato/tab-dispatch.ts` — never `chrome.tabs.query({active: true})`.
 

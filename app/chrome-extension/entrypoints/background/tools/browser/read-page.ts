@@ -3,7 +3,6 @@ import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { ERROR_MESSAGES } from '@/common/constants';
-import { listMarkersForUrl } from '@/entrypoints/background/element-marker/element-marker-storage';
 
 interface ReadPageStats {
   processed: number;
@@ -48,16 +47,12 @@ class ReadPageTool extends BaseBrowserToolExecutor {
     try {
       // Tip text returned to callers to guide next action
       const standardTips =
-        "If the specific element you need is missing from the returned data, use the 'screenshot' tool to capture the current viewport and confirm the element's on-screen coordinates. Also note: 'markedElements' are user-marked elements and have the highest priority when choosing targets.";
+        "If the specific element you need is missing from the returned data, use the 'screenshot' tool to capture the current viewport and confirm the element's on-screen coordinates.";
 
       const explicit = await this.tryGetTab(args?.tabId);
       const tab = explicit || (await this.getActiveTabOrThrowInWindow(args?.windowId));
       if (!tab.id)
         return createErrorResponse(ERROR_MESSAGES.TAB_NOT_FOUND + ': Active tab has no ID');
-
-      // Load any user-marked elements for this URL (priority hints)
-      const currentUrl = String(tab.url || '');
-      const userMarkers = currentUrl ? await listMarkersForUrl(currentUrl) : [];
 
       // Inject helper in ISOLATED world to enable chrome.runtime messaging
       // Inject into all frames to support same-origin iframe operations
@@ -100,16 +95,6 @@ class ReadPageTool extends BaseBrowserToolExecutor {
       // Skip sparse heuristics when user explicitly controls output
       const isSparse = !userControlled && lines < 10 && refCount < 3;
 
-      // Build user-marked elements for inclusion
-      const markedElements = userMarkers.map((m) => ({
-        name: m.name,
-        selector: m.selector,
-        selectorType: m.selectorType || 'css',
-        urlMatch: { type: m.matchType, origin: m.origin, path: m.path },
-        source: 'marker',
-        priority: 'highest',
-      }));
-
       // Helper to convert elements array to pageContent format
       const formatElementsAsPageContent = (elements: any[]): string => {
         const out: string[] = [];
@@ -144,7 +129,6 @@ class ReadPageTool extends BaseBrowserToolExecutor {
         sparse: treeOk ? isSparse : false,
         depth: requestedDepth ?? null,
         focus: focusRefId ? { refId: focusRefId, found: treeOk } : null,
-        markedElements,
         elements: [],
         count: 0,
         fallbackUsed: false,
@@ -180,26 +164,14 @@ class ReadPageTool extends BaseBrowserToolExecutor {
 
         if (fallback && fallback.success && Array.isArray(fallback.elements)) {
           const limited = fallback.elements.slice(0, 150);
-          // Merge user markers at the front, de-duplicated by selector
-          const markerEls = userMarkers.map((m) => ({
-            type: 'marker',
-            selector: m.selector,
-            text: m.name,
-            selectorType: m.selectorType || 'css',
-            isInteractive: true,
-            source: 'marker',
-            priority: 'highest',
-          }));
-          const seen = new Set(markerEls.map((e) => e.selector));
-          const merged = [...markerEls, ...limited.filter((e: any) => !seen.has(e.selector))];
 
           basePayload.fallbackUsed = true;
           basePayload.fallbackSource = 'get_interactive_elements';
           basePayload.reason = treeOk ? 'sparse_tree' : resp?.error || 'tree_failed';
-          basePayload.elements = merged;
+          basePayload.elements = limited;
           basePayload.count = fallback.elements.length;
           if (!basePayload.pageContent) {
-            basePayload.pageContent = formatElementsAsPageContent(merged);
+            basePayload.pageContent = formatElementsAsPageContent(limited);
           }
 
           return {
