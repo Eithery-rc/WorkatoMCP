@@ -5,9 +5,6 @@
 
 import { vi } from 'vitest';
 
-// Provide IndexedDB globals (jsdom doesn't include them)
-import 'fake-indexeddb/auto';
-
 // Mock chrome API (basic placeholder)
 if (typeof globalThis.chrome === 'undefined') {
   (globalThis as unknown as { chrome: object }).chrome = {

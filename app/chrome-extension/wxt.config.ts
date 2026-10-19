@@ -3,9 +3,6 @@ import tailwindcss from '@tailwindcss/vite';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
 import { config } from 'dotenv';
 import { resolve } from 'path';
-import Icons from 'unplugin-icons/vite';
-import Components from 'unplugin-vue-components/vite';
-import IconsResolver from 'unplugin-icons/resolver';
 
 config({ path: resolve(process.cwd(), '.env') });
 config({ path: resolve(process.cwd(), '.env.local') });
@@ -106,12 +103,6 @@ export default defineConfig({
     plugins: [
       // TailwindCSS v4 Vite plugin – no PostCSS config required
       tailwindcss(),
-      // Auto-register SVG icons as Vue components; all icons are bundled locally
-      Components({
-        dts: false,
-        resolvers: [IconsResolver({ prefix: 'i', enabledCollections: ['lucide', 'mdi', 'ri'] })],
-      }) as any,
-      Icons({ compiler: 'vue3', autoInstall: false }) as any,
       // Ensure static assets are available as early as possible to avoid race conditions in dev
       // Copy workers/_locales/inject-scripts into the build output before other steps
       viteStaticCopy({

@@ -1,5 +1,3 @@
-/// <reference types="unplugin-icons/types/vue" />
-
 /** ISO timestamp of the build, injected by wxt.config.ts. */
 declare const __BUILD_TIME__: string;
 declare module '*.vue' {
