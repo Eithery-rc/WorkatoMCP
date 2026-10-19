@@ -6,7 +6,13 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
-Upstream features this project never used are gone. Every tool in the catalogue works as before.
+Upstream features this project never used are gone. The tools in the catalogue keep their names and parameters; `chrome_read_page` changes as listed below.
+
+### Changed
+
+- On an extension update, the background removes the data only the removed features wrote: the `rr_*` storage keys, `agentTheme`, `userscripts` and `userscripts_disabled`, and the IndexedDB databases `rr_storage`, `rr_v3` and `element_marker_storage`.
+- A bridge older than 2.0 still asks the extension for the record-replay flow list on every `tools/list`. The extension now answers at once with an empty list instead of leaving it to wait 20 s. This compatibility shim goes away in a later release.
+- The bridge declares `zod` itself: the MCP SDK it loads lists it as a peer, and no other package declares it any more.
 
 ### Removed
 
@@ -15,10 +21,13 @@ Upstream features this project never used are gone. Every tool in the catalogue 
 - **The element marker**: the "mark element" context menu, its overlay and its IndexedDB store. `chrome_read_page` no longer returns `markedElements`, which nothing could fill any more.
 - The agent chat themes. The popup and the welcome page keep the default look.
 - The bridge's `/ask-extension` echo route.
-- Dead code and dependencies: an empty content script, 132 unused UI strings, the unused `csrf.ts` helper and the four `*.stub.ts` planning files (their notes stay in `docs/design/plans/`), `chalk`, `pino`, `zod` and the icon plugins, among others.
+- **`workatomcp-shared` exports**: `rr-graph`, `step-types`, `labels`, `node-spec`, `node-spec-registry`, `node-specs-builtin` and `agent-types` are no longer exported, nor are `NativeMessageType.PROCESS_DATA` and `PROCESS_DATA_RESPONSE`. Record-replay, the agent chat and the echo route were their only users. This changes the package's public API.
+- Dead code and dependencies: an empty content script, 132 unused UI strings, the unused `csrf.ts` helper and the four `*.stub.ts` planning files (their notes stay in `docs/design/plans/`), the flow builder and Quick Panel styles, `chalk`, `pino`, `zod` in the shared and extension packages, and the icon plugins, among others.
 - Manifest permissions `contextMenus`, `alarms` and `declarativeNetRequest`, which only the removed code used, and `'wasm-unsafe-eval'` in the extension CSP with the cross-origin isolation headers (`cross_origin_embedder_policy`, `cross_origin_opener_policy`): nothing uses WebAssembly or SharedArrayBuffer since the semantic engine went in v1.3.
 
-Ship the bridge and the extension of this release together: a 1.13 bridge still asks the extension for its flow list on every `tools/list` and waits 20 s for an answer that no longer comes.
+### Fixed
+
+- `chrome_read_page` falls back to the interactive-elements helper when the accessibility tree is too sparse, but the fallback never reached it: the accessibility helper answered the ping meant for the second helper, so it was not injected and the fallback failed. It now injects the helper and returns the elements.
 
 ## bridge 1.13.0 · shared 1.11.0 (2026-10-19)
 
