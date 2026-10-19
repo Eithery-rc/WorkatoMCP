@@ -6,8 +6,6 @@ export enum NativeMessageType {
   PING = 'ping',
   PONG = 'pong',
   ERROR = 'error',
-  PROCESS_DATA = 'process_data',
-  PROCESS_DATA_RESPONSE = 'process_data_response',
   CALL_TOOL = 'call_tool',
   CALL_TOOL_RESPONSE = 'call_tool_response',
   // Additional message types used in Chrome extension
