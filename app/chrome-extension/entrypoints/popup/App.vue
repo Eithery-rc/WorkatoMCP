@@ -119,25 +119,6 @@
         <p class="footer-text">chrome mcp server for ai</p>
       </div>
     </div>
-
-    <!-- Workflow management lives in the side panel; editor opens in a separate window -->
-
-    <!-- Coming Soon Toast -->
-    <Transition name="toast">
-      <div v-if="comingSoonToast.show" class="coming-soon-toast">
-        <svg
-          class="toast-icon"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-        >
-          <circle cx="12" cy="12" r="10" />
-          <path d="M12 6v6l4 2" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <span>{{ comingSoonToast.feature }} — coming soon</span>
-      </div>
-    </Transition>
   </div>
 </template>
 
@@ -155,115 +136,13 @@ import { LINKS } from '@/common/constants';
 import { getMessage } from '@/utils/i18n';
 import { useAgentTheme } from '@/shared/agent-theme/useAgentTheme';
 
-import { BoltIcon, RecordIcon, StopIcon, RefreshIcon, MarkerIcon } from './components/icons';
+import { BoltIcon, RefreshIcon, MarkerIcon } from './components/icons';
 
 // AgentChat theme — loaded from preload to stay consistent with the side panel.
 const { theme: agentTheme, initTheme } = useAgentTheme();
 
 // Current view state: home only.
 const currentView = ref<'home'>('home');
-
-// Coming Soon Toast
-const comingSoonToast = ref<{ show: boolean; feature: string }>({ show: false, feature: '' });
-
-function showComingSoonToast(feature: string) {
-  comingSoonToast.value = { show: true, feature };
-  setTimeout(() => {
-    comingSoonToast.value = { show: false, feature: '' };
-  }, 2000);
-}
-
-// Record & Replay state
-const rrRecording = ref(false);
-const rrFlows = ref<
-  Array<{ id: string; name: string; description?: string; meta?: any; variables?: any[] }>
->([]);
-const rrOnlyBound = ref(false);
-const rrSearch = ref('');
-const currentTabUrl = ref<string>('');
-const filteredRrFlows = computed(() => {
-  const base = rrOnlyBound.value ? rrFlows.value.filter(isFlowBoundToCurrent) : rrFlows.value;
-  const q = rrSearch.value.trim().toLowerCase();
-  if (!q) return base;
-  return base.filter((f: any) => {
-    const name = String(f.name || '').toLowerCase();
-    const domain = String(f?.meta?.domain || '').toLowerCase();
-    const tags = ((f?.meta?.tags || []) as any[]).join(',').toLowerCase();
-    return name.includes(q) || domain.includes(q) || tags.includes(q);
-  });
-});
-
-// Flow editor opens in a separate window; popup no longer shows the full list.
-
-const loadFlows = async () => {
-  try {
-    const res = await chrome.runtime.sendMessage({ type: BACKGROUND_MESSAGE_TYPES.RR_LIST_FLOWS });
-    if (res && res.success) rrFlows.value = res.flows || [];
-  } catch (e) {
-    /* ignore */
-  }
-};
-
-function isFlowBoundToCurrent(flow: any) {
-  try {
-    const bindings = flow?.meta?.bindings || [];
-    if (!bindings.length) return false;
-    if (!currentTabUrl.value) return true;
-    const url = new URL(currentTabUrl.value);
-    return bindings.some((b: any) => {
-      if (b.type === 'domain') return url.hostname.includes(b.value);
-      if (b.type === 'path') return url.pathname.startsWith(b.value);
-      if (b.type === 'url') return (url.href || '').startsWith(b.value);
-      return false;
-    });
-  } catch {
-    return false;
-  }
-}
-
-// Run history and overrides are viewed in the side panel.
-const startRecording = async () => {
-  // TODO: Record-replay feature is under development — stub for now.
-  showComingSoonToast('Record-Replay');
-  return;
-};
-
-const stopRecording = async () => {
-  // TODO: Record-replay feature is under development — stub for now.
-  showComingSoonToast('Record-Replay');
-  return;
-};
-
-const runFlow = async (flowId: string) => {
-  try {
-    // load flow to get runOptions
-    let flow: any = null;
-    try {
-      const getRes = await chrome.runtime.sendMessage({
-        type: BACKGROUND_MESSAGE_TYPES.RR_GET_FLOW,
-        flowId,
-      });
-      if (getRes && getRes.success) flow = getRes.flow;
-    } catch {}
-    const runOptions = (flow && flow.meta && flow.meta.runOptions) || {};
-    // No per-run overrides in popup; sidepanel/editor manage advanced options
-    const ov: any = {};
-    const res = await chrome.runtime.sendMessage({
-      type: BACKGROUND_MESSAGE_TYPES.RR_RUN_FLOW,
-      flowId,
-      options: { ...runOptions, ...ov, returnLogs: true },
-    });
-    if (!(res && res.success)) {
-      console.warn('Playback failed');
-      return;
-    }
-    // Builder window removed: failed/fallback steps are now surfaced via logs only.
-  } catch (e) {
-    console.error('Playback failed:', e);
-  }
-};
-
-// Clone/publish/schedule/override operations are handled in the side panel or editor.
 
 const nativeConnectionStatus = ref<'unknown' | 'connected' | 'disconnected'>('unknown');
 const isConnecting = ref(false);
@@ -529,14 +408,10 @@ const setupServerStatusListener = () => {
       serverStatus.value = message.payload as any;
       console.log('Server status updated:', message.payload);
     }
-    // Flows changed - refresh list (IndexedDB-based notification)
-    if (message.type === BACKGROUND_MESSAGE_TYPES.RR_FLOWS_CHANGED) {
-      loadFlows();
-    }
   };
   chrome.runtime.onMessage.addListener(onMessage);
   // Store reference for cleanup
-  (window as any).__rr_popup_onMessage = onMessage;
+  (window as any).__popup_onMessage = onMessage;
 };
 
 onMounted(async () => {
@@ -545,39 +420,16 @@ onMounted(async () => {
   await loadProfileNamePreference();
   await checkNativeConnection();
   await checkServerStatus();
-  await loadFlows();
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    currentTabUrl.value = tab?.url || '';
-  } catch {}
 
   setupServerStatusListener();
-  // Auto-refresh workflows list when storage rr_flows changes
-  try {
-    const onChanged = (changes: any, area: string) => {
-      try {
-        if (area !== 'local') return;
-        if (Object.prototype.hasOwnProperty.call(changes || {}, 'rr_flows')) loadFlows();
-      } catch {}
-    };
-    chrome.storage.onChanged.addListener(onChanged);
-    (window as any).__rr_popup_onChanged = onChanged;
-  } catch {}
 });
 
 onUnmounted(() => {
   // Clean up runtime message listener
   try {
-    const msgFn = (window as any).__rr_popup_onMessage;
+    const msgFn = (window as any).__popup_onMessage;
     if (msgFn && chrome?.runtime?.onMessage?.removeListener) {
       chrome.runtime.onMessage.removeListener(msgFn);
-    }
-  } catch {}
-  // Clean up storage change listener (legacy fallback)
-  try {
-    const fn = (window as any).__rr_popup_onChanged;
-    if (fn && chrome?.storage?.onChanged?.removeListener) {
-      chrome.storage.onChanged.removeListener(fn);
     }
   } catch {}
 });
@@ -1248,45 +1100,5 @@ onUnmounted(() => {
   margin: 0;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-}
-
-/* Coming Soon Toast */
-.coming-soon-toast {
-  position: fixed;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  color: #0f172a;
-  font-size: 11px;
-  font-weight: 500;
-  border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-  z-index: 1000;
-  white-space: nowrap;
-}
-
-.toast-icon {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  color: #4f46e5;
-}
-
-/* Toast transition */
-.toast-enter-active,
-.toast-leave-active {
-  transition: all 0.25s ease;
-}
-
-.toast-enter-from,
-.toast-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(8px);
 }
 </style>

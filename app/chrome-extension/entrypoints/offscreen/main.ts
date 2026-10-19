@@ -1,8 +1,8 @@
 import { MessageTarget } from '@/common/message-types';
 import { handleGifMessage } from './gif-encoder';
-import { initKeepalive } from './rr-keepalive';
+import { initKeepalive } from './keepalive';
 
-// Initialize RR V3 Keepalive
+// Keep the service worker alive while the background holds a keepalive reference
 initKeepalive();
 
 interface OffscreenMessage {
@@ -39,4 +39,4 @@ chrome.runtime.onMessage.addListener(
   },
 );
 
-console.log('Offscreen: handler loaded (GIF encoder + RR-V3 keepalive)');
+console.log('Offscreen: handler loaded (GIF encoder + keepalive)');

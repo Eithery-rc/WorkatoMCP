@@ -380,13 +380,6 @@ export function initElementMarkerListeners() {
           })();
           return true;
         }
-        // When RR refresh (or similar) happens, re-add our menu
-        case BACKGROUND_MESSAGE_TYPES.RR_REFRESH_TRIGGERS:
-        case BACKGROUND_MESSAGE_TYPES.RR_SAVE_TRIGGER:
-        case BACKGROUND_MESSAGE_TYPES.RR_DELETE_TRIGGER: {
-          setTimeout(() => ensureContextMenu().catch(() => {}), 300);
-          break;
-        }
       }
     } catch (e) {
       sendResponse({ success: false, error: (e as any)?.message || String(e) });

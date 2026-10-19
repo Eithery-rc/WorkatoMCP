@@ -28,12 +28,10 @@ function _pullInPage() {
 }
 `;
 
-/** The two pre-existing service-worker helpers, which never reach a page. */
+/** The known service-worker helper, which never reaches a page. */
 const KNOWN_HELPERS_SOURCE = `
 function evaluateInPage(_x, _x2) { return _evaluateInPage.apply(this, arguments); }
 function _evaluateInPage() { _evaluateInPage = _asyncToGenerator(function* () {}); }
-function checkAssertionInPage(_x) { return _checkAssertionInPage.apply(this, arguments); }
-function _checkAssertionInPage() { _checkAssertionInPage = _asyncToGenerator(function* () {}); }
 `;
 
 /** What a correctly written in-page function compiles to. */
@@ -62,13 +60,13 @@ describe('findInPageWrappers', () => {
     expect(findInPageWrappers(noise).offenders).toEqual([]);
   });
 
-  it('allows the two known service-worker helpers', () => {
+  it('allows the known service-worker helper', () => {
     const result = findInPageWrappers(KNOWN_HELPERS_SOURCE);
     expect(result.offenders).toEqual([]);
     expect(result.helpers.sort()).toEqual([...KNOWN_SERVICE_WORKER_HELPERS].sort());
   });
 
-  it('flags a new helper even when the known ones are present', () => {
+  it('flags a new helper even when the known one is present', () => {
     const result = findInPageWrappers(KNOWN_HELPERS_SOURCE + TRANSPILED_OFFENDER);
     expect(result.offenders).toEqual(['_pullInPage']);
   });

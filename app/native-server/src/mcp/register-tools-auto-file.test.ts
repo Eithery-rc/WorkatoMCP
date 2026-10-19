@@ -122,7 +122,6 @@ describe('register-tools image and auto-file wiring', () => {
   });
 
   test('serves out_file and auto_file on read tools, not on write tools', async () => {
-    // The flow listing gets a response with no `items`, so no dynamic tools.
     stubResponse({ content: [] });
     const router = await pinnedRouter();
 

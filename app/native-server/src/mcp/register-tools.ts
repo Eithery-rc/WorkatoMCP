@@ -508,60 +508,6 @@ async function probeSessionContext(
   }
 }
 
-async function listDynamicFlowTools(profile: string | null): Promise<Tool[]> {
-  try {
-    const response = await sendRequestToExtension({}, 'rr_list_published_flows', 20000, profile);
-    if (response && response.status === 'success' && Array.isArray(response.items)) {
-      const tools: Tool[] = [];
-      for (const item of response.items) {
-        const name = `flow.${item.slug}`;
-        const description =
-          (item.meta && item.meta.tool && item.meta.tool.description) ||
-          item.description ||
-          'Recorded flow';
-        const properties: Record<string, any> = {};
-        const required: string[] = [];
-        for (const v of item.variables || []) {
-          const desc = v.label || v.key;
-          const typ = (v.type || 'string').toLowerCase();
-          const prop: any = { description: desc };
-          if (typ === 'boolean') prop.type = 'boolean';
-          else if (typ === 'number') prop.type = 'number';
-          else if (typ === 'enum') {
-            prop.type = 'string';
-            if (v.rules && Array.isArray(v.rules.enum)) prop.enum = v.rules.enum;
-          } else if (typ === 'array') {
-            // default array of strings; can extend with itemType later
-            prop.type = 'array';
-            prop.items = { type: 'string' };
-          } else {
-            prop.type = 'string';
-          }
-          if (v.default !== undefined) prop.default = v.default;
-          if (v.rules && v.rules.required) required.push(v.key);
-          properties[v.key] = prop;
-        }
-        // Run options
-        properties['tabTarget'] = { type: 'string', enum: ['current', 'new'], default: 'current' };
-        properties['refresh'] = { type: 'boolean', default: false };
-        properties['captureNetwork'] = { type: 'boolean', default: false };
-        properties['returnLogs'] = { type: 'boolean', default: false };
-        properties['timeoutMs'] = { type: 'number', minimum: 0 };
-        const tool: Tool = {
-          name,
-          description,
-          inputSchema: { type: 'object', properties, required },
-        };
-        tools.push(tool);
-      }
-      return withProfileRoutingToolSchemas(tools);
-    }
-    return [];
-  } catch (e) {
-    return [];
-  }
-}
-
 export const setupTools = (server: Server) => {
   const router = createToolRouter();
 
@@ -1023,44 +969,6 @@ export function createToolRouter(): ToolRouter {
         }
       }
 
-      // 2. If calling a dynamic flow tool (name starts with flow.), proxy to common flow-run tool
-      if (name && name.startsWith('flow.')) {
-        // We need to resolve flow by slug to ID
-        try {
-          const resp = await sendRequestToExtension(
-            {},
-            'rr_list_published_flows',
-            20000,
-            routingProfile,
-          );
-          const items = (resp && resp.items) || [];
-          const slug = name.slice('flow.'.length);
-          const match = items.find((it: any) => it.slug === slug);
-          if (!match) throw new Error(`Flow not found for tool ${name}`);
-          const flowArgs = { flowId: match.id, args: routed.args };
-          const proxyRes = await sendRequestToExtension(
-            { name: 'record_replay_flow_run', args: flowArgs },
-            NativeMessageType.CALL_TOOL,
-            120000,
-            routingProfile,
-          );
-          if (proxyRes.status === 'success') return proxyRes.data;
-          return {
-            content: [{ type: 'text', text: `Error calling dynamic flow tool: ${proxyRes.error}` }],
-            isError: true,
-          };
-        } catch (err: any) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Error resolving dynamic flow tool: ${err?.message || String(err)}`,
-              },
-            ],
-            isError: true,
-          };
-        }
-      }
       // workato_pull_recipe(out_file) / workato_ui_save_recipe_code(code_path):
       // resolve the file params here (this process has filesystem access).
       // Strict targeting looks at the caller's own arguments (lease applied),
@@ -1257,14 +1165,11 @@ export function createToolRouter(): ToolRouter {
     }
   };
 
-  const listTools = async () => {
-    const dynamicTools = await listDynamicFlowTools(session?.profile ?? null);
-    return {
-      tools: withLeaseToolSchemas(
-        withOutFileToolSchemas(withProfileRoutingToolSchemas([...TOOL_SCHEMAS, ...dynamicTools])),
-      ),
-    };
-  };
+  const listTools = async () => ({
+    tools: withLeaseToolSchemas(
+      withOutFileToolSchemas(withProfileRoutingToolSchemas(TOOL_SCHEMAS)),
+    ),
+  });
 
   const handleToolCallWithCancel = (name: string, args: any, signal?: AbortSignal) =>
     raceAbort(handleToolCall(name, args, signal), signal);

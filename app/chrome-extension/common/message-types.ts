@@ -15,33 +15,6 @@ export const BACKGROUND_MESSAGE_TYPES = {
   GET_SERVER_STATUS: 'get_server_status',
   REFRESH_SERVER_STATUS: 'refresh_server_status',
   SERVER_STATUS_CHANGED: 'server_status_changed',
-  // Record & Replay background control and queries
-  RR_START_RECORDING: 'rr_start_recording',
-  RR_STOP_RECORDING: 'rr_stop_recording',
-  RR_PAUSE_RECORDING: 'rr_pause_recording',
-  RR_RESUME_RECORDING: 'rr_resume_recording',
-  RR_GET_RECORDING_STATUS: 'rr_get_recording_status',
-  RR_LIST_FLOWS: 'rr_list_flows',
-  RR_FLOWS_CHANGED: 'rr_flows_changed',
-  RR_GET_FLOW: 'rr_get_flow',
-  RR_DELETE_FLOW: 'rr_delete_flow',
-  RR_PUBLISH_FLOW: 'rr_publish_flow',
-  RR_UNPUBLISH_FLOW: 'rr_unpublish_flow',
-  RR_RUN_FLOW: 'rr_run_flow',
-  RR_SAVE_FLOW: 'rr_save_flow',
-  RR_EXPORT_FLOW: 'rr_export_flow',
-  RR_EXPORT_ALL: 'rr_export_all',
-  RR_IMPORT_FLOW: 'rr_import_flow',
-  RR_LIST_RUNS: 'rr_list_runs',
-  // Triggers
-  RR_LIST_TRIGGERS: 'rr_list_triggers',
-  RR_SAVE_TRIGGER: 'rr_save_trigger',
-  RR_DELETE_TRIGGER: 'rr_delete_trigger',
-  RR_REFRESH_TRIGGERS: 'rr_refresh_triggers',
-  // Scheduling
-  RR_SCHEDULE_FLOW: 'rr_schedule_flow',
-  RR_UNSCHEDULE_FLOW: 'rr_unschedule_flow',
-  RR_LIST_SCHEDULES: 'rr_list_schedules',
   // Element marker management
   ELEMENT_MARKER_LIST_ALL: 'element_marker_list_all',
   ELEMENT_MARKER_LIST_FOR_URL: 'element_marker_list_for_url',
@@ -103,7 +76,6 @@ export const TOOL_MESSAGE_TYPES = {
   GENERATE_ACCESSIBILITY_TREE: 'generateAccessibilityTree',
   RESOLVE_REF: 'resolveRef',
   ENSURE_REF_FOR_SELECTOR: 'ensureRefForSelector',
-  VERIFY_FINGERPRINT: 'verifyFingerprint',
   DISPATCH_HOVER_FOR_REF: 'dispatchHoverForRef',
 
   // Network requests
@@ -112,16 +84,6 @@ export const TOOL_MESSAGE_TYPES = {
   // Wait helper
   WAIT_FOR_TEXT: 'waitForText',
 
-  // Record & Replay content script bridge
-  RR_RECORDER_CONTROL: 'rr_recorder_control',
-  RR_RECORDER_EVENT: 'rr_recorder_event',
-  // Record & Replay timeline feed (background -> content overlay)
-  RR_TIMELINE_UPDATE: 'rr_timeline_update',
-  // DOM observer trigger bridge
-  SET_DOM_TRIGGERS: 'set_dom_triggers',
-  DOM_TRIGGER_FIRED: 'dom_trigger_fired',
-  // Record & Replay overlay: variable collection
-  COLLECT_VARIABLES: 'collectVariables',
   // Element marker overlay control (content-side)
   ELEMENT_MARKER_START: 'element_marker_start',
   // Element picker (tool-driven, background <-> content scripts)

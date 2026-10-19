@@ -14,10 +14,9 @@
  * chains. This script checks the built bundle for the shape that breaks it,
  * so the rule fails the build instead of a live call.
  *
- * Two service-worker helpers legitimately produce that shape and never reach a
- * page: `evaluateInPage` (CDP Runtime.evaluate, which takes a source STRING)
- * and `checkAssertionInPage` (record-replay, which passes an inline arrow).
- * They are allowlisted by name.
+ * One service-worker helper legitimately produces that shape and never reaches
+ * a page: `evaluateInPage` (CDP Runtime.evaluate, which takes a source STRING).
+ * It is allowlisted by name.
  *
  * Run: `pnpm --filter workatomcp-extension check:bundle` (also chained after
  * `wxt build`).
@@ -31,7 +30,7 @@ import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /** Async service-worker helpers that are never serialized into a page. */
-export const KNOWN_SERVICE_WORKER_HELPERS = ['_evaluateInPage', '_checkAssertionInPage'];
+export const KNOWN_SERVICE_WORKER_HELPERS = ['_evaluateInPage'];
 
 export const DEFAULT_BUNDLE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),

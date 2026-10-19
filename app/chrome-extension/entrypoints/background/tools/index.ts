@@ -7,7 +7,6 @@ import * as workatoLookupTools from './workato-lookup';
 import * as workatoLcapTools from './workato-lcap';
 import * as workatoDataTableTools from './workato-data-table';
 import * as workatoSessionTools from './workato-session';
-import { flowRunTool, listPublishedFlowsTool } from './record-replay';
 import { maybeAppendContextBlock } from './workato/session-context';
 import { runExclusiveForTab } from './tab-queue';
 
@@ -19,8 +18,6 @@ const tools = {
   ...workatoLcapTools,
   ...workatoDataTableTools,
   ...workatoSessionTools,
-  flowRunTool,
-  listPublishedFlowsTool,
 } as any;
 const toolsMap = new Map(Object.values(tools).map((tool: any) => [tool.name, tool]));
 
@@ -41,15 +38,9 @@ export const handleCallTool = async (param: ToolCallParam) => {
     return createErrorResponse(`Tool ${param.name} not found`);
   }
   const tabId = param.args?.tabId;
-  // Record-replay flows call handleCallTool for each step themselves; locking
-  // the flow run too would deadlock on its own tab.
   // chrome_handle_dialog answers the dialog another call on this tab is blocked
   // on; queueing it behind that call would deadlock the tab.
-  if (
-    typeof tabId === 'number' &&
-    !param.name.startsWith('record_replay') &&
-    param.name !== 'chrome_handle_dialog'
-  ) {
+  if (typeof tabId === 'number' && param.name !== 'chrome_handle_dialog') {
     return runExclusiveForTab(tabId, () => executeTool(tool, param));
   }
   return executeTool(tool, param);

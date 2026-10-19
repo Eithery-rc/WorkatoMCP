@@ -1,10 +1,10 @@
 /**
- * @fileoverview RR V3 Keepalive Protocol Constants
+ * @fileoverview Keepalive Protocol Constants
  * @description Shared protocol constants for Background-Offscreen keepalive communication
  */
 
 /** Keepalive port name */
-export const RR_V3_KEEPALIVE_PORT_NAME = 'rr_v3_keepalive' as const;
+export const KEEPALIVE_PORT_NAME = 'keepalive' as const;
 
 /** Keepalive message types */
 export type KeepaliveMessageType =

@@ -11,7 +11,7 @@
 import {
   createOffscreenKeepaliveController,
   type KeepaliveController,
-} from './record-replay-v3/engine/keepalive/offscreen-keepalive';
+} from './offscreen-keepalive';
 
 const LOG_PREFIX = '[KeepaliveManager]';
 
@@ -35,7 +35,7 @@ function getController(): KeepaliveController {
 /**
  * Acquire a keepalive reference with a tag.
  *
- * @param tag - Identifier for the reference (e.g., 'native-host', 'rr-engine')
+ * @param tag - Identifier for the reference (e.g., 'native-host')
  * @returns A release function to call when keepalive is no longer needed
  *
  * @example

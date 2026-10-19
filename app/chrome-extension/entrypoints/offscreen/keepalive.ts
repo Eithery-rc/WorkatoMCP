@@ -13,14 +13,14 @@
  */
 
 import {
-  RR_V3_KEEPALIVE_PORT_NAME,
+  KEEPALIVE_PORT_NAME,
   DEFAULT_KEEPALIVE_PING_INTERVAL_MS,
   type KeepaliveMessage,
-} from '@/common/rr-v3-keepalive-protocol';
+} from '@/common/keepalive-protocol';
 
 // ==================== Runtime Control Protocol ====================
 
-const KEEPALIVE_CONTROL_MESSAGE_TYPE = 'rr_v3_keepalive.control' as const;
+const KEEPALIVE_CONTROL_MESSAGE_TYPE = 'keepalive.control' as const;
 
 type KeepaliveControlCommand = 'start' | 'stop';
 
@@ -83,7 +83,7 @@ function scheduleReconnect(delayMs = 1000): void {
     if (!initialized) return;
     if (!keepaliveDesired) return;
     if (!keepalivePort) {
-      console.log('[rr-keepalive] Attempting scheduled reconnect...');
+      console.log('[keepalive] Attempting scheduled reconnect...');
       keepalivePort = connectToBackground();
     }
   }, delayMs);
@@ -94,39 +94,39 @@ function scheduleReconnect(delayMs = 1000): void {
  */
 function connectToBackground(): chrome.runtime.Port | null {
   if (typeof chrome === 'undefined' || !chrome.runtime?.connect) {
-    console.warn('[rr-keepalive] chrome.runtime.connect not available');
+    console.warn('[keepalive] chrome.runtime.connect not available');
     return null;
   }
 
   try {
-    const port = chrome.runtime.connect({ name: RR_V3_KEEPALIVE_PORT_NAME });
+    const port = chrome.runtime.connect({ name: KEEPALIVE_PORT_NAME });
 
     port.onMessage.addListener((msg: unknown) => {
       if (!isKeepaliveMessage(msg)) return;
 
       if (msg.type === 'keepalive.start') {
-        console.log('[rr-keepalive] Received start command via Port');
+        console.log('[keepalive] Received start command via Port');
         startPingLoop();
       } else if (msg.type === 'keepalive.stop') {
-        console.log('[rr-keepalive] Received stop command via Port');
+        console.log('[keepalive] Received stop command via Port');
         stopPingLoop();
       } else if (msg.type === 'keepalive.pong') {
         // Background replied to our ping.
-        console.debug('[rr-keepalive] Received pong');
+        console.debug('[keepalive] Received pong');
       }
     });
 
     port.onDisconnect.addListener(() => {
-      console.log('[rr-keepalive] Port disconnected');
+      console.log('[keepalive] Port disconnected');
       keepalivePort = null;
       // Only reconnect if keepalive is still desired.
       scheduleReconnect(1000);
     });
 
-    console.log('[rr-keepalive] Connected to background');
+    console.log('[keepalive] Connected to background');
     return port;
   } catch (e) {
-    console.warn('[rr-keepalive] Failed to connect:', e);
+    console.warn('[keepalive] Failed to connect:', e);
     return null;
   }
 }
@@ -150,9 +150,9 @@ function sendPing(): void {
 
   try {
     keepalivePort.postMessage(msg);
-    console.debug('[rr-keepalive] Sent ping');
+    console.debug('[keepalive] Sent ping');
   } catch (e) {
-    console.warn('[rr-keepalive] Failed to send ping:', e);
+    console.warn('[keepalive] Failed to send ping:', e);
     keepalivePort = null;
     scheduleReconnect(1000);
   }
@@ -179,9 +179,7 @@ function startPingLoop(): void {
     sendPing();
   }, DEFAULT_KEEPALIVE_PING_INTERVAL_MS);
 
-  console.log(
-    `[rr-keepalive] Ping loop started (interval=${DEFAULT_KEEPALIVE_PING_INTERVAL_MS}ms)`,
-  );
+  console.log(`[keepalive] Ping loop started (interval=${DEFAULT_KEEPALIVE_PING_INTERVAL_MS}ms)`);
 }
 
 /**
@@ -211,7 +209,7 @@ function stopPingLoop(): void {
     keepalivePort = null;
   }
 
-  console.log('[rr-keepalive] Ping loop stopped');
+  console.log('[keepalive] Ping loop stopped');
 }
 
 // ==================== Public API ====================
@@ -226,7 +224,7 @@ export function initKeepalive(): void {
 
   // Check Chrome API availability.
   if (typeof chrome === 'undefined' || !chrome.runtime?.onMessage) {
-    console.warn('[rr-keepalive] chrome.runtime.onMessage not available');
+    console.warn('[keepalive] chrome.runtime.onMessage not available');
     return;
   }
 
@@ -236,10 +234,10 @@ export function initKeepalive(): void {
     if (!isKeepaliveControlMessage(msg)) return;
 
     if (msg.command === 'start') {
-      console.log('[rr-keepalive] Received runtime start command');
+      console.log('[keepalive] Received runtime start command');
       startPingLoop();
     } else {
-      console.log('[rr-keepalive] Received runtime stop command');
+      console.log('[keepalive] Received runtime stop command');
       stopPingLoop();
     }
 
@@ -255,7 +253,7 @@ export function initKeepalive(): void {
     keepalivePort = connectToBackground();
   }
 
-  console.log('[rr-keepalive] Keepalive initialized');
+  console.log('[keepalive] Keepalive initialized');
 }
 
 /**
@@ -274,7 +272,4 @@ export function getActivePortCount(): number {
 }
 
 // Re-export for backwards compatibility
-export {
-  RR_V3_KEEPALIVE_PORT_NAME,
-  type KeepaliveMessage,
-} from '@/common/rr-v3-keepalive-protocol';
+export { KEEPALIVE_PORT_NAME, type KeepaliveMessage } from '@/common/keepalive-protocol';

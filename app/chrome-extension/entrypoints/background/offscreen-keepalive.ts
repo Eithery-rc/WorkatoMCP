@@ -13,14 +13,11 @@
  */
 
 import { offscreenManager } from '@/utils/offscreen-manager';
-import {
-  RR_V3_KEEPALIVE_PORT_NAME,
-  type KeepaliveMessage,
-} from '@/common/rr-v3-keepalive-protocol';
+import { KEEPALIVE_PORT_NAME, type KeepaliveMessage } from '@/common/keepalive-protocol';
 
 // ==================== Runtime Control Protocol ====================
 
-const KEEPALIVE_CONTROL_MESSAGE_TYPE = 'rr_v3_keepalive.control' as const;
+const KEEPALIVE_CONTROL_MESSAGE_TYPE = 'keepalive.control' as const;
 
 type KeepaliveControlCommand = 'start' | 'stop';
 
@@ -253,7 +250,7 @@ class OffscreenKeepaliveControllerImpl implements KeepaliveController {
    * Handle Port connections from Offscreen.
    */
   private handleConnect = (port: chrome.runtime.Port): void => {
-    if (port.name !== RR_V3_KEEPALIVE_PORT_NAME) return;
+    if (port.name !== KEEPALIVE_PORT_NAME) return;
 
     this.logger.debug('[OffscreenKeepalive] Offscreen connected');
 
