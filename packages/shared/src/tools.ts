@@ -3810,6 +3810,7 @@ export const TOOL_SCHEMAS: Tool[] = [
       "Fetch a Workato job's per-step execution trace. Read-only. Returns a slimmed " +
       'shape by default (step list, status, error, truncated input/output; schema noise ' +
       'like output_schema/extended_*_schema is stripped from summaries). ' +
+      'recipe.version_no is the version THIS job ran on, not the current one. ' +
       'For long recipes, narrow with lines:[104,118] (exact set) or line_range:[91,123] ' +
       "(inclusive). THE PER-STEP UNTRUNCATED READ IS detail:'full' PLUS lines:[N] (or " +
       'line_range): there is no `step` parameter, and passing one does nothing, so a trace ' +
