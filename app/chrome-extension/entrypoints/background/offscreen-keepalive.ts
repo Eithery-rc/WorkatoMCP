@@ -70,22 +70,6 @@ export function createOffscreenKeepaliveController(
   return new OffscreenKeepaliveControllerImpl(options);
 }
 
-/**
- * Create a NotImplemented KeepaliveController.
- * @description Placeholder implementation.
- */
-export function createNotImplementedKeepaliveController(): KeepaliveController {
-  return {
-    acquire: () => {
-      console.warn('[KeepaliveController] Not implemented, returning no-op release');
-      return () => {};
-    },
-    isActive: () => false,
-    getRefCount: () => 0,
-    releaseAll: () => {},
-  };
-}
-
 // ==================== Implementation ====================
 
 /**
@@ -392,57 +376,5 @@ class OffscreenKeepaliveControllerImpl implements KeepaliveController {
     }
 
     this.logger.warn(`[OffscreenKeepalive] Failed to send runtime ${command} command`);
-  }
-}
-
-// ==================== Test Utilities ====================
-
-/**
- * In-memory keepalive controller.
- * @description For tests only: tracks reference counts without using Offscreen.
- */
-export class InMemoryKeepaliveController implements KeepaliveController {
-  private refs = new Map<string, number>();
-
-  acquire(tag: string): () => void {
-    const count = this.refs.get(tag) ?? 0;
-    this.refs.set(tag, count + 1);
-
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-
-      const currentCount = this.refs.get(tag) ?? 0;
-      if (currentCount <= 1) {
-        this.refs.delete(tag);
-      } else {
-        this.refs.set(tag, currentCount - 1);
-      }
-    };
-  }
-
-  isActive(): boolean {
-    return this.refs.size > 0;
-  }
-
-  getRefCount(): number {
-    let total = 0;
-    for (const count of this.refs.values()) {
-      total += count;
-    }
-    return total;
-  }
-
-  releaseAll(): void {
-    this.refs.clear();
-  }
-
-  /**
-   * Get the current reference counts grouped by tag.
-   * @description Useful for debugging.
-   */
-  getRefsByTag(): Record<string, number> {
-    return Object.fromEntries(this.refs);
   }
 }

@@ -62,26 +62,3 @@ export function acquireKeepalive(tag: string): () => void {
     return () => {};
   }
 }
-
-/**
- * Check if keepalive is currently active (any references held).
- */
-export function isKeepaliveActive(): boolean {
-  try {
-    return getController().isActive();
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Get the current keepalive reference count.
- * Useful for debugging.
- */
-export function getKeepaliveRefCount(): number {
-  try {
-    return getController().getRefCount();
-  } catch {
-    return 0;
-  }
-}

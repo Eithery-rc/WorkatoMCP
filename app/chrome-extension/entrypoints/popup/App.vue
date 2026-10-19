@@ -1,5 +1,5 @@
 <template>
-  <div class="popup-container agent-theme" :data-agent-theme="agentTheme">
+  <div class="popup-container agent-theme">
     <!-- Home view -->
     <div v-show="currentView === 'home'" class="home-view">
       <div class="header">
@@ -134,12 +134,8 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { BACKGROUND_MESSAGE_TYPES } from '@/common/message-types';
 import { LINKS } from '@/common/constants';
 import { getMessage } from '@/utils/i18n';
-import { useAgentTheme } from '@/shared/agent-theme/useAgentTheme';
 
-import { BoltIcon, RefreshIcon, MarkerIcon } from './components/icons';
-
-// AgentChat theme — loaded from preload to stay consistent with the side panel.
-const { theme: agentTheme, initTheme } = useAgentTheme();
+import { BoltIcon, RefreshIcon } from './components/icons';
 
 // Current view state: home only.
 const currentView = ref<'home'>('home');
@@ -191,23 +187,6 @@ const getStatusClass = () => {
     return 'bg-gray-500';
   }
 };
-
-async function toggleElementMarker() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) {
-      console.warn('Cannot get active tab');
-      return;
-    }
-
-    await chrome.runtime.sendMessage({
-      type: BACKGROUND_MESSAGE_TYPES.ELEMENT_MARKER_START,
-      tabId: tab.id,
-    });
-  } catch (error) {
-    console.warn('Failed to open element marker:', error);
-  }
-}
 
 async function openWelcomePage() {
   try {
@@ -415,7 +394,6 @@ const setupServerStatusListener = () => {
 };
 
 onMounted(async () => {
-  await initTheme();
   await loadPortPreference();
   await loadProfileNamePreference();
   await checkNativeConnection();
@@ -449,252 +427,20 @@ onUnmounted(() => {
 }
 
 .popup-container {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(253, 252, 248, 0.35);
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  border-radius: 16px;
-  box-shadow:
-    0 10px 30px rgba(0, 0, 0, 0.03),
-    inset 0 1px 0 rgba(255, 255, 255, 0.5);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  font-family:
-    var(--ac-font-body),
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    Roboto,
-    sans-serif;
-  height: 100%;
-  transition: all var(--transition-slow);
-}
-
-/* 1. Warm Editorial Glass Card */
-.popup-container[data-agent-theme='warm-editorial'] {
-  background: rgba(253, 252, 248, 0.35);
   border: 1px solid rgba(217, 119, 87, 0.22);
+  border-radius: 16px;
   box-shadow:
     0 10px 30px rgba(217, 119, 87, 0.03),
     inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   font-family: var(--ac-font-sans);
-}
-.popup-container[data-agent-theme='warm-editorial'] .header-title {
-  background: linear-gradient(135deg, #d97757 0%, #c4664a 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-.popup-container[data-agent-theme='warm-editorial'] .config-card {
-  background: rgba(255, 255, 255, 0.3);
-  border: 1px solid rgba(217, 119, 87, 0.12);
-}
-.popup-container[data-agent-theme='warm-editorial'] .connect-button {
-  background: linear-gradient(135deg, #d97757 0%, #c4664a 100%);
-  box-shadow: 0 4px 14px rgba(217, 119, 87, 0.2);
-}
-.popup-container[data-agent-theme='warm-editorial'] .connect-button:hover:not(:disabled) {
-  background: linear-gradient(135deg, #c4664a 0%, #b4583c 100%);
-  box-shadow: 0 6px 20px rgba(217, 119, 87, 0.35);
-}
-
-/* 2. Blueprint Architect Glass Card */
-.popup-container[data-agent-theme='blueprint-architect'] {
-  background: rgba(247, 251, 255, 0.35);
-  border: 1px solid rgba(37, 99, 235, 0.28);
-  box-shadow:
-    0 10px 30px rgba(37, 99, 235, 0.04),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  font-family: var(--ac-font-grotesk);
-}
-.popup-container[data-agent-theme='blueprint-architect'] .header-title {
-  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  font-family: var(--ac-font-grotesk);
-}
-.popup-container[data-agent-theme='blueprint-architect'] .config-card {
-  background: rgba(255, 255, 255, 0.35);
-  border: 1px solid rgba(37, 99, 235, 0.15);
-}
-.popup-container[data-agent-theme='blueprint-architect'] .connect-button {
-  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.2);
-}
-.popup-container[data-agent-theme='blueprint-architect'] .connect-button:hover:not(:disabled) {
-  background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
-  box-shadow: 0 6px 20px rgba(37, 99, 235, 0.35);
-}
-
-/* 3. Zen Journal Glass Card */
-.popup-container[data-agent-theme='zen-journal'] {
-  background: rgba(244, 244, 245, 0.35);
-  border: 1px solid rgba(113, 113, 122, 0.25);
-  box-shadow:
-    0 10px 30px rgba(0, 0, 0, 0.02),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  font-family: var(--ac-font-sans);
-}
-.popup-container[data-agent-theme='zen-journal'] .header-title {
-  background: linear-gradient(135deg, #27272a 0%, #52525b 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-.popup-container[data-agent-theme='zen-journal'] .config-card {
-  background: rgba(255, 255, 255, 0.25);
-  border: 1px solid rgba(113, 113, 122, 0.15);
-}
-.popup-container[data-agent-theme='zen-journal'] .connect-button {
-  background: linear-gradient(135deg, #27272a 0%, #18181b 100%);
-  box-shadow: 0 4px 14px rgba(39, 39, 42, 0.15);
-}
-.popup-container[data-agent-theme='zen-journal'] .connect-button:hover:not(:disabled) {
-  background: linear-gradient(135deg, #18181b 0%, #09090b 100%);
-  box-shadow: 0 6px 20px rgba(39, 39, 42, 0.25);
-}
-
-/* 4. Neo-Pop Glass Card */
-.popup-container[data-agent-theme='neo-pop'] {
-  background: rgba(255, 255, 255, 0.7);
-  border: 2px solid #000000;
-  box-shadow: 4px 4px 0px #000000;
-  font-family: var(--ac-font-grotesk);
-}
-.popup-container[data-agent-theme='neo-pop'] .header-title {
-  background: linear-gradient(135deg, #ec4899 0%, #f43f5e 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  font-family: var(--ac-font-grotesk);
-  font-weight: 900;
-}
-.popup-container[data-agent-theme='neo-pop'] .config-card {
-  background: rgba(255, 255, 255, 0.85);
-  border: 2px solid #000000;
-  box-shadow: 3px 3px 0px #000000;
-}
-.popup-container[data-agent-theme='neo-pop'] .connect-button {
-  background: #ec4899;
-  border: 2px solid #000000;
-  color: #000000;
-  font-weight: 800;
-  box-shadow: 3px 3px 0px #000000;
-}
-.popup-container[data-agent-theme='neo-pop'] .connect-button:hover:not(:disabled) {
-  background: #f43f5e;
-  transform: translate(-1px, -1px) scale(1.01);
-  box-shadow: 4px 4px 0px #000000;
-}
-.popup-container[data-agent-theme='neo-pop'] .connect-button:active:not(:disabled) {
-  transform: translate(2px, 2px) scale(0.98);
-  box-shadow: 1px 1px 0px #000000;
-}
-.popup-container[data-agent-theme='neo-pop'] .port-input {
-  border: 2px solid #000000;
-  background: #ffffff;
-}
-.popup-container[data-agent-theme='neo-pop'] .port-input:focus {
-  transform: scale(1);
-  box-shadow: 2px 2px 0px #000000;
-}
-
-/* 5. Dark Console Glass Card */
-.popup-container[data-agent-theme='dark-console'] {
-  background: rgba(9, 9, 11, 0.55);
-  border: 1px solid rgba(34, 197, 94, 0.32);
-  box-shadow:
-    0 10px 30px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  font-family: var(--ac-font-mono);
-}
-.popup-container[data-agent-theme='dark-console'] .header-title {
-  background: linear-gradient(135deg, #22c55e 0%, #10b981 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  font-family: var(--ac-font-mono);
-  letter-spacing: -0.05em;
-}
-.popup-container[data-agent-theme='dark-console'] .config-card {
-  background: rgba(18, 18, 24, 0.45);
-  border: 1px solid rgba(34, 197, 94, 0.18);
-}
-.popup-container[data-agent-theme='dark-console'] .connect-button {
-  background: linear-gradient(135deg, #22c55e 0%, #10b981 100%);
-  color: #052e16;
-  font-weight: 700;
-  box-shadow: 0 4px 14px rgba(34, 197, 94, 0.15);
-}
-.popup-container[data-agent-theme='dark-console'] .connect-button:hover:not(:disabled) {
-  background: linear-gradient(135deg, #16a34a 0%, #059669 100%);
-  box-shadow: 0 6px 20px rgba(34, 197, 94, 0.25);
-}
-.popup-container[data-agent-theme='dark-console'] .port-input {
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(34, 197, 94, 0.2);
-  color: #22c55e;
-  font-family: var(--ac-font-mono);
-}
-.popup-container[data-agent-theme='dark-console'] .port-input:focus {
-  border-color: #22c55e;
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12);
-}
-.popup-container[data-agent-theme='dark-console'] .mcp-config-json {
-  color: #22c55e;
-}
-.popup-container[data-agent-theme='dark-console'] .status-text,
-.popup-container[data-agent-theme='dark-console'] .section-title,
-.popup-container[data-agent-theme='dark-console'] .port-label,
-.popup-container[data-agent-theme='dark-console'] .status-label,
-.popup-container[data-agent-theme='dark-console'] .mcp-config-label {
-  color: rgba(34, 197, 94, 0.85);
-}
-.popup-container[data-agent-theme='dark-console'] .footer-link {
-  color: rgba(34, 197, 94, 0.7);
-}
-.popup-container[data-agent-theme='dark-console'] .footer-link:hover {
-  color: #22c55e;
-  background: rgba(34, 197, 94, 0.05);
-}
-.popup-container[data-agent-theme='dark-console'] .copy-config-button {
-  color: rgba(34, 197, 94, 0.8);
-  border: 1px solid rgba(34, 197, 94, 0.25);
-}
-.popup-container[data-agent-theme='dark-console'] .copy-config-button:hover {
-  background: rgba(34, 197, 94, 0.08);
-  color: #22c55e;
-}
-.popup-container[data-agent-theme='dark-console'] .chevron-icon {
-  color: #22c55e;
-}
-
-/* 6. Swiss Grid Glass Card */
-.popup-container[data-agent-theme='swiss-grid'] {
-  background: rgba(255, 255, 255, 0.75);
-  border: 2px solid #000000;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.03);
-  font-family: var(--ac-font-grotesk);
-}
-.popup-container[data-agent-theme='swiss-grid'] .header-title {
-  background: #ef4444;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  font-family: var(--ac-font-grotesk);
-  font-weight: 900;
-}
-.popup-container[data-agent-theme='swiss-grid'] .config-card {
-  background: #ffffff;
-  border: 2px solid #000000;
-}
-.popup-container[data-agent-theme='swiss-grid'] .connect-button {
-  background: #ef4444;
-  color: #ffffff;
-  border: 2px solid #000000;
-  font-weight: 700;
-}
-.popup-container[data-agent-theme='swiss-grid'] .connect-button:hover:not(:disabled) {
-  background: #dc2626;
-}
-.popup-container[data-agent-theme='swiss-grid'] .port-input {
-  border: 2px solid #000000;
+  height: 100%;
+  transition: all var(--transition-slow);
 }
 
 .home-view {
@@ -722,7 +468,7 @@ onUnmounted(() => {
   color: #0f172a;
   margin: 0;
   letter-spacing: -0.02em;
-  background: linear-gradient(135deg, #0f172a 0%, #334155 100%);
+  background: linear-gradient(135deg, #d97757 0%, #c4664a 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
@@ -754,8 +500,8 @@ onUnmounted(() => {
 }
 
 .config-card {
-  background: rgba(255, 255, 255, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(217, 119, 87, 0.12);
   border-radius: 12px;
   padding: 12px;
   display: flex;
@@ -1008,7 +754,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);
+  background: linear-gradient(135deg, #d97757 0%, #c4664a 100%);
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: #ffffff;
   font-weight: 600;
@@ -1017,13 +763,13 @@ onUnmounted(() => {
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   font-size: 13px;
-  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.2);
+  box-shadow: 0 4px 14px rgba(217, 119, 87, 0.2);
   margin-top: 4px;
 }
 
 .connect-button:hover:not(:disabled) {
-  background: linear-gradient(135deg, #4338ca 0%, #2563eb 100%);
-  box-shadow: 0 6px 20px rgba(79, 70, 229, 0.35);
+  background: linear-gradient(135deg, #c4664a 0%, #b4583c 100%);
+  box-shadow: 0 6px 20px rgba(217, 119, 87, 0.35);
   transform: translateY(-1.5px) scale(1.02);
 }
 

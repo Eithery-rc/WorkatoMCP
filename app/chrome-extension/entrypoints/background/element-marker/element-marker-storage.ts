@@ -1,8 +1,9 @@
-// IndexedDB storage for element markers (URL -> marked selectors)
+// IndexedDB storage for element markers (URL -> marked selectors), read by
+// chrome_read_page, which lists the markers saved for a page first.
 // Uses the shared IndexedDbClient for robust transaction handling.
 
 import { IndexedDbClient } from '@/utils/indexeddb-client';
-import type { ElementMarker, UpsertMarkerRequest } from '@/common/element-marker-types';
+import type { ElementMarker } from '@/common/element-marker-types';
 
 const DB_NAME = 'element_marker_storage';
 const DB_VERSION = 1;
@@ -29,14 +30,6 @@ function normalizeUrl(raw: string): { url: string; origin: string; host: string;
   }
 }
 
-function now(): number {
-  return Date.now();
-}
-
-export async function listAllMarkers(): Promise<ElementMarker[]> {
-  return idb.getAll<ElementMarker>(STORE);
-}
-
 export async function listMarkersForUrl(url: string): Promise<ElementMarker[]> {
   const { origin, path, host } = normalizeUrl(url);
   const all = await idb.getAll<ElementMarker>(STORE);
@@ -51,45 +44,4 @@ export async function listMarkersForUrl(url: string): Promise<ElementMarker[]> {
     // default 'prefix'
     return m.origin === origin && (m.path ? path.startsWith(m.path) : true);
   });
-}
-
-export async function saveMarker(req: UpsertMarkerRequest): Promise<ElementMarker> {
-  const { url: rawUrl, selector } = req;
-  if (!rawUrl || !selector) throw new Error('url and selector are required');
-  const { url, origin, host, path } = normalizeUrl(rawUrl);
-  const ts = now();
-  const marker: ElementMarker = {
-    id: req.id || (globalThis.crypto?.randomUUID?.() ?? `${ts}_${Math.random()}`),
-    url,
-    origin,
-    host,
-    path,
-    matchType: req.matchType || 'prefix',
-    name: req.name || selector,
-    selector,
-    selectorType: req.selectorType || 'css',
-    listMode: req.listMode || false,
-    action: req.action || 'custom',
-    createdAt: ts,
-    updatedAt: ts,
-  };
-  await idb.put<ElementMarker>(STORE, marker);
-  return marker;
-}
-
-export async function updateMarker(marker: ElementMarker): Promise<void> {
-  const existing = await idb.get<ElementMarker>(STORE, marker.id);
-  if (!existing) throw new Error('marker not found');
-
-  // Preserve createdAt from existing record, only update updatedAt
-  const updated: ElementMarker = {
-    ...marker,
-    createdAt: existing.createdAt, // Never overwrite createdAt
-    updatedAt: now(),
-  };
-  await idb.put<ElementMarker>(STORE, updated);
-}
-
-export async function deleteMarker(id: string): Promise<void> {
-  await idb.delete(STORE, id);
 }

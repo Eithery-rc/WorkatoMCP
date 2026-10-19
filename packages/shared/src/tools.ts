@@ -17,7 +17,6 @@ export const TOOL_NAMES = {
     CLICK: 'chrome_click_element',
     FILL: 'chrome_fill_or_select',
     REQUEST_ELEMENT_SELECTION: 'chrome_request_element_selection',
-    GET_INTERACTIVE_ELEMENTS: 'chrome_get_interactive_elements',
     NETWORK_CAPTURE: 'chrome_network_capture',
     // Legacy tool names (kept for internal use, not exposed in TOOL_SCHEMAS)
     NETWORK_CAPTURE_START: 'chrome_network_capture_start',
@@ -30,8 +29,6 @@ export const TOOL_NAMES = {
     BOOKMARK_SEARCH: 'chrome_bookmark_search',
     BOOKMARK_ADD: 'chrome_bookmark_add',
     BOOKMARK_DELETE: 'chrome_bookmark_delete',
-    INJECT_SCRIPT: 'chrome_inject_script',
-    SEND_COMMAND_TO_INJECT_SCRIPT: 'chrome_send_command_to_inject_script',
     JAVASCRIPT: 'chrome_javascript',
     CONSOLE: 'chrome_console',
     FILE_UPLOAD: 'chrome_upload_file',
@@ -40,7 +37,6 @@ export const TOOL_NAMES = {
     HANDLE_DIALOG: 'chrome_handle_dialog',
     HANDLE_DOWNLOAD: 'chrome_handle_download',
     FETCH_TO_FILE: 'chrome_fetch_to_file',
-    USERSCRIPT: 'chrome_userscript',
     PERFORMANCE_START_TRACE: 'performance_start_trace',
     PERFORMANCE_STOP_TRACE: 'performance_stop_trace',
     PERFORMANCE_ANALYZE_INSIGHT: 'performance_analyze_insight',
@@ -448,83 +444,6 @@ export const TOOL_SCHEMAS: Tool[] = [
       required: ['action'],
     },
   },
-  // {
-  //   name: TOOL_NAMES.BROWSER.USERSCRIPT,
-  //   description:
-  //     'Unified userscript tool (create/list/get/enable/disable/update/remove/send_command/export). Paste JS/CSS/Tampermonkey script and the system will auto-select the best strategy (insertCSS / persistent script in ISOLATED or MAIN world / once by CDP) with CSP-aware fallbacks.',
-  //   inputSchema: {
-  //     type: 'object',
-  //     properties: {
-  //       action: {
-  //         type: 'string',
-  //         description:
-  //           'Operation to perform',
-  //         enum: [
-  //           'create',
-  //           'list',
-  //           'get',
-  //           'enable',
-  //           'disable',
-  //           'update',
-  //           'remove',
-  //           'send_command',
-  //           'export',
-  //         ],
-  //       },
-  //       args: {
-  //         type: 'object',
-  //         description:
-  //           'Arguments for the specified action.\n- create: { script (required), name?, description?, matches?: string[], excludes?: string[], persist?: boolean (default true), runAt?: "document_start"|"document_end"|"document_idle"|"auto", world?: "auto"|"ISOLATED"|"MAIN", allFrames?: boolean (default true), mode?: "auto"|"css"|"persistent"|"once", dnrFallback?: boolean (default true), tags?: string[] }\n- list: { query?: string, status?: "enabled"|"disabled", domain?: string }\n- get: { id (required) }\n- enable/disable: { id (required) }\n- update: { id (required), script?, name?, description?, matches?, excludes?, runAt?, world?, allFrames?, persist?, dnrFallback?, tags? }\n- remove: { id (required) }\n- send_command: { id (required), payload?: string, tabId?: number }\n- export: {}\nTip: For a one-off execution that returns a value, use create with args.mode="once". The returned value is included as onceResult in the tool response.',
-  //         properties: {
-  //           // Common identifiers
-  //           id: { type: 'string', description: 'Userscript id (for get/enable/disable/update/remove/send_command)' },
-  //           // Create / Update fields
-  //           script: { type: 'string', description: 'JS/CSS/Tampermonkey script source (required for create)' },
-  //           name: { type: 'string', description: 'Userscript name (optional)' },
-  //           description: { type: 'string', description: 'Userscript description (optional)' },
-  //           matches: {
-  //             type: 'array',
-  //             items: { type: 'string' },
-  //             description: 'Match patterns for pages to apply to (e.g., https://*.example.com/*)'
-  //           },
-  //           excludes: {
-  //             type: 'array',
-  //             items: { type: 'string' },
-  //             description: 'Exclude patterns'
-  //           },
-  //           persist: { type: 'boolean', description: 'Persist userscript for matched pages (default true)' },
-  //           runAt: {
-  //             type: 'string',
-  //             description: 'Injection timing',
-  //             enum: ['document_start', 'document_end', 'document_idle', 'auto'],
-  //           },
-  //           world: {
-  //             type: 'string',
-  //             description: 'Execution world',
-  //             enum: ['auto', 'ISOLATED', 'MAIN'],
-  //           },
-  //           allFrames: { type: 'boolean', description: 'Inject into all frames (default true)' },
-  //           mode: {
-  //             type: 'string',
-  //             description:
-  //               'Injection strategy: auto | css | persistent | once. Use once to evaluate immediately (no persistence) and include the return value in onceResult.',
-  //             enum: ['auto', 'css', 'persistent', 'once'],
-  //           },
-  //           dnrFallback: { type: 'boolean', description: 'Use DNR fallback when needed (default true)' },
-  //           tags: { type: 'array', items: { type: 'string' }, description: 'Custom tags' },
-  //           // List filters
-  //           query: { type: 'string', description: 'Search by name/description (list action)' },
-  //           status: { type: 'string', enum: ['enabled', 'disabled'], description: 'Filter by status (list action)' },
-  //           domain: { type: 'string', description: 'Filter by domain (list action)' },
-  //           // Send command
-  //           payload: { type: 'string', description: 'Arbitrary payload (stringified) for send_command' },
-  //           tabId: { type: 'number', description: 'Target tab for send_command (default active tab)' },
-  //         },
-  //       },
-  //     },
-  //     required: ['action'],
-  //   },
-  // },
   {
     name: TOOL_NAMES.BROWSER.NAVIGATE,
     description:
@@ -1343,70 +1262,6 @@ export const TOOL_SCHEMAS: Tool[] = [
       required: [],
     },
   },
-  // {
-  //   name: TOOL_NAMES.BROWSER.INJECT_SCRIPT,
-  //   description:
-  //     'inject the user-specified content script into the webpage. By default, inject into the currently active tab',
-  //   inputSchema: {
-  //     type: 'object',
-  //     properties: {
-  //       url: {
-  //         type: 'string',
-  //         description:
-  //           'If a URL is specified, inject the script into the webpage corresponding to the URL.',
-  //       },
-  //       tabId: {
-  //         type: 'number',
-  //         description:
-  //           'Target an existing tab by ID to inject into. Overrides url/active tab selection when provided.',
-  //       },
-  //       windowId: {
-  //         type: 'number',
-  //         description:
-  //           'Target window ID for selecting active tab or creating new tab when url is provided and tabId is omitted.',
-  //       },
-  //       background: {
-  //         type: 'boolean',
-  //         description:
-  //           'Do not activate tab/focus window during injection when true (default: false).',
-  //       },
-  //       type: {
-  //         type: 'string',
-  //         description:
-  //           'the javaScript world for a script to execute within. must be ISOLATED or MAIN',
-  //       },
-  //       jsScript: {
-  //         type: 'string',
-  //         description: 'the content script to inject',
-  //       },
-  //     },
-  //     required: ['type', 'jsScript'],
-  //   },
-  // },
-  // {
-  //   name: TOOL_NAMES.BROWSER.SEND_COMMAND_TO_INJECT_SCRIPT,
-  //   description:
-  //     'if the script injected using chrome_inject_script listens for user-defined events, this tool can be used to trigger those events',
-  //   inputSchema: {
-  //     type: 'object',
-  //     properties: {
-  //       tabId: {
-  //         type: 'number',
-  //         description:
-  //           'the tab where you previously injected the script(if not provided,  use the currently active tab)',
-  //       },
-  //       eventName: {
-  //         type: 'string',
-  //         description: 'the eventName your injected content script listen for',
-  //       },
-  //       payload: {
-  //         type: 'string',
-  //         description: 'the payload passed to event, must be a json string',
-  //       },
-  //     },
-  //     required: ['eventName'],
-  //   },
-  // },
   {
     name: TOOL_NAMES.BROWSER.JAVASCRIPT,
     description:

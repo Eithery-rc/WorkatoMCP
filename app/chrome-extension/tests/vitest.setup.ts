@@ -60,13 +60,5 @@ if (typeof globalThis.chrome === 'undefined') {
       detach: vi.fn().mockResolvedValue(undefined),
       sendCommand: vi.fn().mockResolvedValue({}),
     },
-    commands: {
-      onCommand: { addListener: vi.fn(), removeListener: vi.fn() },
-    },
-    contextMenus: {
-      create: vi.fn(),
-      remove: vi.fn(),
-      onClicked: { addListener: vi.fn(), removeListener: vi.fn() },
-    },
   };
 }

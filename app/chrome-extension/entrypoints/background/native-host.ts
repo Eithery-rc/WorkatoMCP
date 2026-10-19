@@ -515,19 +515,6 @@ async function connectWebSocket(port: number): Promise<boolean> {
             };
           }
           ws.send(JSON.stringify({ responseToRequestId: message.requestId, payload }));
-        } else if (message.type === NativeMessageType.PROCESS_DATA && message.requestId) {
-          const requestId = message.requestId;
-          const requestPayload = message.payload;
-          ws.send(
-            JSON.stringify({
-              responseToRequestId: requestId,
-              payload: {
-                status: 'success',
-                message: SUCCESS_MESSAGES.TOOL_EXECUTED,
-                data: requestPayload,
-              },
-            }),
-          );
         }
       } catch (err: any) {
         console.error(`${LOG_PREFIX} Error handling WS message:`, err);
@@ -608,19 +595,7 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
     nativePort = chrome.runtime.connectNative(HOST_NAME);
 
     nativePort.onMessage.addListener(async (message) => {
-      if (message.type === NativeMessageType.PROCESS_DATA && message.requestId) {
-        const requestId = message.requestId;
-        const requestPayload = message.payload;
-
-        nativePort?.postMessage({
-          responseToRequestId: requestId,
-          payload: {
-            status: 'success',
-            message: SUCCESS_MESSAGES.TOOL_EXECUTED,
-            data: requestPayload,
-          },
-        });
-      } else if (message.type === NativeMessageType.CALL_TOOL && message.requestId) {
+      if (message.type === NativeMessageType.CALL_TOOL && message.requestId) {
         const requestId = message.requestId;
         try {
           const result = await handleCallTool(message.payload);
@@ -729,16 +704,6 @@ export const initNativeHostListener = () => {
   });
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    // Allow UI to call tools directly
-    if (message && message.type === 'call_tool' && message.name) {
-      handleCallTool({ name: message.name, args: message.args })
-        .then((res) => sendResponse({ success: true, result: res }))
-        .catch((err) =>
-          sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) }),
-        );
-      return true;
-    }
-
     const msgType = typeof message === 'string' ? message : message?.type;
 
     // ENSURE_NATIVE: Trigger ensure without changing autoConnectEnabled

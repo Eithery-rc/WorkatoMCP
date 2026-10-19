@@ -255,21 +255,3 @@ export function initKeepalive(): void {
 
   console.log('[keepalive] Keepalive initialized');
 }
-
-/**
- * Check whether keepalive is active.
- */
-export function isKeepaliveActive(): boolean {
-  return keepaliveDesired && pingTimer !== null && keepalivePort !== null;
-}
-
-/**
- * Get the active port count (for debugging).
- * @deprecated Use isKeepaliveActive() instead
- */
-export function getActivePortCount(): number {
-  return keepalivePort ? 1 : 0;
-}
-
-// Re-export for backwards compatibility
-export { KEEPALIVE_PORT_NAME, type KeepaliveMessage } from '@/common/keepalive-protocol';

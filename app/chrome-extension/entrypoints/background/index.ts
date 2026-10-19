@@ -1,5 +1,4 @@
 import { initNativeHostListener } from './native-host';
-import { initElementMarkerListeners } from './element-marker';
 
 /**
  * Background script entry point
@@ -18,7 +17,4 @@ export default defineBackground(() => {
 
   // Initialize core services
   initNativeHostListener();
-
-  // Element marker: context menu + CRUD listeners
-  initElementMarkerListeners();
 });

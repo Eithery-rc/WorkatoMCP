@@ -55,7 +55,6 @@ export default defineConfig({
       'tabs',
       'activeTab',
       'scripting',
-      'contextMenus',
       'downloads',
       'webRequest',
       'webNavigation',
@@ -64,17 +63,11 @@ export default defineConfig({
       'bookmarks',
       'offscreen',
       'storage',
-      'declarativeNetRequest',
-      'alarms',
       // chrome_watch_start readings without the debugger banner (needs the
       // per-extension "Allow User Scripts" toggle; falls back to CDP without it)
       'userScripts',
     ],
     host_permissions: ['<all_urls>'],
-    options_ui: {
-      page: 'options.html',
-      open_in_tab: true,
-    },
     action: {
       default_popup: 'popup.html',
       default_title: 'WorkatoMCP',

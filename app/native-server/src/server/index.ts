@@ -14,13 +14,7 @@
 import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import fastifyWebsocket from '@fastify/websocket';
-import {
-  NATIVE_SERVER_PORT,
-  TIMEOUTS,
-  SERVER_CONFIG,
-  HTTP_STATUS,
-  ERROR_MESSAGES,
-} from '../constant';
+import { NATIVE_SERVER_PORT, SERVER_CONFIG, HTTP_STATUS, ERROR_MESSAGES } from '../constant';
 import { NativeMessagingHost } from '../native-messaging-host';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -35,10 +29,6 @@ import { parseWaitQuery } from '../mcp/browser-watch';
 // ============================================================
 // Types
 // ============================================================
-
-interface ExtensionRequestPayload {
-  data?: unknown;
-}
 
 const JSON_RPC_INTERNAL_ERROR = -32603;
 const JSON_RPC_SERVER_ERROR = -32000;
@@ -134,9 +124,6 @@ export class Server {
   private setupRoutes(): void {
     // Health check
     this.setupHealthRoutes();
-
-    // Extension communication
-    this.setupExtensionRoutes();
 
     // File-read endpoint (bridge has Node.js filesystem access)
     this.setupFileRoutes();
@@ -256,49 +243,6 @@ export class Server {
         message: 'pong',
       });
     });
-  }
-
-  // ============================================================
-  // Extension Routes
-  // ============================================================
-
-  private setupExtensionRoutes(): void {
-    this.fastify.get(
-      '/ask-extension',
-      async (request: FastifyRequest<{ Body: ExtensionRequestPayload }>, reply: FastifyReply) => {
-        if (!this.nativeHost) {
-          return reply
-            .status(HTTP_STATUS.INTERNAL_SERVER_ERROR)
-            .send({ error: ERROR_MESSAGES.NATIVE_HOST_NOT_AVAILABLE });
-        }
-        if (!this.isRunning) {
-          return reply
-            .status(HTTP_STATUS.INTERNAL_SERVER_ERROR)
-            .send({ error: ERROR_MESSAGES.SERVER_NOT_RUNNING });
-        }
-
-        try {
-          const extensionResponse = await this.nativeHost.sendRequestToExtensionAndWait(
-            request.query,
-            'process_data',
-            TIMEOUTS.EXTENSION_REQUEST_TIMEOUT,
-          );
-          return reply.status(HTTP_STATUS.OK).send({ status: 'success', data: extensionResponse });
-        } catch (error: unknown) {
-          const err = error as Error;
-          if (err.message.includes('timed out')) {
-            return reply
-              .status(HTTP_STATUS.GATEWAY_TIMEOUT)
-              .send({ status: 'error', message: ERROR_MESSAGES.REQUEST_TIMEOUT });
-          } else {
-            return reply.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).send({
-              status: 'error',
-              message: `Failed to get response from extension: ${err.message}`,
-            });
-          }
-        }
-      },
-    );
   }
 
   // ============================================================
