@@ -18,24 +18,30 @@ import {
   prepareWorkatoCall,
   writePulledRecipe,
   type RecipeFileOrigin,
-} from './workato-file-io';
+} from '../modules/workato/file-io';
 import {
   isWorkatoLcapFileTool,
   prepareLcapCall,
   writeLcapOutFile,
   type LcapOutFile,
-} from './workato-lcap-io';
+} from '../modules/workato/lcap-io';
 import {
   handleWorkatoRecipeMutatorCall,
   isWorkatoRecipeMutatorTool,
-} from './workato-recipe-mutators';
-import { handleWorkatoCallableCall, isWorkatoCallableTool } from './workato-callable-schema';
+} from '../modules/workato/recipe-mutators';
+import {
+  handleWorkatoCallableCall,
+  isWorkatoCallableTool,
+} from '../modules/workato/callable-schema';
 import {
   handleWorkatoSaveWithDependentsCall,
   isWorkatoSaveWithDependentsTool,
-} from './workato-save-dependents';
-import { handleWorkatoDatapillCall, isWorkatoDatapillTool } from './workato-datapill';
-import { handleWorkatoOperationCall, isWorkatoOperationTool } from './workato-operation-status';
+} from '../modules/workato/save-dependents';
+import { handleWorkatoDatapillCall, isWorkatoDatapillTool } from '../modules/workato/datapill';
+import {
+  handleWorkatoOperationCall,
+  isWorkatoOperationTool,
+} from '../modules/workato/operation-status';
 import { handleWorkatoBridgeInfoCall, isWorkatoBridgeInfoTool } from './workato-bridge-info';
 import {
   handleWorkatoReloadExtensionCall,
@@ -45,8 +51,11 @@ import {
   followSwitch,
   isContextChangingTool,
   parseSwitchResult,
-} from './workato-switch-environment';
-import { handleWorkatoStepSchemaApplyCall, isStepSchemaApplyCall } from './workato-step-schema';
+} from '../modules/workato/switch-environment';
+import {
+  handleWorkatoStepSchemaApplyCall,
+  isStepSchemaApplyCall,
+} from '../modules/workato/step-schema';
 import {
   applyAutoFile,
   prepareAutoFileCall,

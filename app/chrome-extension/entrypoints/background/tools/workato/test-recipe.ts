@@ -301,7 +301,7 @@ export function collectStepProviders(code: unknown): string[] {
 /**
  * Adapters observed to carry no `account_id` in a recipe config because they
  * need no connection. Kept in step with CONNECTIONLESS_PROVIDERS in the
- * bridge's workato-recipe-engine.ts.
+ * bridge's modules/workato/recipe-engine.ts.
  */
 export const CONNECTIONLESS_PROVIDERS: ReadonlySet<string> = new Set([
   'clock',

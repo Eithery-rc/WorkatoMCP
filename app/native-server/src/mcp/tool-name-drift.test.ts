@@ -17,16 +17,20 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { READ_TOOLS, AUTO_FILE_SCHEMA_TOOLS, SCREENSHOT_TOOL } from './workato-auto-file';
-import { WORKATO_RECIPE_MUTATOR_TOOLS } from './workato-recipe-engine';
-import { WORKATO_CALLABLE_TOOLS } from './workato-callable-schema';
-import { DATAPILL_TOOL } from './workato-datapill';
+import { WORKATO_RECIPE_MUTATOR_TOOLS } from '../modules/workato/recipe-engine';
+import { WORKATO_CALLABLE_TOOLS } from '../modules/workato/callable-schema';
+import { DATAPILL_TOOL } from '../modules/workato/datapill';
 import { BRIDGE_INFO_TOOL } from './workato-bridge-info';
 import { RELOAD_EXTENSION_TOOL } from './workato-reload-extension';
 import { LEASE_TAB_TOOL, RELEASE_TAB_TOOL } from './tab-leases';
-import { SWITCH_ENVIRONMENT_TOOL } from './workato-switch-environment';
-import { RECIPE_CALLERS_TOOL } from './workato-recipe-callers';
-import { SAVE_WITH_DEPENDENTS_TOOL } from './workato-save-dependents';
-import { PULL_RECIPE_TOOL, SAVE_RECIPE_CODE_TOOL, SET_PY_EVAL_CODE_TOOL } from './workato-file-io';
+import { SWITCH_ENVIRONMENT_TOOL } from '../modules/workato/switch-environment';
+import { RECIPE_CALLERS_TOOL } from '../modules/workato/recipe-callers';
+import { SAVE_WITH_DEPENDENTS_TOOL } from '../modules/workato/save-dependents';
+import {
+  PULL_RECIPE_TOOL,
+  SAVE_RECIPE_CODE_TOOL,
+  SET_PY_EVAL_CODE_TOOL,
+} from '../modules/workato/file-io';
 import {
   ADAPTER_META_TOOL,
   API_REQUEST_TOOL,
@@ -34,7 +38,7 @@ import {
   LCAP_PAGE_GET_TOOL,
   LCAP_PAGE_SAVE_TOOL,
   LCAP_PAGE_VALIDATE_TOOL,
-} from './workato-lcap-io';
+} from '../modules/workato/lcap-io';
 import {
   FN_GET_TOOL,
   FN_LIST_TOOL,

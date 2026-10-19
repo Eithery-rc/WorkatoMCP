@@ -25,8 +25,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { isWorkatoFileTool } from './workato-file-io';
-import { isWorkatoLcapFileTool } from './workato-lcap-io';
+import { isWorkatoFileTool } from '../modules/workato/file-io';
+import { isWorkatoLcapFileTool } from '../modules/workato/lcap-io';
 
 export const SCREENSHOT_TOOL = 'chrome_screenshot';
 export const JAVASCRIPT_TOOL = 'chrome_javascript';
