@@ -6,7 +6,9 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
-Browser flows saved once and run by name.
+## bridge 1.13.0 · shared 1.11.0 (2026-10-19)
+
+Browser flows saved once and run by name, logins without a subagent, and a py_eval check that agrees with Python.
 
 ### Added
 

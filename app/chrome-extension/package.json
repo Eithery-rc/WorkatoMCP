@@ -3,7 +3,7 @@
   "description": "Chrome extension that exposes the user's Workato session as MCP tools for AI agents.",
   "author": "Roman Chikalenko <chikalenkor@gmail.com>",
   "private": true,
-  "version": "1.12.0",
+  "version": "1.13.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",
