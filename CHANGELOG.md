@@ -12,11 +12,11 @@ Upstream features this project never used are gone. Every tool in the catalogue 
 
 - **Record-replay**: the recorder, both replay engines, saved flows, and the `flow.*` tools the bridge listed for published flows (there were none). Saved browser functions (`chrome_fn_*`) cover the same ground.
 - **Unlisted tools** that the bridge forwarded by name but never listed: `chrome_userscript` and the options page that managed userscripts, `chrome_inject_script`, `chrome_send_command_to_inject_script`, `chrome_get_interactive_elements`, and direct calls to the network capture sub-tools (`chrome_network_capture` still drives them).
-- **The element marker**: the "mark element" context menu and its overlay. `chrome_read_page` still lists markers saved earlier.
+- **The element marker**: the "mark element" context menu, its overlay and its IndexedDB store. `chrome_read_page` no longer returns `markedElements`, which nothing could fill any more.
 - The agent chat themes. The popup and the welcome page keep the default look.
 - The bridge's `/ask-extension` echo route.
-- Dead code and dependencies: an empty content script, 132 unused UI strings, `chalk`, `pino`, `zod` and the icon plugins, among others.
-- Manifest permissions `contextMenus`, `alarms` and `declarativeNetRequest`, which only the removed code used.
+- Dead code and dependencies: an empty content script, 132 unused UI strings, the unused `csrf.ts` helper and the four `*.stub.ts` planning files (their notes stay in `docs/design/plans/`), `chalk`, `pino`, `zod` and the icon plugins, among others.
+- Manifest permissions `contextMenus`, `alarms` and `declarativeNetRequest`, which only the removed code used, and `'wasm-unsafe-eval'` in the extension CSP with the cross-origin isolation headers (`cross_origin_embedder_policy`, `cross_origin_opener_policy`): nothing uses WebAssembly or SharedArrayBuffer since the semantic engine went in v1.3.
 
 Ship the bridge and the extension of this release together: a 1.13 bridge still asks the extension for its flow list on every `tools/list` and waits 20 s for an answer that no longer comes.
 
