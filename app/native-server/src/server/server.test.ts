@@ -111,24 +111,36 @@ describe('server tests', () => {
     }
   });
 
-  test('GET /ws-client registers only our extension (or no origin), never a look-alike', async () => {
+  test('GET /ws-client refuses any other origin with a 403 at the upgrade, and logs it', async () => {
     const registerSpy = jest.spyOn(profileRegistry, 'register').mockImplementation(() => undefined);
-    const open = async (origin: string) => {
-      const ws = await (Server.getInstance() as any).injectWS('/ws-client?profile=personal', {
-        headers: { origin },
-      });
-      // The route closes a refused socket at once; give it a tick to do so.
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      ws.close();
-    };
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const upgrade = (headers: Record<string, string>) =>
+      (Server.getInstance() as any).injectWS('/ws-client?profile=personal', { headers });
     try {
-      await open('http://127.0.0.1.attacker.tld');
-      await open('chrome-extension://aaaabbbbccccddddeeeeffffgggghhhh');
+      for (const origin of [
+        'http://127.0.0.1.attacker.tld',
+        'chrome-extension://aaaabbbbccccddddeeeeffffgggghhhh',
+        // Local pages may use the HTTP routes, never the profile socket.
+        'http://127.0.0.1:5173',
+        // Upstream's Web Store id is not ours any more.
+        'chrome-extension://hbdgbgagpkpjffpklnamcljpakneikee',
+      ]) {
+        // Refused before the upgrade: the client gets an error, not an open socket.
+        await expect(upgrade({ origin })).rejects.toThrow('Unexpected server response: 403');
+      }
       expect(registerSpy).not.toHaveBeenCalled();
-      await open(`chrome-extension://${EXTENSION_IDS[0]}`);
-      expect(registerSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy.mock.calls.map((call) => String(call[0])).join('\n')).toMatch(
+        /\[bridge\] refused a \/ws-client upgrade from origin "http:\/\/127\.0\.0\.1\.attacker\.tld"/,
+      );
+
+      const ours = await upgrade({ origin: `chrome-extension://${EXTENSION_IDS[0]}` });
+      ours.close();
+      const noOrigin = await upgrade({});
+      noOrigin.close();
+      expect(registerSpy).toHaveBeenCalledTimes(2);
     } finally {
       registerSpy.mockRestore();
+      errorSpy.mockRestore();
     }
   });
 

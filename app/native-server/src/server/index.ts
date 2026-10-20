@@ -25,7 +25,7 @@ import { profileRegistry } from './profile-registry';
 import { markMcpActivity } from '../update-checker';
 import { watchManager } from '../mcp/watch-instance';
 import { parseWaitQuery } from '../mcp/browser-watch';
-import { isAllowedOrigin } from './origin-policy';
+import { isAllowedOrigin, isAllowedWsOrigin, logRefusal } from './origin-policy';
 
 // ============================================================
 // Types
@@ -149,19 +149,35 @@ export class Server {
   }
 
   private setupWebSocketRoutes(): void {
-    this.fastify.get('/ws-client', { websocket: true }, (socket, req) => {
-      const origin = req.headers.origin;
-      // A socket that gets through registers as a Chrome profile and receives
-      // that profile's tool calls: only this extension's origin (or none).
-      if (!isAllowedOrigin(origin)) {
-        req.log.warn(`WebSocket connection rejected from unauthorized origin: ${origin}`);
-        socket.close();
-        return;
-      }
+    this.fastify.get(
+      '/ws-client',
+      {
+        websocket: true,
+        // A socket that gets through registers as a Chrome profile and
+        // receives that profile's tool calls: only this extension (or no
+        // Origin). Refused here, before the upgrade, so the client sees a
+        // failed connection and backs off; a socket accepted and then closed
+        // looks like a working bridge and reconnects at once, forever.
+        preValidation: async (request, reply) => {
+          const origin = request.headers.origin;
+          if (isAllowedWsOrigin(origin)) return;
+          logRefusal(`a /ws-client upgrade from origin ${JSON.stringify(origin)}`);
+          await reply.code(403).send({ error: 'origin not allowed' });
+        },
+      },
+      (socket, req) => {
+        // Second line, should the hook ever be bypassed.
+        const origin = req.headers.origin;
+        if (!isAllowedWsOrigin(origin)) {
+          logRefusal(`a /ws-client socket from origin ${JSON.stringify(origin)}`);
+          socket.close();
+          return;
+        }
 
-      const profileName = (req.query as any)?.profile || 'default';
-      profileRegistry.register(profileName, socket);
-    });
+        const profileName = (req.query as any)?.profile || 'default';
+        profileRegistry.register(profileName, socket);
+      },
+    );
   }
 
   // ============================================================
