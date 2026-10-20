@@ -28,11 +28,11 @@ export const SERVER_NAME = 'WorkatoMCP';
  * apart.
  */
 export const CORE_INSTRUCTIONS = [
-  'Browser tools driving a logged-in browser session.',
+  'Tools for a logged-in browser.',
   'Large results spill to a file (auto_file); out_file picks the path.',
-  "Writes need their own flag. Read a tool's description before its first call.",
+  "Writes need their own flag; read a tool's description before first use.",
   'Pick by task: which build answers -> workato_bridge_info;',
-  'parallel agents -> each takes chrome_lease_tab and passes its lease;',
+  'parallel agents -> each takes chrome_lease_tab, passes its lease;',
   'wait for a page change -> chrome_watch_start, wait_command in background.',
 ].join(' ');
 
