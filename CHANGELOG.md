@@ -6,9 +6,17 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) co
 
 ## Unreleased
 
-Upstream features this project never used are gone. The tools in the catalogue keep their names and parameters; `chrome_read_page` changes as listed below.
+Upstream features this project never used are gone, and the code is split into a core and a Workato module that can be switched off. The tools in the catalogue keep their names and parameters; `chrome_read_page` changes as listed below.
+
+### Added
+
+- **Module switch.** Workato is now a module, with a switch in the extension popup (**Modules**). The switch is one per machine, kept in the bridge in `~/.workatomcp/config.json` (`{"modules": {"workato": true}}`), so every Chrome profile shows and changes the same value; no file, or no key, means on, so an existing install keeps Workato. While it is off, `tools/list` serves the 52 core tools, the server instructions say the module is off, and a Workato call is refused by the bridge and by the extension with the module name and where to turn it on (never "Tool not found"). A change sends `notifications/tools/list_changed` to every open MCP session (the stdio proxy forwards it within 2 s); a client that ignores it picks the change up in its next session. The Workato content script (the optional-fields outline) does nothing while the module is off. With no bridge connected the popup switch is disabled. A malformed config file keeps the last good state and is reported in the bridge log.
 
 ### Changed
+
+- **Internal layout: core and modules.** Workato code moved behind a module interface on each side: `packages/shared/src/modules/workato` (names, schemas, instructions snippet), `app/native-server/src/modules/workato` (file IO, the recipe engine and mutators, callable schema, save with dependents, the operations journal, step schema, LCAP IO, datapill, py_eval lint, switch environment, recipe callers, and the workspace pin), `app/chrome-extension/entrypoints/background/modules/workato` (the executors, the context-block hook, the content-script gate). Core never imports a module, which a test on each side checks. `workatomcp-shared` adds `CORE_TOOL_NAMES`, `CORE_TOOL_SCHEMAS`, `MODULES` and the module message types; `TOOL_NAMES` and `TOOL_SCHEMAS` keep the whole catalogue (core first in `TOOL_SCHEMAS` now). Every served schema is byte for byte what it was, and `workato_bridge_info` reports the same `schema_revision` with Workato on.
+- `workato_bridge_info` now counts and hashes the catalogue that is actually served, which with Workato off is the core only. It no longer triggers the Workato workspace re-check after a profile reconnects (it never sends anything to the extension), and it does not take `out_file`.
+- The function registry's default path (`~/.workatomcp/functions`) and the new config file come from one data-dir helper; `WORKATOMCP_DATA_DIR` overrides the directory (the test setup uses it).
 
 - On an extension update, the background removes the data only the removed features wrote: the `rr_*` storage keys, `agentTheme`, `userscripts` and `userscripts_disabled`, and the IndexedDB databases `rr_storage`, `rr_v3` and `element_marker_storage`.
 - A bridge older than 2.0 still asks the extension for the record-replay flow list on every `tools/list`. The extension now answers at once with an empty list instead of leaving it to wait 20 s. This compatibility shim goes away in a later release.

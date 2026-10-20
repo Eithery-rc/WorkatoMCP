@@ -8,8 +8,34 @@ How a tool call travels from an MCP client to Workato and back.
 | -------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | **Local bridge**     | `app/native-server` → npm `workatomcp-bridge`     | Fastify server on `127.0.0.1:12306`. Terminates MCP transports, forwards tool calls to the extension, serves local file reads/writes. |
 | **Chrome extension** | `app/chrome-extension` → npm-less, built with WXT | MV3 service worker. Owns every tool handler, resolves the Workato tab, executes in-tab fetches, slims responses.                      |
-| **Shared schemas**   | `packages/shared` → npm `workatomcp-shared`       | `TOOL_NAMES` and `TOOL_SCHEMAS` — one source of truth consumed by both sides.                                                         |
+| **Shared schemas**   | `packages/shared` → npm `workatomcp-shared`       | Core tool names and schemas, each module's, and `TOOL_NAMES` / `TOOL_SCHEMAS` for the whole catalogue, consumed by both sides.        |
 | **Recipe skill**     | `skills/workato-recipes`                          | Documentation-only companion for recipe authoring. Not part of the runtime.                                                           |
+
+## Core and modules
+
+The code is split into a **core** (the browser tool: `chrome_*` tools, saved functions, watches, tab leases and strict mode, profile routing and the pin of profile + tab, `out_file` and auto-file, `chrome_fetch_to_file`, the four profile/bridge tools `workato_list_profiles`, `workato_switch_profile`, `workato_bridge_info` and `workato_reload_extension`) and **modules**. Workato is the first module. Each module has one folder per side:
+
+```text
+packages/shared/src/modules/workato/                           tool names, schemas, instructions snippet
+app/native-server/src/modules/workato/                         bridge hooks and orchestrators
+app/chrome-extension/entrypoints/background/modules/workato/   executors, afterCall hook, content-script gate
+```
+
+**Core never imports a module.** Each side has one wiring file, `modules/index.ts`, listing the installed modules, and core reaches them only through an interface. A boundary test on each side (`app/native-server/src/module-boundary.test.ts`, which also scans the shared package, and `app/chrome-extension/tests/module-boundary.test.ts`) fails when a file outside the module folders imports one, or one module imports another. The only exception is a WXT content-script entrypoint, which has to live at the top of `entrypoints/`; the extension test names which module each such file belongs to.
+
+**Bridge side.** `BridgeModule` (`app/native-server/src/mcp/module-api.ts`): `tools`, `instructions`, `owns(name)`, and the hooks the router calls, in this order for a module tool:
+
+1. **Refusal.** A tool of a module that is switched off is refused before anything else, with the module name and "Turn it on in the extension popup (Modules)", never "Tool not found".
+2. **`session`.** Core pins profile + tab. A module adds pin fields on top (Workato: host, workspace and environment, read with `workato_session_context`): `probe` when `workato_switch_profile` pins a tab, `summary` and `describe` for the reply, `targets` + `inject` to put the pinned tab and `expected_context` on each of its calls, `needsRecheck` + `recheck` after the profile registry changed (`ContextChanged`), `isContextChanging` + `follow` for `workato_switch_environment`. The router stores each module's pin under its id and never reads it.
+3. **`prepare`.** File params in before the extension call, and an optional `finish` that replaces the result path on success (recipe `out_file` / `code_path`, LCAP `content_path` / `out_file`). Nested orchestrator calls get the same.
+4. **`autoFile`.** The module's read tools (spill by default, advertised in the served schema) and the tools that accept an explicit `out_file`; the router combines them with the core rules.
+5. **`handle`.** Bridge-side tools: pure helpers (`workato_datapill`) and orchestrators that drive several extension calls through `ModuleCallContext.callExtension` (the same pin, file params and routing profile as a top-level call).
+
+**Extension side.** `ExtensionModule` (`entrypoints/background/extension-module.ts`): `executors` and an optional `afterCall(name, args, result)`. Workato's `afterCall` appends the `{"context":...}` block to every Workato result. The context block itself is a core convention: the bridge stamps the routed profile into whatever block a module appended, and auto-file keeps it out of spilled files.
+
+**The module switch.** One switch per machine, kept in the bridge, in `~/.workatomcp/config.json` (`{"modules": {"workato": true}}`, path from `data-dir.ts`). A missing file or key means on; a malformed file keeps the last good state (or the default) and says so in the log. `tools/list` returns core plus the modules that are on; the server instructions are the core snippet, each enabled module's snippet and one line naming the modules that are off. On a change the bridge sends `notifications/tools/list_changed` to every open MCP session (servers declare `tools.listChanged`; the stdio proxy reads the same file every 2 s and forwards it). The extension popup's **Modules** section reads and writes the switch: popup → background message (`get_modules` / `set_module`) → `modules_get` / `modules_set` over the profile's WebSocket → bridge. The bridge pushes `modules_state` to every connected profile on connect and on each change; the background keeps it in `chrome.storage.local`, refuses a switched-off module's tools too, and the Workato content script (`workato-field-outline`) does nothing while the module is off. With no bridge connected the switches are disabled.
+
+**Adding a module.** A folder per side next to `workato/`, one line in each `modules/index.ts`, its shared descriptor in `packages/shared/src/modules/index.ts` (`MODULES`), and an i18n description key `moduleDescription_<id>` for the popup.
 
 ## Request lifecycle
 
@@ -43,7 +69,7 @@ sequenceDiagram
 
 ## Tab resolution
 
-`findWorkatoTab()` in [`workato/tab-dispatch.ts`](../app/chrome-extension/entrypoints/background/tools/workato/tab-dispatch.ts) is the single gatekeeper. It resolves, in order:
+`findWorkatoTab()` in [`workato/tab-dispatch.ts`](../app/chrome-extension/entrypoints/background/modules/workato/tools/workato/tab-dispatch.ts) is the single gatekeeper. It resolves, in order:
 
 1. An explicit `tabId` argument
 2. The tab pinned by `workato_switch_profile`
@@ -59,19 +85,19 @@ A Workato call's identity is **profile plus tab**, because Workato resolves the 
 `session-context.ts` in the extension reads `/web_api/auth_user.json` and slims it to `{host, workspace_id, workspace_name, environment, user_id}`, cached per tab for 60 s and dropped on a URL change, a tab close or any read error. `workato_session_context` exposes it directly.
 
 - **The context block.** Every successful `workato_*` result gets one extra text block, always LAST and under 200 bytes: `{"context":{tab_id, host, workspace_id, workspace_name, environment}}`, with the routed `profile` added by the bridge. Producing it can never fail a call. Every response parser in the bridge reads the FIRST block, so orchestrators are unaffected.
-- **The pinned tuple.** `createToolRouter` holds one `SessionContext` (profile, tabId, host, workspace_id, workspace_name, environment, pinned_at, registry generation). `workato_switch_profile` with a `tabId` probes that tab once and pins the whole tuple; every later call, top-level and nested, carries the pinned tab and an `expected_context`.
+- **The pinned tuple.** `createToolRouter` holds one `SessionContext` (profile, tabId, pinned_at, registry generation, and each module's pin fields; Workato's are host, workspace_id, workspace_name, environment, in `src/modules/workato/session.ts`). `workato_switch_profile` with a `tabId` probes that tab once and pins the whole tuple; every later Workato call, top-level and nested, carries the pinned tab and an `expected_context`.
 - **Verification.** Write entry points call `assertExpectedContext` before acting and throw `ContextMismatch`, naming expected and actual. `ProfileRegistry` bumps a generation counter on connect and disconnect; when it moves, the pinned tab is re-read once and the call is refused with `ContextChanged` if the workspace or environment differ.
 - **On disk.** `workato_pull_recipe(out_file)` writes an `origin` block into the envelope (pulled_at, profile, tab, host, workspace id and name, environment, folder). The save path turns it back into an expected context and defaults `expected_base_version_no` from the file's `version_no`. `ignore_file_version` and `allow_context_mismatch` are the deliberate overrides, consumed in the bridge and never forwarded to the extension.
 
 ## The guarded mutation engine
 
-Every native recipe write runs through one module, `app/native-server/src/mcp/workato-recipe-engine.ts`, in this order:
+Every native recipe write runs through one file, `app/native-server/src/modules/workato/recipe-engine.ts`, in this order:
 
 1. Pull once, `view: "full"`, forwarding `tabId` / `windowId`.
 2. Refuse a stale caller-supplied `expected_base_version_no` before any operation runs; otherwise default it to the pulled `version_no`.
 3. Deep-clone the tree and apply every operation to the CLONE.
 4. Renumber the whole tree when structure changed.
-5. Derive extended schemas over the whole tree (`workato-recipe-schema.ts`) unless `auto_schema: false`.
+5. Derive extended schemas over the whole tree (`recipe-schema.ts`) unless `auto_schema: false`.
 6. Validate locally: numbering, `as` format and uniqueness, `uuid` presence, block ordering, `foreach` source placement, datapill references.
 7. MERGE the pulled `config` rather than rebuilding it, so `account_id` and `skip_validation` survive and only a new provider is appended.
 8. Save once through `workato_ui_save_recipe_code`, then summarize once with `persisted` / `valid` / `verified`, `changed_paths` and `version_no`.
@@ -82,7 +108,7 @@ Every native recipe write runs through one module, `app/native-server/src/mcp/wo
 
 ## The operations journal
 
-`app/native-server/src/mcp/workato-operations.ts` makes `workato_recipe_save_with_dependents` survive a client timeout or a bridge restart.
+`app/native-server/src/modules/workato/operations.ts` makes `workato_recipe_save_with_dependents` survive a client timeout or a bridge restart.
 
 - **Location.** One JSON file per operation in the bridge state directory (`%LOCALAPPDATA%\mcp-chrome-bridge\operations` on Windows), with an `os.tmpdir()` fallback and `WORKATOMCP_OPERATIONS_DIR` for tests. Atomic tmp plus rename writes, pruned once per process at 200 files or 7 days.
 - **Contents.** `operation_id`, `kind`, timestamps, context, the args WITHOUT the code tree (a `code_path` plus a sha256 prefix), every affected recipe with the running state and version it had BEFORE the operation, phases with timestamps and results, and an `interrupted` marker.
@@ -99,8 +125,9 @@ A key that does not match the current version simply cannot be served, so a stal
 
 `app/native-server/src/mcp/workato-auto-file.ts` gives the read surface one escape hatch instead of a per-tool one.
 
-- **Served-schema injection.** `withOutFileToolSchemas` adds `out_file`, `auto_file` and `auto_file_threshold_chars` to every tool in `AUTO_FILE_SCHEMA_TOOLS` at `listTools` time, filling in only a property the tool does not already declare. Nothing changes in `tools.ts`; adding a read tool to the set is one line in `READ_TOOLS`.
-- **Prepare, then apply.** `prepareAutoFileCall` extracts and strips the three arguments before the browser round trip (so a bad path fails early) and returns early for the four tools that own their own `out_file` hook: `workato_pull_recipe`, `workato_lcap_page_get`, `workato_api_request`, `workato_adapter_meta`. `applyAutoFile` runs at the single success return, writing the full text or the decoded image bytes with a tmp plus rename write and returning a summary: `saved_to`, `bytes`, `content_type`, `version_no`, top-level keys, depth-1 array counts, and the payload's own truncation flags copied verbatim.
+- **Rules, from core and modules.** Core knows its own read tools (`CORE_READ_TOOLS`, the page-sized browser reads) and `chrome_screenshot`; a module brings its read tools and the tools that accept an explicit `out_file` through `BridgeModule.autoFile` (Workato: `WORKATO_READ_TOOLS` in `src/modules/workato/index.ts`, and every other Workato tool except the four that own their own hook). The router combines them.
+- **Served-schema injection.** `withOutFileToolSchemas` adds `out_file`, `auto_file` and `auto_file_threshold_chars` to every read tool and to `chrome_screenshot` at `listTools` time, filling in only a property the tool does not already declare. Nothing changes in the shared schemas; adding a read tool is one line in its read-tool set.
+- **Prepare, then apply.** `prepareAutoFileCall` extracts and strips the three arguments before the browser round trip (so a bad path fails early) and leaves alone the four tools that own their own `out_file` hook: `workato_pull_recipe`, `workato_lcap_page_get`, `workato_api_request`, `workato_adapter_meta`. `applyAutoFile` runs at the single success return, writing the full text or the decoded image bytes with a tmp plus rename write and returning a summary: `saved_to`, `bytes`, `content_type`, `version_no`, top-level keys, depth-1 array counts, and the payload's own truncation flags copied verbatim.
 - **Not hooked.** The nested `callExtension` inside the orchestrators is deliberately left alone: spilling an orchestrator's own pull would hand it a summary instead of the payload. Bridge-local tools (`workato_recipe_apply`, `workato_recipe_validate`, `workato_operation_status`, `workato_datapill`, `workato_bridge_info`) return before the post-processor and take none of these properties.
 
 ## Multi-profile support
@@ -137,31 +164,53 @@ Recipe saves accept `expected_base_version_no` for optimistic locking, so a conc
 ## Code layout
 
 ```text
+packages/shared/src/
+├── tools.ts                       # CORE_TOOL_NAMES, CORE_TOOL_SCHEMAS
+├── module.ts                      # ToolModule, the switched-off refusal text
+└── modules/
+    ├── index.ts                   # MODULES, TOOL_NAMES, TOOL_SCHEMAS (whole catalogue)
+    └── workato/                   # Workato tool names, schemas, instructions snippet
+
 app/chrome-extension/entrypoints/background/
-├── native-host.ts                 # bridge message listener
-└── tools/
-    ├── workato/                   # recipes, jobs, connections, callers, folders, dispatch,
-    │                              #   CSRF, session context, snapshot cache, slimming
-    ├── workato-ui/                # live editor automation + save_recipe_code
-    ├── workato-lookup/            # lookup tables
-    ├── workato-data-table/        # data tables
-    ├── workato-session/           # whoami
-    └── browser/                   # inherited browser automation
+├── native-host.ts                 # bridge messages, module state push, popup relay
+├── extension-module.ts            # ExtensionModule, the module state cache
+├── tools/
+│   ├── index.ts                   # dispatch: core executors + installed modules
+│   └── browser/                   # browser automation
+└── modules/
+    ├── index.ts                   # EXTENSION_MODULES
+    └── workato/
+        ├── index.ts               # executors + afterCall (context block)
+        ├── content-gate.ts        # content scripts run only while the module is on
+        └── tools/
+            ├── workato/           # recipes, jobs, connections, callers, folders, dispatch,
+            │                      #   CSRF, session context, snapshot cache, slimming
+            ├── workato-ui/        # live editor automation + save_recipe_code
+            ├── workato-lookup/    # lookup tables
+            ├── workato-lcap/      # Workflow App pages
+            ├── workato-data-table/ # data tables
+            └── workato-session/   # whoami
 
 app/native-server/src/
 ├── server/index.ts                # Fastify routes, MCP transports
 ├── server/profile-registry.ts     # per-profile WebSocket connections, generation counter
+├── server/module-sync.ts          # module switch over the extension connection
 ├── native-messaging-host.ts       # stdio framing to/from Chrome
 ├── file-handler.ts                # local file reads/writes for the round-trip
-└── mcp/                           # MCP server, stdio entrypoint, server identity,
-                                  #   the recipe mutation engine and validator,
-                                  #   caller discovery, the operations journal, auto-file
+├── data-dir.ts                    # ~/.workatomcp (function registry, config.json)
+├── mcp/                           # router, MCP server and stdio entrypoint, server identity,
+│                                  #   module API and switch, auto-file, leases, watches,
+│                                  #   browser functions
+└── modules/
+    ├── index.ts                   # INSTALLED_MODULES
+    └── workato/                   # module hooks, the recipe mutation engine and validator,
+                                   #   caller discovery, the operations journal, file IO
 ```
 
 ## Adding a tool
 
-1. Declare it in `packages/shared/src/tools.ts` — a `TOOL_NAMES` entry and a `TOOL_SCHEMAS` definition. Descriptions matter: they are the agent's only documentation at call time, so state the prerequisites, the gotchas, and what the response looks like.
-2. Implement the handler in the matching `tools/workato*` directory and export it from that directory's `index.ts`.
+1. Declare it in the shared package: a core tool in `packages/shared/src/tools.ts` (`CORE_TOOL_NAMES`, `CORE_TOOL_SCHEMAS`), a Workato tool in `packages/shared/src/modules/workato/` (`tool-names.ts`, `schemas.ts`). Descriptions matter: they are the agent's only documentation at call time, so state the prerequisites, the gotchas, and what the response looks like.
+2. Implement the handler: a core tool under `entrypoints/background/tools/browser/`, a Workato tool in the matching `modules/workato/tools/workato*` directory, exported from that directory's `index.ts`. A bridge-side Workato tool goes through the module's `handle` hook.
 3. `pnpm build:shared && pnpm build:extension`, reload the unpacked extension, restart the MCP client so the new schema is fetched.
 
 Two constraints worth knowing before writing in-tab code:

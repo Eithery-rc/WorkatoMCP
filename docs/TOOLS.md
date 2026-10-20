@@ -1,8 +1,12 @@
 # Tool reference
 
-95 Workato tools, plus the 32 browser-automation tools inherited from the upstream project: 127 schemas in total.
+149 schemas in total: 52 **core** tools (48 browser tools and the four profile/bridge tools `workato_list_profiles`, `workato_switch_profile`, `workato_bridge_info`, `workato_reload_extension`) and 97 tools of the **Workato module**.
 
-The authoritative definitions live in [`packages/shared/src/tools.ts`](../packages/shared/src/tools.ts). This document is written from them. If the two ever disagree, the schema wins. `workato_bridge_info` reports the `tool_count` and `schema_revision` the running build actually serves, which is the way to tell a stale install from a documentation error.
+**Core and the Workato module.** Every `workato_*` tool on this page belongs to the Workato module, except the four profile/bridge tools above, which are core and keep their old names for now. Everything under [Session and build identity](#session-and-build-identity) marked _(core)_, [Browser functions](#browser-functions), [Large results](#large-results-out_file-and-auto-file) and [Inherited browser tools](#inherited-browser-tools) is core.
+
+**The module switch.** The extension popup has a **Modules** section with one switch per module. It is one switch per machine, kept in the bridge (`~/.workatomcp/config.json`), so every Chrome profile sees the same value; with no config file Workato is on. While Workato is off, `tools/list` serves the core tools only, the server instructions say the module is off, and a call to a Workato tool (from a session that still has the old list) is refused with `Error: <tool> belongs to the Workato module, which is switched off on this machine. Nothing was sent. Turn it on in the extension popup (Modules).` A change sends `notifications/tools/list_changed` to open MCP sessions; a client that ignores it sees the change in its next session. `workato_bridge_info` counts and hashes what is actually served, so `tool_count` is 52 with Workato off.
+
+The authoritative definitions live in [`packages/shared/src/tools.ts`](../packages/shared/src/tools.ts) (core) and [`packages/shared/src/modules/workato/schemas.ts`](../packages/shared/src/modules/workato/schemas.ts) (Workato). This document is written from them. If the two ever disagree, the schema wins. `workato_bridge_info` reports the `tool_count` and `schema_revision` the running build actually serves, which is the way to tell a stale install from a documentation error.
 
 **Evidence.** The Workato endpoint shapes quoted below (jobs search and retention, the dependency graph, `state.json`, `test.json`, connection health, pub/sub) were captured live on 2026-09-07 against a Development environment and are recorded in [`skills/workato-recipes/platform-endpoints.md`](../skills/workato-recipes/platform-endpoints.md).
 
@@ -693,21 +697,21 @@ Workato Workflow Apps (LCAP). The page tree is replaced whole: GET, mutate, PUT.
 
 ## Session and build identity
 
-| Tool                         | Required      | Optional                              | Description                                                                                  |
-| ---------------------------- | ------------- | ------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `workato_session_context`    | none          | `max_age_ms`, `refresh`               | Which tab, host, workspace, environment and user a call lands in                             |
-| `workato_whoami`             | none          | none                                  | Workspace, user, role, environments, teams, timezone, tier                                   |
-| `workato_list_profiles`      | none          | none                                  | Connected Chrome profiles plus the pinned session tuple                                      |
-| `workato_switch_profile`     | `profile`     | `tabId`                               | Route this session's calls to a profile, pinning a tab and its workspace                     |
-| `workato_bridge_info`        | none          | none                                  | Which build is answering: versions, tool count, schema revision                              |
-| `workato_switch_environment` | `environment` | `workspace`, `return_to`, `tabId`     | Switch environment and/or client workspace; moves every Workato tab in the Chrome profile    |
-| `workato_reload_extension`   | none          | `profile`, `check_only`, `timeout_ms` | Dev: reload the unpacked extension in every profile, bridge owner last (restarts the bridge) |
+| Tool                                | Required      | Optional                              | Description                                                                                  |
+| ----------------------------------- | ------------- | ------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `workato_session_context`           | none          | `max_age_ms`, `refresh`               | Which tab, host, workspace, environment and user a call lands in                             |
+| `workato_whoami`                    | none          | none                                  | Workspace, user, role, environments, teams, timezone, tier                                   |
+| `workato_list_profiles` _(core)_    | none          | none                                  | Connected Chrome profiles plus the pinned session tuple                                      |
+| `workato_switch_profile` _(core)_   | `profile`     | `tabId`                               | Route this session's calls to a profile, pinning a tab and its workspace                     |
+| `workato_bridge_info` _(core)_      | none          | none                                  | Which build is answering: versions, tool count, schema revision                              |
+| `workato_switch_environment`        | `environment` | `workspace`, `return_to`, `tabId`     | Switch environment and/or client workspace; moves every Workato tab in the Chrome profile    |
+| `workato_reload_extension` _(core)_ | none          | `profile`, `check_only`, `timeout_ms` | Dev: reload the unpacked extension in every profile, bridge owner last (restarts the bridge) |
 
 `workato_session_context` is the cheap identity check: `{tab_id, host, workspace_id, workspace_name, environment, user_id, age_ms, from_cache}` from `/web_api/auth_user.json` and nothing else, cached per tab for `max_age_ms` (default 60,000, maximum 600,000) and dropped the moment the tab navigates or closes. `refresh: true` bypasses the cache. Prefer it over `workato_whoami` whenever you only need the target workspace: whoami attaches the debugger and returns the full profile.
 
 The tool and the context block were verified live on 2026-09-07. One detail was not: `environment` is normalized to a string from whatever `current_environment` holds (a string, a number, or an object with a name and an id), and comparison is `String(expected) === String(actual)`, so a workspace whose environment arrives as an object could compare an id against a name and read as a mismatch. Only the string form has been observed.
 
-`workato_switch_profile` with a `tabId` probes that tab once and pins profile, tab, host, workspace and environment together. A pinned profile is never routed around: a failure is reported naming the pinned profile and the connected ones, and the stdio native-messaging host is reached only when no Chrome profile is connected at all, with the response saying so. `workato_list_profiles` returns the tuple as `session_context` with a `routing_note`.
+`workato_switch_profile` with a `tabId` probes that tab once and pins profile, tab, host, workspace and environment together. With the Workato module off it pins profile and tab only (no probe), and `session_context` has no workspace fields. A pinned profile is never routed around: a failure is reported naming the pinned profile and the connected ones, and the stdio native-messaging host is reached only when no Chrome profile is connected at all, with the response saying so. `workato_list_profiles` returns the tuple as `session_context` with a `routing_note`.
 
 `workato_bridge_info` runs entirely in the local bridge, so it still answers when the extension is disconnected. It returns `{bridge_version, shared_version, tool_count, schema_revision, connected_profiles, session_context, default_profile, node_version, platform, versions_read}`. `schema_revision` is a stable 12-hex hash of the served catalogue, canonicalized so array order and key order cannot move it. Call it first when a tool is missing or a parameter is rejected as unknown: that is deployment drift, usually a bridge or an unpacked extension that was not reloaded. The revision excludes the injected `profile` property, so a release that changed only that text would not move it.
 
