@@ -31,6 +31,8 @@ let undo: () => void;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'module-sync-'));
+  // A machine upgraded from 1.x: Workato on.
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ modules: { workato: true } }));
   registry = new ProfileRegistry();
   switches = new ModuleSwitch(
     () => path.join(dir, 'config.json'),

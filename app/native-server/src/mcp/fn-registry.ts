@@ -2,7 +2,7 @@
  * Browser functions: the registry on disk.
  *
  * One YAML file per function in a private git repository (default
- * ~/.workatomcp/functions, override MOKUTAB_FN_DIR): `centium.case.read`
+ * ~/.mokutab/functions, override MOKUTAB_FN_DIR): `centium.case.read`
  * lives in `centium/case.read.yaml`, helper `_helpers.netsuite` in
  * `_helpers/netsuite.yaml`. Every save is a commit whose subject carries the
  * version, so git is the version history: diffs, blame and rollback come from

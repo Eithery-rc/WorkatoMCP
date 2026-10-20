@@ -10,6 +10,7 @@
  * The new names are set, so a WORKATOMCP_* override left in the shell (still
  * read as a fallback) cannot point the suite at real data either.
  */
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
@@ -18,10 +19,14 @@ if (!process.env.MOKUTAB_OPERATIONS_DIR) {
   process.env.MOKUTAB_OPERATIONS_DIR = path.join(os.tmpdir(), `mokutab-jest-operations-${unique}`);
 }
 
-// The same for the data dir (~/.workatomcp): the module switch reads
+// The same for the data dir (~/.mokutab): the module switch reads
 // config.json there, and a machine with a module switched off must not turn
-// the suite red. A fresh, empty dir means every module is on.
+// the suite red. The suite runs as a machine upgraded from 1.x, with Workato
+// on as the tests expect; the tests of the default bring their own dirs.
 if (!process.env.MOKUTAB_DATA_DIR) {
   const unique = `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  process.env.MOKUTAB_DATA_DIR = path.join(os.tmpdir(), `mokutab-jest-data-${unique}`);
+  const dir = path.join(os.tmpdir(), `mokutab-jest-data-${unique}`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ modules: { workato: true } }));
+  process.env.MOKUTAB_DATA_DIR = dir;
 }

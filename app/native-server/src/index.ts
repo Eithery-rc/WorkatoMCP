@@ -7,6 +7,16 @@ import { profileRegistry } from './server/profile-registry';
 import { watchManager } from './mcp/watch-instance';
 import { installModuleSync } from './server/module-sync';
 import { wireToolListChanged } from './mcp/mcp-server';
+import { migrateOnStart } from './startup-migration';
+
+// First, before anything reads the data dir: the first 2.x start moves
+// ~/.workatomcp to ~/.mokutab. It never throws, and a failure must not keep
+// the bridge from starting either.
+try {
+  migrateOnStart();
+} catch (error) {
+  console.error('[data-dir] the data dir check failed:', error);
+}
 
 try {
   // The default profile outlives a bridge restart (an extension reload of the

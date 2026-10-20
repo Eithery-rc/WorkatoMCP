@@ -63,25 +63,26 @@ function writeConfig(text: string): void {
 }
 
 describe('reading the module switch', () => {
-  test('a missing file means every module is on', () => {
+  test('a missing file means every module is off: a fresh install has the core only', () => {
+    expect(DEFAULT_ENABLED).toBe(false);
     expect(fs.existsSync(file)).toBe(false);
-    expect(switches.isEnabled('workato')).toBe(true);
-    expect(switches.snapshot(['workato', 'other'])).toEqual({ workato: true, other: true });
+    expect(switches.isEnabled('workato')).toBe(false);
+    expect(switches.snapshot(['workato', 'other'])).toEqual({ workato: false, other: false });
     expect(logs).toEqual([]);
   });
 
-  test('a missing key means on; a present key is honoured', () => {
-    writeConfig(JSON.stringify({ modules: { other: false } }));
-    expect(switches.isEnabled('workato')).toBe(true);
-    expect(switches.isEnabled('other')).toBe(false);
-    writeConfig(JSON.stringify({ something_else: 1 }));
+  test('a missing key means off; a present key is honoured', () => {
+    writeConfig(JSON.stringify({ modules: { other: true } }));
+    expect(switches.isEnabled('workato')).toBe(false);
     expect(switches.isEnabled('other')).toBe(true);
+    writeConfig(JSON.stringify({ something_else: 1 }));
+    expect(switches.isEnabled('other')).toBe(false);
   });
 
   test('malformed JSON keeps the default and says so, without throwing', () => {
     writeConfig('{ not json');
     expect(() => switches.isEnabled('workato')).not.toThrow();
-    expect(switches.isEnabled('workato')).toBe(true);
+    expect(switches.isEnabled('workato')).toBe(DEFAULT_ENABLED);
     expect(logs.join('\n')).toMatch(/not valid JSON.*keeping the last good module state/);
     // Logged once per bad file, not once per read.
     switches.isEnabled('workato');
@@ -96,9 +97,9 @@ describe('reading the module switch', () => {
     expect(logs).toHaveLength(1);
   });
 
-  test('a value that is not a boolean falls back to on and is reported', () => {
-    writeConfig(JSON.stringify({ modules: { workato: 'no' } }));
-    expect(switches.isEnabled('workato')).toBe(true);
+  test('a value that is not a boolean falls back to the default and is reported', () => {
+    writeConfig(JSON.stringify({ modules: { workato: 'yes' } }));
+    expect(switches.isEnabled('workato')).toBe(DEFAULT_ENABLED);
     expect(logs.join('\n')).toMatch(/modules\.workato is not true or false/);
   });
 
@@ -163,13 +164,35 @@ describe('reading the module switch', () => {
     expect(logs.join('\n')).toMatch(/is not a JSON object \(an array\); keeping the last good/);
   });
 
-  test('a hand edit is picked up on the next read and reported as a change', () => {
+  test('the first read is where the switch starts, not a change', () => {
+    // An upgraded machine: on in the file, off by default.
+    writeConfig(JSON.stringify({ modules: { workato: true } }));
     const seen: Record<string, boolean>[] = [];
     switches.onChange((states) => seen.push(states));
     expect(switches.isEnabled('workato')).toBe(true);
+    expect(seen).toEqual([]);
     writeConfig(JSON.stringify({ modules: { workato: false } }));
     expect(switches.isEnabled('workato')).toBe(false);
     expect(seen).toEqual([{ workato: false }]);
+  });
+
+  test('a malformed first file starts at the default, so fixing it is a change', () => {
+    writeConfig('{ broken');
+    const seen: Record<string, boolean>[] = [];
+    switches.onChange((states) => seen.push(states));
+    expect(switches.isEnabled('workato')).toBe(DEFAULT_ENABLED);
+    writeConfig(JSON.stringify({ modules: { workato: true } }));
+    expect(switches.isEnabled('workato')).toBe(true);
+    expect(seen).toEqual([{ workato: true }]);
+  });
+
+  test('a hand edit is picked up on the next read and reported as a change', () => {
+    const seen: Record<string, boolean>[] = [];
+    switches.onChange((states) => seen.push(states));
+    expect(switches.isEnabled('workato')).toBe(false);
+    writeConfig(JSON.stringify({ modules: { workato: true } }));
+    expect(switches.isEnabled('workato')).toBe(true);
+    expect(seen).toEqual([{ workato: true }]);
   });
 });
 
@@ -179,16 +202,16 @@ describe('writing the module switch', () => {
     const listener = jest.fn();
     switches.onChange(listener);
 
-    switches.set('workato', false);
+    switches.set('workato', true);
     expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({
       keep: 'me',
-      modules: { other: true, workato: false },
+      modules: { other: true, workato: true },
     });
-    expect(switches.isEnabled('workato')).toBe(false);
+    expect(switches.isEnabled('workato')).toBe(true);
     expect(listener).toHaveBeenCalledTimes(1);
 
     // Setting the same value again is not a change.
-    switches.set('workato', false);
+    switches.set('workato', true);
     expect(listener).toHaveBeenCalledTimes(1);
 
     // A fresh reader of the same file sees it.
@@ -197,7 +220,7 @@ describe('writing the module switch', () => {
         () => file,
         () => {},
       ).isEnabled('workato'),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   test('set creates the data dir and file when they are missing', () => {
@@ -261,6 +284,7 @@ describe('the data dir helper', () => {
     expect(process.env[DATA_DIR_ENV]).toBeTruthy();
     expect(dataDir()).toBe(path.resolve(process.env[DATA_DIR_ENV]!));
     expect(configFile()).toBe(path.join(dataDir(), 'config.json'));
+    expect(dataDir().startsWith(os.homedir() + path.sep + '.mokutab')).toBe(false);
     expect(dataDir().startsWith(os.homedir() + path.sep + '.workatomcp')).toBe(false);
   });
 });

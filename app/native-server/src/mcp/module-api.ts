@@ -124,6 +124,12 @@ export interface BridgeModule {
    * served schema and runs the target, while the module is on.
    */
   aliases?: Readonly<Record<string, string>>;
+  /**
+   * 1.x served this module's tools with no switch, so a machine upgraded from
+   * 1.x keeps it on (the data dir move writes it into config.json). A module
+   * added later leaves this unset and starts off everywhere.
+   */
+  onAfterUpgrade?: boolean;
   owns(name: string): boolean;
   /** Read tools that spill to a file, and the tools that accept out_file. */
   autoFile?: AutoFileRules;

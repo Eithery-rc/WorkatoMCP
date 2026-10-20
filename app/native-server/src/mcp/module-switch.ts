@@ -7,11 +7,15 @@
  * depend on which profile it happens to route to. Every profile's popup reads
  * and writes this one value through the extension-to-bridge connection.
  *
- * A missing file or a missing key means DEFAULT_ENABLED (on in this release,
- * the behaviour before modules existed). A malformed file never crashes the
- * bridge: the last good state (or the default) stays in force and the problem
- * is logged. A read that fails for another reason (a file locked by an editor
- * or a sync tool) changes nothing and is retried on the next check.
+ * A missing file or a missing key means DEFAULT_ENABLED: off, so a fresh
+ * install starts with the core only. A machine upgraded from 1.x keeps the
+ * modules 1.x served: the data dir move writes them into config.json as on
+ * (seedUpgradeModules), which is what makes an upgrade different from a fresh
+ * install from then on. An explicit true or false in the file always wins. A
+ * malformed file never crashes the bridge: the last good state (or the
+ * default) stays in force and the problem is logged. A read that fails for
+ * another reason (a file locked by an editor or a sync tool) changes nothing
+ * and is retried on the next check.
  */
 
 import * as fs from 'fs';
@@ -19,8 +23,8 @@ import * as path from 'path';
 import { performance } from 'perf_hooks';
 import { configFile } from '../data-dir';
 
-/** A module the config does not mention is on. Step 3 of the 2.0 plan flips this. */
-export const DEFAULT_ENABLED = true;
+/** A module the config does not mention is off (a fresh install; an upgrade has it written). */
+export const DEFAULT_ENABLED = false;
 
 /** The file is stat'ed at most this often; a change shows up within this window. */
 export const MODULE_SWITCH_RECHECK_MS = 250;
@@ -103,6 +107,8 @@ export class ModuleSwitch implements ModuleSwitchView {
   private signature: string | null | undefined = undefined;
   /** Signature of a malformed file already reported, so it is logged once. */
   private reportedBad: string | null = null;
+  /** Whether a state was established yet; the first one is not reported as a change. */
+  private baselineSet = false;
   private lastCheckAt = Number.NEGATIVE_INFINITY;
   private listeners = new Set<Listener>();
   private readonly recheckMs: number;
@@ -173,6 +179,7 @@ export class ModuleSwitch implements ModuleSwitchView {
     const written = this.statFile(file);
     this.signature = written.kind === 'file' ? written.signature : undefined;
     this.lastCheckAt = this.now();
+    this.baselineSet = true;
     if (before !== enabled) this.emit();
   }
 
@@ -236,6 +243,8 @@ export class ModuleSwitch implements ModuleSwitchView {
           this.reportedBad = signature;
           this.log(`${file} is ${parsed.reason}; keeping the last good module state`);
         }
+        // The defaults (or the last good state) are what callers now see.
+        this.baselineSet = true;
         return;
       }
       const modules = isRecord(parsed.doc.modules) ? parsed.doc.modules : {};
@@ -249,6 +258,13 @@ export class ModuleSwitch implements ModuleSwitchView {
     this.states = next;
     this.signature = signature;
     this.reportedBad = null;
+    // The first state read is where the switch starts, not a change: an
+    // upgraded machine's {"workato": true} differs from the default, and
+    // announcing it would push a second state and a list_changed on every
+    // bridge start.
+    const first = !this.baselineSet;
+    this.baselineSet = true;
+    if (first) return;
     const ids = new Set([...Object.keys(previous), ...Object.keys(next)]);
     for (const id of ids) {
       if ((previous[id] ?? DEFAULT_ENABLED) !== (next[id] ?? DEFAULT_ENABLED)) {
@@ -257,6 +273,50 @@ export class ModuleSwitch implements ModuleSwitchView {
       }
     }
   }
+}
+
+/**
+ * Write `true` into `file` for each of `ids` it does not set to true or false,
+ * keeping every other key: the modules a machine upgraded from 1.x used,
+ * whose bridge served their tools with no switch. An explicit value is never
+ * touched. A file that is not a JSON object is left alone (the switch reports
+ * it as usual, and the default applies). Returns the ids written.
+ */
+export function seedUpgradeModules(
+  file: string,
+  ids: readonly string[],
+  log: (message: string) => void = defaultLog,
+): string[] {
+  let doc: Record<string, unknown> = {};
+  try {
+    const parsed = parseConfig(fs.readFileSync(file, 'utf8'));
+    if (!parsed.ok) {
+      log(`${file} is ${parsed.reason}; not keeping ${ids.join(', ')} on for the upgrade`);
+      return [];
+    }
+    doc = parsed.doc;
+  } catch (err: any) {
+    if (err?.code !== 'ENOENT') {
+      log(`could not read ${file} (${err?.code || err?.message}); not keeping modules on`);
+      return [];
+    }
+  }
+  const modules = isRecord(doc.modules) ? { ...doc.modules } : {};
+  const seeded = ids.filter((id) => typeof modules[id] !== 'boolean');
+  if (seeded.length === 0) return [];
+  for (const id of seeded) modules[id] = true;
+  doc.modules = modules;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n');
+    fs.renameSync(tmp, file);
+  } catch (err: any) {
+    log(`could not write ${file} (${err?.code || err?.message}); ${seeded.join(', ')} stay off`);
+    return [];
+  }
+  log(`kept ${seeded.join(', ')} on: this machine was upgraded from 1.x (${file})`);
+  return seeded;
 }
 
 /** The process-wide switch, read from the bridge config file. */

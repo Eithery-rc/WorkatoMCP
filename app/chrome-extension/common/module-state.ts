@@ -4,8 +4,10 @@
  * The switch lives in the bridge (one per machine). The background keeps the
  * last state the bridge pushed in chrome.storage.local, so the service worker
  * (after a restart), the popup and a module's content scripts all read the
- * same value. A module the bridge never mentioned is on: that is how the
- * bridge treats it too.
+ * same value. A module the bridge never mentioned is on: a 2.x bridge pushes
+ * the state of every installed module on connect (off on a fresh install),
+ * so only a bridge from before the module switch says nothing, and it serves
+ * every tool.
  *
  * Kept free of the shared package, so a content script that imports it stays
  * small.
@@ -27,7 +29,7 @@ export interface StoredModulesState {
 
 export type ModuleStates = Record<string, boolean>;
 
-/** A module the bridge never mentioned is on. Step 3 of the 2.0 plan flips this. */
+/** A module the bridge never mentioned is on (see above: only a pre-switch bridge is silent). */
 export const DEFAULT_ENABLED = true;
 
 /** The id -> on map of a stored (or pushed) state; anything malformed is skipped. */

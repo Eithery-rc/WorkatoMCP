@@ -19,6 +19,8 @@ let switches: ModuleSwitch;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'list-changed-'));
+  // A machine upgraded from 1.x: Workato on.
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ modules: { workato: true } }));
   switches = new ModuleSwitch(
     () => path.join(dir, 'config.json'),
     () => {},
