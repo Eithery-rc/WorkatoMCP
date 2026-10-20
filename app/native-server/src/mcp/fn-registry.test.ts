@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globa
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { FnRegistry, MACHINE_IDENTITIES, SaveRefused, execGit } from './fn-registry';
+import { FnRegistry, FN_DIR_ENV, MACHINE_IDENTITIES, SaveRefused, execGit } from './fn-registry';
+import { dataDir, homeDataDirs, migrateDataDir } from '../data-dir';
 import type { FnDefinition } from './fn-definition';
 
 // These tests drive a real git repository (init, add, commit, log, show). Each
@@ -189,6 +190,42 @@ describe('the vault gate: who counts as a machine author', () => {
   test('every identity chrome_fn_save ever used stays a machine identity', () => {
     for (const id of ['mokutab', 'mokutab@localhost', 'workatomcp', 'workatomcp@localhost']) {
       expect(MACHINE_IDENTITIES.has(id)).toBe(true);
+    }
+  });
+});
+
+describe('the registry dir follows a data dir moved while the bridge runs', () => {
+  test('moved after construction: list sees the moved functions, save lands in the new dir', async () => {
+    const home = path.join(dir, 'home');
+    const { current, legacy } = homeDataDirs(home);
+    fs.mkdirSync(legacy, { recursive: true });
+    // The bridge's one registry, created while the data is still in ~/.workatomcp.
+    const live = new FnRegistry(() => path.join(dataDir({ home, env: {} }), 'functions'));
+    await live.save(readDef('one'), { changelog: 'v1' });
+    expect(live.dir).toBe(path.join(legacy, 'functions'));
+
+    // A sibling bridge process moves the data dir.
+    expect(migrateDataDir({ home, env: {}, log: () => {} }).outcome).toBe('moved');
+
+    expect(live.dir).toBe(path.join(current, 'functions'));
+    expect(live.list().map((entry) => entry.name)).toEqual(['acme.case.read']);
+    const saved = await live.save(readDef('two'), { changelog: 'v2', base_version: 1 });
+    expect(saved.file).toBe(path.join(current, 'functions', 'acme', 'case.read.yaml'));
+    expect(fs.existsSync(legacy)).toBe(false);
+    expect((await live.history('acme.case.read')).map((h) => h.version)).toEqual([2, 1]);
+  });
+
+  test('the default dir is looked up on every use, not once', () => {
+    const saved = process.env[FN_DIR_ENV];
+    try {
+      process.env[FN_DIR_ENV] = path.join(dir, 'a');
+      const registry = new FnRegistry();
+      expect(registry.dir).toBe(path.join(dir, 'a'));
+      process.env[FN_DIR_ENV] = path.join(dir, 'b');
+      expect(registry.dir).toBe(path.join(dir, 'b'));
+    } finally {
+      if (saved === undefined) delete process.env[FN_DIR_ENV];
+      else process.env[FN_DIR_ENV] = saved;
     }
   });
 });

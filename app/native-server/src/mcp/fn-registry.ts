@@ -168,11 +168,25 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export class FnRegistry {
   // Saves of this process run one at a time; the lock file covers another process.
   private chain: Promise<unknown> = Promise.resolve();
+  private readonly resolveDir: () => string;
 
+  /**
+   * @param dir The registry dir, or how to find it. The default resolves it
+   *   on every use: the bridge keeps one registry for its whole life, and a
+   *   sibling bridge process (one per Chrome profile) may move the data dir
+   *   to ~/.mokutab while this one runs. A path fixed at construction would
+   *   then list nothing and re-create the old directory on the next save.
+   */
   constructor(
-    readonly dir: string = defaultRegistryDir(),
+    dir: string | (() => string) = defaultRegistryDir,
     private readonly git: GitRunner = execGit,
-  ) {}
+  ) {
+    this.resolveDir = typeof dir === 'string' ? () => dir : dir;
+  }
+
+  get dir(): string {
+    return this.resolveDir();
+  }
 
   /** `centium.case.read` -> `<dir>/centium/case.read.yaml`. Only valid names map to a path. */
   fileFor(name: string): string {
