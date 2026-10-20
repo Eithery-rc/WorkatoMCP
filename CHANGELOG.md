@@ -35,6 +35,7 @@ Upstream features this project never used are gone, and the code is split into a
 
 ### Fixed
 
+- **The bridge's origin check was a prefix match.** The extension WebSocket (`/ws-client`) and CORS on the HTTP routes accepted any origin starting with `http://127.0.0.1` (so `http://127.0.0.1.attacker.tld` too) and any `chrome-extension://` or `moz-extension://` origin. A page or another extension that got through could register under an existing profile name, replace the live socket and receive that profile's tool calls. Origins are now parsed and compared exactly: no Origin header (local MCP clients), this extension's ids (the same list the native-messaging manifest allows), or `http://127.0.0.1` on any port. A build with its own extension key needs its id added to `EXTENSION_IDS`.
 - `chrome_read_page` falls back to the interactive-elements helper when the accessibility tree is too sparse, but the fallback never reached it: the accessibility helper answered the ping meant for the second helper, so it was not injected and the fallback failed. It now injects the helper and returns the elements.
 
 ## bridge 1.13.0 · shared 1.11.0 (2026-10-19)

@@ -3,6 +3,7 @@ import supertest from 'supertest';
 import Server from './index';
 import { profileRegistry } from './profile-registry';
 import { SERVER_NAME } from '../mcp/server-identity';
+import { EXTENSION_IDS } from '../scripts/constant';
 
 describe('server tests', () => {
   beforeAll(async () => {
@@ -107,6 +108,52 @@ describe('server tests', () => {
     } finally {
       ws?.close();
       registerSpy.mockRestore();
+    }
+  });
+
+  test('GET /ws-client registers only our extension (or no origin), never a look-alike', async () => {
+    const registerSpy = jest.spyOn(profileRegistry, 'register').mockImplementation(() => undefined);
+    const open = async (origin: string) => {
+      const ws = await (Server.getInstance() as any).injectWS('/ws-client?profile=personal', {
+        headers: { origin },
+      });
+      // The route closes a refused socket at once; give it a tick to do so.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      ws.close();
+    };
+    try {
+      await open('http://127.0.0.1.attacker.tld');
+      await open('chrome-extension://aaaabbbbccccddddeeeeffffgggghhhh');
+      expect(registerSpy).not.toHaveBeenCalled();
+      await open(`chrome-extension://${EXTENSION_IDS[0]}`);
+      expect(registerSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      registerSpy.mockRestore();
+    }
+  });
+
+  test('CORS answers a preflight only for allowed origins', async () => {
+    const preflight = (origin: string) =>
+      supertest(Server.getInstance().server)
+        .options('/mcp')
+        .set('Origin', origin)
+        .set('Access-Control-Request-Method', 'POST')
+        .set('Access-Control-Request-Headers', 'content-type');
+
+    const local = await preflight('http://127.0.0.1:12306');
+    expect(local.headers['access-control-allow-origin']).toBe('http://127.0.0.1:12306');
+
+    const ours = await preflight(`chrome-extension://${EXTENSION_IDS[0]}`);
+    expect(ours.headers['access-control-allow-origin']).toBe(
+      `chrome-extension://${EXTENSION_IDS[0]}`,
+    );
+
+    for (const origin of [
+      'http://127.0.0.1.attacker.tld',
+      'chrome-extension://aaaabbbbccccddddeeeeffffgggghhhh',
+    ]) {
+      const refused = await preflight(origin);
+      expect(refused.headers['access-control-allow-origin']).toBeUndefined();
     }
   });
 });

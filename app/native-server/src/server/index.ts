@@ -25,6 +25,7 @@ import { profileRegistry } from './profile-registry';
 import { markMcpActivity } from '../update-checker';
 import { watchManager } from '../mcp/watch-instance';
 import { parseWaitQuery } from '../mcp/browser-watch';
+import { isAllowedOrigin } from './origin-policy';
 
 // ============================================================
 // Types
@@ -105,17 +106,9 @@ export class Server {
     });
     this.fastify.register(fastifyWebsocket);
     this.fastify.register(cors, {
-      origin: (origin, cb) => {
-        // Allow requests with no origin (e.g., curl, server-to-server)
-        if (!origin) {
-          return cb(null, true);
-        }
-        // Check if origin matches any pattern in whitelist
-        const allowed = SERVER_CONFIG.CORS_ORIGIN.some((pattern) =>
-          pattern instanceof RegExp ? pattern.test(origin) : origin.startsWith(pattern),
-        );
-        cb(null, allowed);
-      },
+      // No origin (curl, local MCP clients) is allowed; a browser origin must
+      // match exactly. See origin-policy.ts.
+      origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
       methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
       credentials: true,
     });
@@ -158,13 +151,9 @@ export class Server {
   private setupWebSocketRoutes(): void {
     this.fastify.get('/ws-client', { websocket: true }, (socket, req) => {
       const origin = req.headers.origin;
-      const isAllowed =
-        !origin ||
-        SERVER_CONFIG.CORS_ORIGIN.some((pattern) =>
-          pattern instanceof RegExp ? pattern.test(origin) : origin.startsWith(pattern),
-        );
-
-      if (!isAllowed) {
+      // A socket that gets through registers as a Chrome profile and receives
+      // that profile's tool calls: only this extension's origin (or none).
+      if (!isAllowedOrigin(origin)) {
         req.log.warn(`WebSocket connection rejected from unauthorized origin: ${origin}`);
         socket.close();
         return;

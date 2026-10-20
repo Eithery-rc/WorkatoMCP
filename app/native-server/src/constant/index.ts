@@ -8,11 +8,8 @@ export const TIMEOUTS = {
 // Server configuration
 export const SERVER_CONFIG = {
   HOST: '127.0.0.1',
-  /**
-   * CORS origin whitelist - only allow Chrome/Firefox extensions and local debugging.
-   * Use RegExp patterns for extension origins, string for exact match.
-   */
-  CORS_ORIGIN: [/^chrome-extension:\/\//, /^moz-extension:\/\//, 'http://127.0.0.1'] as const,
+  // Allowed browser origins (CORS and the extension WebSocket): see
+  // src/server/origin-policy.ts.
   LOGGER_ENABLED: false,
 } as const;
 
