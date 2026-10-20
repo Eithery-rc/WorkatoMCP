@@ -1,17 +1,17 @@
 {
   "name": "@mokuhub/mokutab-shared",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Tool schemas shared by the MokuTab bridge and Chrome extension",
   "author": "Roman Chikalenko <chikalenkor@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MokuHub/MokuTab.git",
+    "url": "git+https://github.com/MokuTeam/MokuTab.git",
     "directory": "packages/shared"
   },
-  "homepage": "https://github.com/MokuHub/MokuTab#readme",
+  "homepage": "https://github.com/MokuTeam/MokuTab#readme",
   "bugs": {
-    "url": "https://github.com/MokuHub/MokuTab/issues"
+    "url": "https://github.com/MokuTeam/MokuTab/issues"
   },
   "publishConfig": {
     "access": "public"

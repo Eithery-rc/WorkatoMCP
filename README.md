@@ -6,8 +6,8 @@
 
 **Browser tools for AI agents that drive your own logged-in Chrome. A MokuHub product.**
 
-[![CI](https://github.com/MokuHub/MokuTab/actions/workflows/ci.yml/badge.svg)](https://github.com/MokuHub/MokuTab/actions/workflows/ci.yml)
-[![Extension release](https://img.shields.io/github/v/release/MokuHub/MokuTab?label=extension)](https://github.com/MokuHub/MokuTab/releases/latest)
+[![CI](https://github.com/MokuTeam/MokuTab/actions/workflows/ci.yml/badge.svg)](https://github.com/MokuTeam/MokuTab/actions/workflows/ci.yml)
+[![Extension release](https://img.shields.io/github/v/release/MokuTeam/MokuTab?label=extension)](https://github.com/MokuTeam/MokuTab/releases/latest)
 [![npm](https://img.shields.io/npm/v/@mokuhub/mokutab-bridge?label=%40mokuhub%2Fmokutab-bridge)](https://www.npmjs.com/package/@mokuhub/mokutab-bridge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
@@ -124,18 +124,18 @@ The [workato-recipes skill](#companion-skill) documents the code-tree JSON and t
 
 ### 1. Get the extension
 
-Download `mokutab-extension-<version>.zip` from the [latest release](https://github.com/MokuHub/MokuTab/releases/latest) and unzip it into a folder you will keep, for example `%LOCALAPPDATA%\MokuTab\extension` on Windows. Chrome loads an unpacked extension from that folder on every start, so not your Downloads folder.
+Download `mokutab-extension-<version>.zip` from the [latest release](https://github.com/MokuTeam/MokuTab/releases/latest) and unzip it into a folder you will keep, for example `%LOCALAPPDATA%\MokuTab\extension` on Windows. Chrome loads an unpacked extension from that folder on every start, so not your Downloads folder.
 
 GitHub Actions builds the zip from the release tag and attests it. To check a download came from this repository's release workflow:
 
 ```bash
-gh attestation verify mokutab-extension-<version>.zip --repo MokuHub/MokuTab
+gh attestation verify mokutab-extension-<version>.zip --repo MokuTeam/MokuTab
 ```
 
 **From source** (unreleased changes from `master`, or development; needs pnpm 8+):
 
 ```bash
-git clone https://github.com/MokuHub/MokuTab
+git clone https://github.com/MokuTeam/MokuTab
 cd MokuTab
 pnpm install
 pnpm build:shared
@@ -258,7 +258,7 @@ Full details, threat model, and reporting instructions: [SECURITY.md](SECURITY.m
 Install it as a plugin from this repo's marketplace manifest:
 
 ```bash
-/plugin marketplace add MokuHub/MokuTab
+/plugin marketplace add MokuTeam/MokuTab
 /plugin install workato-recipes@workato-mcp
 ```
 

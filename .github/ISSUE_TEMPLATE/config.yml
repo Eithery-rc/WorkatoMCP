@@ -1,11 +1,11 @@
 blank_issues_enabled: true
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/MokuHub/MokuTab/security/advisories/new
+    url: https://github.com/MokuTeam/MokuTab/security/advisories/new
     about: Report privately through a GitHub security advisory, not a public issue.
   - name: Installation and connection problems
-    url: https://github.com/MokuHub/MokuTab/blob/master/docs/TROUBLESHOOTING.md
+    url: https://github.com/MokuTeam/MokuTab/blob/master/docs/TROUBLESHOOTING.md
     about: Most setup failures are covered here. Start with `mokutab-bridge doctor --fix`.
   - name: Tool reference
-    url: https://github.com/MokuHub/MokuTab/blob/master/docs/TOOLS.md
+    url: https://github.com/MokuTeam/MokuTab/blob/master/docs/TOOLS.md
     about: Parameters, response shapes, and error codes for all 95 Workato tools.

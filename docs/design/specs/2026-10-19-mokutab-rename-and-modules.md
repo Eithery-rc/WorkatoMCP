@@ -22,23 +22,23 @@ Non-goals:
 
 ## 2. Naming map
 
-| What                                     | Now                                                                     | 2.0.0                                                                                   |
-| ---------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Product, handshake `SERVER_NAME`         | WorkatoMCP                                                              | MokuTab                                                                                 |
-| Root package                             | `workatomcp`                                                            | `mokutab`                                                                               |
-| Shared package                           | `workatomcp-shared`                                                     | `@mokuhub/mokutab-shared`                                                               |
-| Bridge package                           | `workatomcp-bridge`                                                     | `@mokuhub/mokutab-bridge`                                                               |
-| Extension package                        | `workatomcp-extension`                                                  | `mokutab-extension`                                                                     |
-| Bridge bins                              | `workatomcp-bridge`, `workatomcp-stdio` (+ 3 upstream aliases)          | `mokutab-bridge`, `mokutab-stdio`; the old bins stay as aliases until 3.0               |
-| MCP registration key in `~/.claude.json` | `workato`                                                               | `mokutab`, so tools read `mcp__mokutab__chrome_snapshot`                                |
-| Data dir                                 | `~/.workatomcp`                                                         | `~/.mokutab` (moved on first start, §5.2)                                               |
-| Env vars                                 | `WORKATOMCP_FN_DIR`, `WORKATOMCP_OPERATIONS_DIR`                        | `MOKUTAB_*`; the old names are still read                                               |
-| Temp and log dirs                        | `workatomcp-results`, `workatomcp-operations`, `workatomcp-bridge/logs` | `mokutab-*`                                                                             |
-| Function registry git identity           | `workatomcp`                                                            | `mokutab`, and `workatomcp` still counts as a machine author (§5.2)                     |
-| Extension name, popup, welcome page      | WorkatoMCP                                                              | MokuTab                                                                                 |
-| Release asset                            | `workatomcp-extension-X.zip`                                            | `mokutab-extension-X.zip`                                                               |
-| GitHub repo                              | `Eithery-rc/WorkatoMCP`                                                 | transferred to the `MokuHub` account as `MokuHub/MokuTab`; GitHub redirects the old URL |
-| Native host id, extension ID             | unchanged                                                               | unchanged                                                                               |
+| What                                     | Now                                                                     | 2.0.0                                                                                          |
+| ---------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Product, handshake `SERVER_NAME`         | WorkatoMCP                                                              | MokuTab                                                                                        |
+| Root package                             | `workatomcp`                                                            | `mokutab`                                                                                      |
+| Shared package                           | `workatomcp-shared`                                                     | `@mokuhub/mokutab-shared`                                                                      |
+| Bridge package                           | `workatomcp-bridge`                                                     | `@mokuhub/mokutab-bridge`                                                                      |
+| Extension package                        | `workatomcp-extension`                                                  | `mokutab-extension`                                                                            |
+| Bridge bins                              | `workatomcp-bridge`, `workatomcp-stdio` (+ 3 upstream aliases)          | `mokutab-bridge`, `mokutab-stdio`; the old bins stay as aliases until 3.0                      |
+| MCP registration key in `~/.claude.json` | `workato`                                                               | `mokutab`, so tools read `mcp__mokutab__chrome_snapshot`                                       |
+| Data dir                                 | `~/.workatomcp`                                                         | `~/.mokutab` (moved on first start, §5.2)                                                      |
+| Env vars                                 | `WORKATOMCP_FN_DIR`, `WORKATOMCP_OPERATIONS_DIR`                        | `MOKUTAB_*`; the old names are still read                                                      |
+| Temp and log dirs                        | `workatomcp-results`, `workatomcp-operations`, `workatomcp-bridge/logs` | `mokutab-*`                                                                                    |
+| Function registry git identity           | `workatomcp`                                                            | `mokutab`, and `workatomcp` still counts as a machine author (§5.2)                            |
+| Extension name, popup, welcome page      | WorkatoMCP                                                              | MokuTab                                                                                        |
+| Release asset                            | `workatomcp-extension-X.zip`                                            | `mokutab-extension-X.zip`                                                                      |
+| GitHub repo                              | `Eithery-rc/WorkatoMCP`                                                 | transferred to the `MokuTeam` organization as `MokuTeam/MokuTab`; GitHub redirects the old URL |
+| Native host id, extension ID             | unchanged                                                               | unchanged                                                                                      |
 
 Four core tools carry the `workato_` prefix only for historical reasons. They move to core under browser names, and the old names keep working as aliases in the Workato module until 3.0:
 
@@ -145,7 +145,7 @@ One release, 2.0.0, so colleagues migrate once. Separate commits, each green on 
 6. **Release**, in this order:
    1. Roman creates the `mokuhub` org on npmjs.com.
    2. History rewrite (§5.5), force-push master and tags.
-   3. Rename the repo to `MokuTab` and transfer it to the `MokuHub` account; accepted from that account within a day.
+   3. Rename the repo to `MokuTab` and transfer it to the `MokuTeam` organization (Roman is an admin there, so it moves at once).
    4. Push tag `v2.0.0` (the release workflow builds and attests the zip under the new repo name), publish `@mokuhub/mokutab-shared` and `@mokuhub/mokutab-bridge` (Roman's OTP), deprecate the old packages.
    5. Migrate this machine (§5.1), update references outside the repo (§5.4), tell colleagues the four install steps.
 
@@ -218,7 +218,7 @@ Consequences: every hash from 2026-05-12 on changes, so hashes quoted in notes a
 Roman, 2026-10-19:
 
 - **Name:** MokuTab, a MokuHub product.
-- **GitHub:** the repo moves to the `MokuHub` account as `MokuHub/MokuTab`. `MokuHub` is a personal account, so the transfer is accepted from it within a day; Roman stays on as a collaborator, keeps his commit history, and the old URL redirects as long as no new repo named `WorkatoMCP` is created under `Eithery-rc`.
+- **GitHub:** the repo moves to the `MokuTeam` organization (where MokuPilot and the other MokuHub products live) as `MokuTeam/MokuTab`. The GitHub account named `MokuHub` is someone else's personal account, not ours; a transfer sent there by mistake on 2026-10-20 was aborted. Roman is an admin of `MokuTeam`, keeps his commit history, and the old URL redirects as long as no new repo named `WorkatoMCP` is created under `Eithery-rc`.
 - **Workato is opt-in, switched in the extension popup**, one switch per machine; upgrades from WorkatoMCP keep it on (§3.4).
 - **npm:** `@mokuhub/mokutab-bridge` and `@mokuhub/mokutab-shared`. Nobody else can publish into the scope, other MokuHub people can get publish rights without sharing an account, and the scope is ready for the next MokuHub package. The command stays `mokutab-bridge`.
 - **License:** stays MIT. `LICENSE` names MokuHub LLC as the copyright holder; `LICENSE.upstream` keeps hangye's notice, which MIT requires while their code remains (about 44% of the lines before the prune); README and `package.json` keep Roman as the author.

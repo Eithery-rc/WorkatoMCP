@@ -4,14 +4,14 @@
 
 Report privately; do not open a public issue.
 
-- Preferred: [GitHub private security advisory](https://github.com/MokuHub/MokuTab/security/advisories/new)
+- Preferred: [GitHub private security advisory](https://github.com/MokuTeam/MokuTab/security/advisories/new)
 - Alternative: chikalenkor@gmail.com
 
 Please include the affected version (`mokutab-bridge --version` and the extension version), reproduction steps, and the impact you believe it has. Expect an initial response within a week. Please give a reasonable window to ship a fix before disclosing publicly.
 
 ## Supported versions
 
-Only the latest published `@mokuhub/mokutab-bridge` and `@mokuhub/mokutab-shared` releases, paired with the extension from the matching [GitHub release](https://github.com/MokuHub/MokuTab/releases) (or one built from `master`), receive security fixes. The 1.x packages get no further releases. Check a downloaded extension zip with `gh attestation verify <zip> --repo MokuHub/MokuTab` before loading it.
+Only the latest published `@mokuhub/mokutab-bridge` and `@mokuhub/mokutab-shared` releases, paired with the extension from the matching [GitHub release](https://github.com/MokuTeam/MokuTab/releases) (or one built from `master`), receive security fixes. The 1.x packages get no further releases. Check a downloaded extension zip with `gh attestation verify <zip> --repo MokuTeam/MokuTab` before loading it.
 
 ## What this software can do
 

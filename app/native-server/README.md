@@ -1,18 +1,18 @@
 # @mokuhub/mokutab-bridge
 
-The local bridge half of [MokuTab](https://github.com/MokuHub/MokuTab), published to npm as [`@mokuhub/mokutab-bridge`](https://www.npmjs.com/package/@mokuhub/mokutab-bridge). The command is `mokutab-bridge`.
+The local bridge half of [MokuTab](https://github.com/MokuTeam/MokuTab), published to npm as [`@mokuhub/mokutab-bridge`](https://www.npmjs.com/package/@mokuhub/mokutab-bridge). The command is `mokutab-bridge`.
 
 A Fastify server on `127.0.0.1:12306` that terminates MCP transports and forwards tool calls to the Chrome extension over native messaging. Chrome launches it on demand, so there is nothing to start by hand. It also keeps the module switch, the tab leases, the watches and the browser function registry.
 
 ## Install
 
-The bridge works together with the MokuTab Chrome extension. Download the extension zip from the [latest release](https://github.com/MokuHub/MokuTab/releases/latest) and load it unpacked, then install the bridge:
+The bridge works together with the MokuTab Chrome extension. Download the extension zip from the [latest release](https://github.com/MokuTeam/MokuTab/releases/latest) and load it unpacked, then install the bridge:
 
 ```bash
 npm install -g @mokuhub/mokutab-bridge
 ```
 
-Postinstall attempts user-level native-messaging registration for detected browsers. The full setup, including registering in an MCP client, is in the [quick start](https://github.com/MokuHub/MokuTab#quick-start). Upgrading from 1.x: remove the old package first, as the [upgrade steps](https://github.com/MokuHub/MokuTab#upgrade-from-workatomcp-1x) say.
+Postinstall attempts user-level native-messaging registration for detected browsers. The full setup, including registering in an MCP client, is in the [quick start](https://github.com/MokuTeam/MokuTab#quick-start). Upgrading from 1.x: remove the old package first, as the [upgrade steps](https://github.com/MokuTeam/MokuTab#upgrade-from-workatomcp-1x) say.
 
 ## CLI
 
@@ -80,4 +80,4 @@ src/
 
 `src/scripts/run_host.sh` must ship with LF line endings or the host fails to execute on macOS and Linux; `.gitattributes` enforces this.
 
-Architecture details: [docs/ARCHITECTURE.md](https://github.com/MokuHub/MokuTab/blob/master/docs/ARCHITECTURE.md).
+Architecture details: [docs/ARCHITECTURE.md](https://github.com/MokuTeam/MokuTab/blob/master/docs/ARCHITECTURE.md).

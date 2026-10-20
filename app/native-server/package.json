@@ -1,6 +1,6 @@
 {
   "name": "@mokuhub/mokutab-bridge",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "MokuTab native messaging host (Chrome ↔ MCP bridge)",
   "main": "dist/index.js",
   "bin": {
@@ -46,12 +46,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MokuHub/MokuTab.git",
+    "url": "git+https://github.com/MokuTeam/MokuTab.git",
     "directory": "app/native-server"
   },
-  "homepage": "https://github.com/MokuHub/MokuTab#readme",
+  "homepage": "https://github.com/MokuTeam/MokuTab#readme",
   "bugs": {
-    "url": "https://github.com/MokuHub/MokuTab/issues"
+    "url": "https://github.com/MokuTeam/MokuTab/issues"
   },
   "publishConfig": {
     "access": "public"

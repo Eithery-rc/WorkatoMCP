@@ -27,7 +27,7 @@ const COMMANDS = {
     }
   }
 }`,
-  pluginMarketplaceAdd: '/plugin marketplace add MokuHub/MokuTab',
+  pluginMarketplaceAdd: '/plugin marketplace add MokuTeam/MokuTab',
   pluginInstall: '/plugin install workato-recipes@workato-mcp',
 } as const;
 
@@ -320,7 +320,7 @@ function openUpgrade(): Promise<void> {
                 <code class="welcome-code">skills/workato-recipes/</code>
                 from
                 <a :href="LINKS.REPO" target="_blank" rel="noopener noreferrer" class="welcome-code"
-                  >github.com/MokuHub/MokuTab</a
+                  >github.com/MokuTeam/MokuTab</a
                 >
                 into their skill or rules directory.
               </p>

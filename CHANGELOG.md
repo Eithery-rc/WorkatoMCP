@@ -4,6 +4,14 @@ All notable changes to MokuTab, called WorkatoMCP before 2.0. Versions refer to 
 
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions. Dates are the commit dates of the corresponding release.
 
+## bridge 2.0.1 · shared 2.0.1 (2026-10-20)
+
+The first GitHub release of MokuTab. Everything that changed since WorkatoMCP 1.13.0 is in the 2.0.0 entry below; coming from 1.x, follow the [upgrade steps](https://github.com/MokuTeam/MokuTab#upgrade-from-workatomcp-1x).
+
+### Fixed
+
+- Every link to the repository (npm package metadata, popup, welcome page, README, plugin marketplace command) points at `github.com/MokuTeam/MokuTab`. 2.0.0 went to npm with links to a GitHub account that is not ours.
+
 ## bridge 2.0.0 · shared 2.0.0 (2026-10-20): `@mokuhub/mokutab-bridge` and `@mokuhub/mokutab-shared`, formerly `workatomcp-bridge` and `workatomcp-shared`
 
 WorkatoMCP is now **MokuTab**, a MokuHub product: browser tools for AI agents that drive the user's own logged-in Chrome. The code is split into a core and modules, and Workato is the first module, switched on and off in the extension popup. Upstream features this project never used are gone. Read **Breaking changes** and **Migration** before upgrading a 1.x machine.
@@ -34,7 +42,7 @@ WorkatoMCP is now **MokuTab**, a MokuHub product: browser tools for AI agents th
 
 ### Changed
 
-- **The name.** The MCP handshake says `MokuTab`, and so do the extension name, its action title, the popup and the page titles; the popup footer reads "browser tools for ai agents". The popup's MCP config copy and the welcome page register under the key `mokutab`, and the welcome page starts with the core tools and presents Workato as a module. The release zip is `mokutab-extension-X.zip`. The repository moves to `MokuHub/MokuTab` (GitHub redirects the old URL). The native host id `com.chromemcp.nativehost`, the extension ID and the plugin marketplace id (`workato-mcp`, which installed plugins are keyed by) stay. `LICENSE` names MokuHub LLC as the copyright holder.
+- **The name.** The MCP handshake says `MokuTab`, and so do the extension name, its action title, the popup and the page titles; the popup footer reads "browser tools for ai agents". The popup's MCP config copy and the welcome page register under the key `mokutab`, and the welcome page starts with the core tools and presents Workato as a module. The release zip is `mokutab-extension-X.zip`. The repository moves to `MokuTeam/MokuTab` (GitHub redirects the old URL). The native host id `com.chromemcp.nativehost`, the extension ID and the plugin marketplace id (`workato-mcp`, which installed plugins are keyed by) stay. `LICENSE` names MokuHub LLC as the copyright holder.
 - **Environment variables.** Every bridge override that was `WORKATOMCP_*` is now `MOKUTAB_*`: `MOKUTAB_DATA_DIR`, `MOKUTAB_FN_DIR`, `MOKUTAB_FN_STATE_DIR`, `MOKUTAB_BW_PATH`, `MOKUTAB_STRICT_TABS`, `MOKUTAB_UPDATE_STATE_DIR`, `MOKUTAB_OPERATIONS_DIR`. The `WORKATOMCP_*` name each one replaced is still read when the new one is unset or blank, until 3.0.
 - **Temp and log dirs.** Spilled results go to `<tmpdir>/mokutab-results`, the operations journal's fallback to `<tmpdir>/mokutab-operations`. The wrapper logs go to `%LOCALAPPDATA%\mokutab-bridge\logs` on Windows, `~/Library/Logs/mokutab-bridge` on macOS and `$XDG_STATE_HOME/mokutab-bridge/logs` (or `~/.local/state/mokutab-bridge/logs`) on Linux. The bridge state dir keeps its 1.x name (`%LOCALAPPDATA%\mcp-chrome-bridge`, `~/Library/Logs/mcp-chrome-bridge`, `$XDG_STATE_HOME/mcp-chrome-bridge`), so the update flag, the default profile, watches, the function run log and the operations journal stay where they are.
 - **Function registry identity.** `chrome_fn_save` commits as `mokutab <mokutab@localhost>`. The vault gate lets a function read the vault only when a person made its last commit, and both `mokutab` and the 1.x `workatomcp` identity count as the machine, permanently, by name or by email, as author or committer: a function 1.x saved does not suddenly look hand-committed. The page-side markers follow the name, `__mokutab_fn` (the function runner's result) and `__mokutabJobs` (the async job store of `chrome_javascript`); a job started in a page before the extension reload is lost, as it already was.

@@ -43,8 +43,8 @@ export const SUCCESS_MESSAGES = {
 
 // External Links
 export const LINKS = {
-  REPO: 'https://github.com/MokuHub/MokuTab',
-  TROUBLESHOOTING: 'https://github.com/MokuHub/MokuTab#manual-smoke-test',
+  REPO: 'https://github.com/MokuTeam/MokuTab',
+  TROUBLESHOOTING: 'https://github.com/MokuTeam/MokuTab#manual-smoke-test',
 } as const;
 
 // Network Filtering
