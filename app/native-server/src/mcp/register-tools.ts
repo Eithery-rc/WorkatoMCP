@@ -868,7 +868,11 @@ export function createToolRouter(options: ToolRouterOptions = {}): ToolRouter {
               { profile: checkedSession.profile, tabId: checkedSession.tabId },
               requestExtension,
             );
-            if (checked.refusal) return routeError(checked.refusal);
+            // Both answers concern the session that was read. A re-pin during
+            // the probe made it moot: the call goes on under the new pin.
+            if (checked.refusal && session === checkedSession) {
+              return routeError(checked.refusal);
+            }
             // A failed probe leaves the generation alone so the next call retries;
             // the call itself surfaces the real transport failure.
             if (checked.pin && session === checkedSession) {

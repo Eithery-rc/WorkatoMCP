@@ -214,6 +214,42 @@ describe('the workspace re-check after a profile reconnects', () => {
   });
 });
 
+describe('a re-check that a re-pin overtakes', () => {
+  test('its refusal is dropped: the call goes on under the new pin', async () => {
+    let releaseProbe: (reply: Reply) => void = () => {};
+    let holdProbe = false;
+    fakeExtension((name, args) => {
+      if (name !== 'workato_session_context') return undefined;
+      if (holdProbe && args.tabId === 42) {
+        return new Promise<Reply>((resolve) => {
+          releaseProbe = resolve;
+        });
+      }
+      return context(args.tabId);
+    });
+    const router = await pinnedRouter(42);
+
+    generation = 2;
+    holdProbe = true;
+    const pending = router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
+    await new Promise((resolve) => setImmediate(resolve));
+    await router.handleToolCall('workato_switch_profile', { profile: 'centium', tabId: 77 });
+    calls.length = 0;
+    // The old tab moved to another workspace; that is no longer this session's pin.
+    releaseProbe(context(42, { workspace_id: 9999 }));
+    const result = await pending;
+
+    expect(result.isError).toBeFalsy();
+    expect(text(result)).not.toMatch(/ContextChanged/);
+    expect(calls).toEqual([
+      {
+        name: 'workato_recipe_status',
+        args: { recipe_id: 1, tabId: 77, expected_context: PINNED },
+      },
+    ]);
+  });
+});
+
 describe('following a workato_switch_environment', () => {
   const switched = () =>
     ok(
@@ -231,6 +267,9 @@ describe('following a workato_switch_environment', () => {
     });
     const router = await pinnedRouter();
 
+    // A profile reconnected since the pin: the registry moved on. The switch
+    // itself is not re-checked, and its follow adopts this generation.
+    generation = 2;
     const result = await router.handleToolCall('workato_switch_environment', {
       environment: 'development',
     });
@@ -247,9 +286,9 @@ describe('following a workato_switch_environment', () => {
       environment: 'development',
     });
 
-    // The follow adopted the registry generation, so no probe, and the new
-    // workspace is what the next call is checked against.
-    generation = 1;
+    // The follow adopted generation 2, so the next call sends no probe (one
+    // would also see the old workspace and refuse), and the new workspace is
+    // what it is checked against.
     await router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
     expect(calls).toEqual([
       {
