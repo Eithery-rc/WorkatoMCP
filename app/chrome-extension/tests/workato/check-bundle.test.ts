@@ -1,5 +1,6 @@
 /**
- * @fileoverview Unit tests for the post-build in-page function guard.
+ * @fileoverview Unit tests for the post-build guards: in-page functions and
+ * tool schemas in the extension.
  *
  * The matcher is exercised against fixture strings rather than the real
  * bundle, so a failure here points at the matcher and not at the build. The
@@ -8,9 +9,14 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   KNOWN_SERVICE_WORKER_HELPERS,
   checkBundleFile,
+  checkNoToolSchemas,
+  countToolSchemas,
   findInPageWrappers,
 } from '../../scripts/check-bundle.mjs';
 
@@ -96,5 +102,45 @@ describe('checkBundleFile', () => {
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/could not read/);
     expect(result.message).toMatch(/pnpm build:extension/);
+  });
+});
+
+/** A tool schema as the bundler prints it. */
+const SCHEMA_SOURCE = `var WORKATO_MODULE = { id: "workato", tools: [{
+  name: "workato_pull_recipe",
+  inputSchema: {
+    type: "object",
+    properties: {}
+  }
+}] };`;
+
+describe('countToolSchemas', () => {
+  it('counts tool schemas in either quote style', () => {
+    expect(countToolSchemas(SCHEMA_SOURCE + "inputSchema:{type:'object'}")).toBe(2);
+  });
+
+  it('ignores a variable that is only called inputSchema', () => {
+    const source = 'function buildApplyOps(step, inputSchema) { return { schema: inputSchema }; }';
+    expect(countToolSchemas(source)).toBe(0);
+  });
+});
+
+describe('checkNoToolSchemas', () => {
+  it('names each built file that carries schemas, including nested chunks', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'check-bundle-'));
+    try {
+      mkdirSync(path.join(dir, 'chunks'));
+      writeFileSync(path.join(dir, 'background.js'), 'var x = 1;');
+      writeFileSync(path.join(dir, 'chunks', 'popup-abc.js'), SCHEMA_SOURCE);
+      writeFileSync(path.join(dir, 'chunks', 'popup-abc.css'), SCHEMA_SOURCE);
+      const result = checkNoToolSchemas(dir);
+      expect(result.ok).toBe(false);
+      expect(result.offenders).toEqual([`${path.join('chunks', 'popup-abc.js')} (1)`]);
+
+      writeFileSync(path.join(dir, 'chunks', 'popup-abc.js'), 'var y = 2;');
+      expect(checkNoToolSchemas(dir).ok).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

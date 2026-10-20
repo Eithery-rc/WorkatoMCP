@@ -26,3 +26,9 @@ export interface BundleCheckResult {
 }
 
 export declare function checkBundleFile(bundlePath?: string): BundleCheckResult;
+
+/** MCP tool schemas (`inputSchema: { type: "object"`) found in built source. */
+export declare function countToolSchemas(source: string): number;
+
+/** Every built .js file under outputDir that carries tool schemas. */
+export declare function checkNoToolSchemas(outputDir?: string): BundleCheckResult;

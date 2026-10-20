@@ -18,11 +18,15 @@
  * a page: `evaluateInPage` (CDP Runtime.evaluate, which takes a source STRING).
  * It is allowlisted by name.
  *
+ * It also fails a build that carries MCP tool schemas anywhere in the
+ * extension (countToolSchemas): they belong to the bridge and cost about 300 KB
+ * per bundle that picks them up.
+ *
  * Run: `pnpm --filter workatomcp-extension check:bundle` (also chained after
  * `wxt build`).
  */
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 // Imported rather than taken off the global, so the extension's browser-globals
 // eslint config does not report `process` as undefined in this Node script.
@@ -120,14 +124,62 @@ export function checkBundleFile(bundlePath = DEFAULT_BUNDLE) {
   };
 }
 
+/**
+ * Count MCP tool schemas (`inputSchema: { type: "object"`) in built source.
+ * The schemas belong to the bridge; the extension needs tool names only. A
+ * top-level spread over the schemas in the shared package, or reading one
+ * property of an object that holds them, once put all 149 into both the
+ * service worker and the popup.
+ *
+ * @param {string} source Bundle text.
+ * @returns {number}
+ */
+export function countToolSchemas(source) {
+  return (source.match(/\binputSchema\s*:\s*\{\s*type\s*:\s*["']object["']/g) || []).length;
+}
+
+/**
+ * @param {string} outputDir The built extension (dist/chrome-mv3).
+ * @returns {{ ok: boolean, message: string, offenders: string[] }}
+ */
+export function checkNoToolSchemas(outputDir = path.dirname(DEFAULT_BUNDLE)) {
+  const offenders = [];
+  for (const entry of readdirSync(outputDir, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.js')) continue;
+    const file = path.join(entry.parentPath ?? entry.path, entry.name);
+    const count = countToolSchemas(readFileSync(file, 'utf8'));
+    if (count > 0) offenders.push(`${path.relative(outputDir, file)} (${count})`);
+  }
+  if (offenders.length === 0) {
+    return { ok: true, offenders, message: 'check:bundle: no tool schemas in the extension.' };
+  }
+  return {
+    ok: false,
+    offenders,
+    message:
+      `check:bundle FAILED: tool schemas in the built extension:\n` +
+      offenders.map((name) => `  ${name}`).join('\n') +
+      '\n\nThe extension needs tool names only. Import names (TOOL_NAMES, WORKATO_MODULE_ID) ' +
+      'rather than schemas or objects holding them, and keep top-level code in ' +
+      'packages/shared free of side effects.',
+  };
+}
+
 function main() {
   const bundlePath = process.argv[2] ? path.resolve(process.argv[2]) : DEFAULT_BUNDLE;
-  const result = checkBundleFile(bundlePath);
-  if (!result.ok) {
-    console.error(result.message);
-    process.exit(1);
+  let failed = false;
+  for (const result of [
+    checkBundleFile(bundlePath),
+    checkNoToolSchemas(path.dirname(bundlePath)),
+  ]) {
+    if (result.ok) {
+      console.log(result.message);
+    } else {
+      console.error(result.message);
+      failed = true;
+    }
   }
-  console.log(result.message);
+  if (failed) process.exit(1);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
