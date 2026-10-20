@@ -1,9 +1,14 @@
-import { afterEach, beforeEach, describe, expect, test } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { FnRegistry, SaveRefused, execGit } from './fn-registry';
 import type { FnDefinition } from './fn-definition';
+
+// These tests drive a real git repository (init, add, commit, log, show). Each
+// call spawns a process, and under the parallel suite on a busy machine a test
+// can take longer than jest's 5 s default.
+jest.setTimeout(30_000);
 
 function readDef(description = 'Read a case'): FnDefinition {
   return {

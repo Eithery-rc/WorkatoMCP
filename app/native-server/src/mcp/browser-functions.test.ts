@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -17,6 +17,11 @@ import { FnRunsLog } from './fn-runs-log';
 import type { FnVault } from './fn-vault';
 import type { FnDefinition } from './fn-definition';
 import type { FnDriver, TabInfo } from './fn-runner';
+
+// Every save here commits to a real git registry. Each git call spawns a
+// process, and under the parallel suite on a busy machine a test can take
+// longer than jest's 5 s default.
+jest.setTimeout(30_000);
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
