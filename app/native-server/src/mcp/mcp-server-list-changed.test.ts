@@ -6,7 +6,12 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { CORE_TOOL_SCHEMAS, TOOL_SCHEMAS } from 'workatomcp-shared';
-import { createMcpServer, liveMcpServerCount, wireToolListChanged } from './mcp-server';
+import {
+  createMcpServer,
+  liveMcpServerCount,
+  notifyToolListChanged,
+  wireToolListChanged,
+} from './mcp-server';
 import { ModuleSwitch } from './module-switch';
 
 let dir: string;
@@ -37,6 +42,8 @@ async function openSession() {
     wake();
   });
   await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+  // The server registers on the client's initialized notification.
+  await new Promise((resolve) => setImmediate(resolve));
   const nextNotification = () =>
     new Promise<void>((resolve) => {
       if (seen.length > 0) return resolve();
@@ -83,5 +90,27 @@ describe('a module switch reaches every open MCP session', () => {
     expect(liveMcpServerCount()).toBe(before + 1);
     await client.close();
     expect(liveMcpServerCount()).toBe(before);
+  });
+
+  test('a server is registered only once its client has initialized', async () => {
+    const before = liveMcpServerCount();
+    const server = createMcpServer({ switch: switches });
+    expect(liveMcpServerCount()).toBe(before);
+    const [, serverSide] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverSide);
+    // Connected, but no client ever initialized: nothing to notify.
+    expect(liveMcpServerCount()).toBe(before);
+    await server.close();
+  });
+
+  test('the count is the sends that went through, not the sessions tried', async () => {
+    const first = await openSession();
+    const second = await openSession();
+    second.server.sendToolListChanged = () => Promise.reject(new Error('transport gone'));
+    const before = liveMcpServerCount();
+    expect(before).toBeGreaterThanOrEqual(2);
+    expect(await notifyToolListChanged()).toBe(before - 1);
+    await first.client.close();
+    await second.client.close();
   });
 });

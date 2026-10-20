@@ -44,7 +44,14 @@ export const createMcpServer = (options: McpServerOptions = {}): Server => {
   );
 
   setupTools(server, { modules, switch: switches });
-  liveServers.add(server);
+  // Registered once the client finished initializing: before that there is
+  // no session to tell, and a transport that never initializes (a failed
+  // handshake) would otherwise stay in the set for good.
+  const previousOnInitialized = server.oninitialized;
+  server.oninitialized = () => {
+    liveServers.add(server);
+    previousOnInitialized?.();
+  };
   const previousOnClose = server.onclose;
   server.onclose = () => {
     liveServers.delete(server);
@@ -59,21 +66,14 @@ export function liveMcpServerCount(): number {
 }
 
 /**
- * Tell every open session its tool list changed. Best effort: a session whose
- * client never opened the notification stream, or is mid-shutdown, is skipped.
- * Returns how many sessions were sent the notification.
+ * Tell every open session its tool list changed. Best effort: a session that
+ * is mid-shutdown, or whose transport refuses the send, is skipped. Resolves
+ * to how many sessions the notification was actually sent to.
  */
-export function notifyToolListChanged(): number {
-  let sent = 0;
-  for (const server of liveServers) {
-    try {
-      void server.sendToolListChanged().catch(() => {});
-      sent += 1;
-    } catch {
-      // Not connected (yet, or any more).
-    }
-  }
-  return sent;
+export async function notifyToolListChanged(): Promise<number> {
+  const sends = [...liveServers].map((server) => server.sendToolListChanged());
+  const settled = await Promise.allSettled(sends);
+  return settled.filter((outcome) => outcome.status === 'fulfilled').length;
 }
 
 const wiredSwitches = new WeakSet<ModuleSwitch>();
@@ -83,6 +83,6 @@ export function wireToolListChanged(switches: ModuleSwitch = moduleSwitch): void
   if (wiredSwitches.has(switches)) return;
   wiredSwitches.add(switches);
   switches.onChange(() => {
-    notifyToolListChanged();
+    void notifyToolListChanged();
   });
 }

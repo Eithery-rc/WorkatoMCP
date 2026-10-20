@@ -3,20 +3,43 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { configFile, dataDir, DATA_DIR_ENV } from '../data-dir';
-import { ModuleSwitch } from './module-switch';
+import { DEFAULT_ENABLED, ModuleSwitch, type ModuleSwitchIo } from './module-switch';
 
 let dir: string;
 let file: string;
 let logs: string[];
 let switches: ModuleSwitch;
+/** Set to make the next reads fail the way a locked file does. */
+let failReads = 0;
+let stats = 0;
+
+const busy = () => Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
+
+/** Real file reads, with a switch to fail them and a stat counter. */
+const io: ModuleSwitchIo = {
+  readFile: (target) => {
+    if (failReads > 0) {
+      failReads -= 1;
+      throw busy();
+    }
+    return fs.readFileSync(target, 'utf8');
+  },
+  stat: (target) => {
+    stats += 1;
+    return fs.statSync(target);
+  },
+};
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'module-switch-'));
   file = path.join(dir, 'config.json');
   logs = [];
+  failReads = 0;
+  stats = 0;
   switches = new ModuleSwitch(
     () => file,
     (message) => logs.push(message),
+    { recheckMs: 0, io },
   );
 });
 
@@ -71,6 +94,44 @@ describe('reading the module switch', () => {
     expect(logs.join('\n')).toMatch(/modules\.workato is not true or false/);
   });
 
+  test('a read that fails for a moment (EBUSY) does not latch the stale state', () => {
+    writeConfig(JSON.stringify({ modules: { workato: false } }));
+    expect(switches.isEnabled('workato')).toBe(false);
+    writeConfig(JSON.stringify({ modules: { workato: true } }));
+    failReads = 1;
+    // The busy read keeps the old value...
+    expect(switches.isEnabled('workato')).toBe(false);
+    // ...and the next look reads the file, because the signature did not move.
+    expect(switches.isEnabled('workato')).toBe(true);
+    expect(logs).toEqual([]);
+  });
+
+  test('a malformed file is retried after it is fixed, not latched', () => {
+    writeConfig('{ broken');
+    expect(switches.isEnabled('workato')).toBe(DEFAULT_ENABLED);
+    writeConfig(JSON.stringify({ modules: { workato: false } }));
+    expect(switches.isEnabled('workato')).toBe(false);
+  });
+
+  test('the file is looked at no more often than recheckMs', () => {
+    let clock = 1000;
+    const throttled = new ModuleSwitch(
+      () => file,
+      () => {},
+      { recheckMs: 250, now: () => clock, io },
+    );
+    writeConfig(JSON.stringify({ modules: { workato: true } }));
+    expect(throttled.isEnabled('workato')).toBe(true);
+    stats = 0;
+    writeConfig(JSON.stringify({ modules: { workato: false } }));
+    clock += 100;
+    expect(throttled.isEnabled('workato')).toBe(true);
+    expect(stats).toBe(0);
+    clock += 200;
+    expect(throttled.isEnabled('workato')).toBe(false);
+    expect(stats).toBe(1);
+  });
+
   test('a hand edit is picked up on the next read and reported as a change', () => {
     const seen: Record<string, boolean>[] = [];
     switches.onChange((states) => seen.push(states));
@@ -123,6 +184,20 @@ describe('writing the module switch', () => {
     switches.set('workato', true);
     expect(fs.readFileSync(`${file}.malformed`, 'utf8')).toBe('{ broken');
     expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ modules: { workato: true } });
+  });
+
+  test('set over a file it cannot read fails and leaves the file alone', () => {
+    writeConfig(JSON.stringify({ keep: 'me', modules: { workato: true } }));
+    switches.isEnabled('workato');
+    failReads = 10;
+    expect(() => switches.set('workato', false)).toThrow(/could not read .*EBUSY.*nothing changed/);
+    failReads = 0;
+    expect(fs.existsSync(`${file}.malformed`)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({
+      keep: 'me',
+      modules: { workato: true },
+    });
+    expect(switches.isEnabled('workato')).toBe(true);
   });
 });
 
