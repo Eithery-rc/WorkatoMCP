@@ -1,16 +1,16 @@
 ---
 name: workato-recipes
-description: Use when authoring, editing, reviewing, or programmatically mutating Workato recipes or Workflow App (LCAP) pages — recipe code-tree JSON (triggers, foreach/if/repeat/try-catch, Variables-by-Workato, app actions), formula-mode expressions (Ruby allowlist, `_dp(...)` datapills), datapill references, Workflow App page JSON (widgets, layout rows, handlers, page variables, conditional visibility, app-function bindings), discovering an unfamiliar connector's adapter name, actions and field surface, or when calling the `workato_ui_save_recipe_code` / `workato_pull_recipe` / `workato_recipe_*` / `workato_apps_list` / `workato_adapter_meta` MCP tools.
+description: Use when authoring, editing, reviewing, or programmatically mutating Workato recipes or Workflow App (LCAP) pages: recipe code-tree JSON (triggers, foreach/if/repeat/try-catch, Variables-by-Workato, app actions), formula-mode expressions (Ruby allowlist, `_dp(...)` datapills), datapill references, Workflow App page JSON (widgets, layout rows, handlers, page variables, conditional visibility, app-function bindings), discovering an unfamiliar connector's adapter name, actions and field surface, or when calling the `workato_ui_save_recipe_code` / `workato_pull_recipe` / `workato_recipe_*` / `workato_apps_list` / `workato_adapter_meta` MCP tools.
 ---
 
 # Workato recipes
 
-Reference for building and editing Workato recipes through the WorkatoMCP tool surface. Covers two distinct domains:
+Reference for building and editing Workato recipes through the tools of MokuTab's Workato module. If the `workato_*` tools are missing, the module is switched off: it is turned on under **Modules** in the MokuTab extension popup. Covers two distinct domains:
 
-1. **Recipe code-tree JSON** — the shape of the saved recipe (triggers, control flow, Variables, app actions, schemas).
-2. **Formula-mode expressions** — Workato's Ruby allowlist for inline data transformations (`=_dp("step.x").upcase` and friends).
+1. **Recipe code-tree JSON**: the shape of the saved recipe (triggers, control flow, Variables, app actions, schemas).
+2. **Formula-mode expressions**: Workato's Ruby allowlist for inline data transformations (`=_dp("step.x").upcase` and friends).
 
-Load the file matching what you're working on. **Always read `code-tree.md` first** if you're touching recipe JSON — most agent mistakes come from misunderstanding step nesting (`else` inside `if.block`, `catch` inside `try.block`, `source` at foreach root not under `input`).
+Load the file matching what you're working on. **Always read `code-tree.md` first** if you're touching recipe JSON: most agent mistakes come from misunderstanding step nesting (`else` inside `if.block`, `catch` inside `try.block`, `source` at foreach root not under `input`).
 
 ## Index
 
@@ -20,7 +20,7 @@ Load the file matching what you're working on. **Always read `code-tree.md` firs
 | `discovering-connectors.md`   | Building a step for a connector this workspace has not used before: the connector catalogue and the technical adapter name, listing a connector's operations, reading an operation's real field surface (static `options` vs dynamic `pick_list`, `default`, nested `properties`, `toggle_field`), generating the step's `extended_input_schema` / `extended_output_schema` with `workato_step_schema`, probing that a connection actually works, what `connection_required` means for the recipe `config`, and finding live examples of a step. Read it before guessing a `provider`, an action name or a schema. |
 | `platform-endpoints.md`       | Calling a Workato web endpoint that has no tool, or checking what an endpoint really does before trusting a tool's summary: jobs search and retention, the dependency graph behind caller discovery, `state.json` (the only start-failure diagnostic), `test.json`, connection health, Event Streams topics, and the routes that are 404. Live-verified 2026-09-07. Read it before reaching for `workato_api_request`.                                                                                                                                                                                             |
 | `workflow-apps.md`            | Building or editing a Workato Workflow App (LCAP) page: page API and CSRF, `layout` row semantics and the geometry trap, widget catalogue, `handlers` (click / change / pageLoad), page variables, the three `_dp` dialects, the full conditional-`visible` opcode table, app-function bindings, and how to stop a table re-firing on every keystroke.                                                                                                                                                                                                                                                             |
-| `formula-mode.md`             | **Always read** before constructing or reviewing any formula — text-vs-formula mode, datapill syntax, allowlist behavior, common patterns, gotchas.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `formula-mode.md`             | **Always read** before constructing or reviewing any formula: text-vs-formula mode, datapill syntax, allowlist behavior, common patterns, gotchas.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `formula-reference.md`        | Compact index of all 169 allowlisted functions and operators, mapping each name to its category file. Use it to verify a method is allowlisted or to find where it is documented.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `operators-and-comparison.md` | Arithmetic (+, -, \*, /, %, \*\*), comparison (==, !=, <, <=, >, >=), range (.member?), logical (&&, \|\|, !), ternary and safe-navigation operators.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `string-formulas.md`          | Formula transforms on a string datapill: trimming, casing, regex, parsing, currencies, country/state codes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -31,7 +31,7 @@ Load the file matching what you're working on. **Always read `code-tree.md` firs
 | `lookup-formulas.md`          | Query data sources from inside a formula: `data_table_lookup` (Data Tables), `lookup` (Lookup Tables), `lookup_table` (inline hash). All case-sensitive AND type-sensitive; return `nil` on miss.                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `other-formulas.md`           | Field-control values (`null`/`clear`/`skip`), `uuid`, hashing (`sha1`/`encode_sha256`/`md5_hexdigest`/`hmac_*`), encryption (`encrypt`/`decrypt`), encoding (`encode_base64`/`encode_url`/`encode_hex` + decode variants), JWT (`workato.jwt_encode`/`jwt_decode`), YAML (`workato.parse_yaml`/`render_yaml`), and safe-nav hash chains.                                                                                                                                                                                                                                                                           |
 
-## Critical rules — recipes
+## Critical rules: recipes
 
 These apply when writing or mutating recipe JSON (see `code-tree.md` for full detail):
 
@@ -39,18 +39,18 @@ These apply when writing or mutating recipe JSON (see `code-tree.md` for full de
 2. **`as`**: always MINT `/^[0-9a-f]{8}$/`, lowercase hex only. Workato does accept some hand-written anchors (`tjcall01` was observed working), so `workato_recipe_validate` reports a non-hex `as` on an existing step as a warning rather than an error and the tools leave it alone. But a non-hex anchor has been seen to break datapill resolution (`"declare1"` used as a `foreach` source fails with `Unknown data field`), so never write one yourself.
 3. **`source` on foreach**: at the node root, NOT inside `input`. Always a `#{_dp(...)}` formula referencing a list pill.
 4. **`number`**: globally sequential across the entire tree, including nested blocks. Trigger is `0`. Renumber everything after the insertion point.
-5. **Extended schemas**: `extended_input_schema` is REQUIRED for structured `input` fields (arrays, nested objects) or Workato silently drops them on save. `extended_output_schema` is REQUIRED whenever a downstream datapill references the step's output. `workato_ui_save_recipe_code` reads the tree back and fails with `save_status:"persisted_incomplete"` when a strip happens — that error names the fields whose schema is missing.
-6. **`keyword:"repeat"`**, not `"repeat_while"` — the `while_condition` is the first child of the repeat's `block`.
+5. **Extended schemas**: `extended_input_schema` is REQUIRED for structured `input` fields (arrays, nested objects) or Workato silently drops them on save. `extended_output_schema` is REQUIRED whenever a downstream datapill references the step's output. `workato_ui_save_recipe_code` reads the tree back and fails with `save_status:"persisted_incomplete"` when a strip happens; that error names the fields whose schema is missing.
+6. **`keyword:"repeat"`**, not `"repeat_while"`: the `while_condition` is the first child of the repeat's `block`.
 7. **`return_result`**: `keyword:"action"` (not its own keyword), `name:"return_result"`, `provider:"workato_recipe_function"`.
-8. **Datapill JSON must be compact**: Workato matches `#{_dp('<json>')}` byte-for-byte, so `json.dumps` spacing (`", "` / `": "`) makes the pill unrecognizable — it saves fine and resolves to an empty value. Serialize with no separator spaces (`json.dumps(pill, separators=(",", ":"))`).
+8. **Datapill JSON must be compact**: Workato matches `#{_dp('<json>')}` byte-for-byte, so `json.dumps` spacing (`", "` / `": "`) makes the pill unrecognizable: it saves fine and resolves to an empty value. Serialize with no separator spaces (`json.dumps(pill, separators=(",", ":"))`).
 
-## Critical rules — connector discovery
+## Critical rules: connector discovery
 
 These apply before writing a step for a connector you have no example of (see `discovering-connectors.md`):
 
 1. **`step.provider` is a technical name, never a title.** A custom connector's is generated and unguessable (`netsuite_rest_connector_5105163_1745592003`). Resolve it with `workato_apps_list`, not by transforming the app's display name.
 2. **Workato's own connectors are named nothing like they are called.** HTTP is `rest`, Workato Event Streams is `workato_pub_sub`, Scheduler is `clock`, Python snippets is `py_eval`, Workflow apps is `workato_workflow_task`. Guessing from the display name returns an empty meta document, which looks exactly like "this app does not exist". `workato_apps_list` resolves them by title and alias.
-3. **A static select's value is not its label.** Workato stores pick lists label-first, so `email_type` accepts `"html"` and not `"HTML"` — and takes the wrong string silently. Read `options[].value` from `workato_adapter_meta`; a `pick_list` string instead means a DYNAMIC list whose values meta cannot know.
+3. **A static select's value is not its label.** Workato stores pick lists label-first, so `email_type` accepts `"html"` and not `"HTML"`, and takes the wrong string silently. Read `options[].value` from `workato_adapter_meta`; a `pick_list` string instead means a DYNAMIC list whose values meta cannot know.
 4. **No connection means stop and ask the user.** These tools cannot create one, deliberately: it means handing over the customer's credentials. If `connection_required` is true and `workato_apps_list` shows no `connection` entry for that adapter, or shows one whose `authorization_status` is not `success`, ask for it BEFORE writing the step: the step needs an `account_id` in `config` that does not exist yet. Name the app and the adapter in the request, and for a broken connection name it by id rather than asking for a new one. **On an existing recipe, `workato_recipe_connections` is the check**: it reads the recipe's own bindings and each bound connection and returns `{healthy, blocking, actions}`, with `actions` already phrased as what to ask for. Run it before stopping a chain you will have to restart, and whenever a start does not take.
 5. **`connection_required: false` means no `account_id`** in that provider's `config` entry, and no connection to look for. Read it off the adapter rather than trusting any list of system providers to be complete. `workato_recipe_connections` reports such a binding as `status: "not_required"` rather than as a hole, and reports a genuine gap as `missing`, so the two are distinguishable without re-deriving the rule. A binding it could not establish either way is `unknown`, a diagnostic gap, not proof the recipe is fine.
 6. **A `pick_list` STRING means the values live on the connection, not in meta.** Resolve them with `workato_pick_list`; a parameterised list needs `pick_list_params` sent EVALUATED, because the field shows them as formulas (the value appears wrapped in quotes) and the quoted form fails with a bad-URI error.
@@ -61,19 +61,19 @@ These apply before writing a step for a connector you have no example of (see `d
 11. **`authorization_status: "success"` is not proof a connection works.** Three such connections failed every call on 2026-09-08 (`HTTP status code 420`, `invalid_grant`). `workato_step_schema(..., input: {})` is the cheap liveness probe; a failure names the connection to re-authorize. Never use the editor's Refresh button as a probe: it saves the recipe.
 12. **A step found by `workato_recipe_step_search` is a template, not a value.** Its datapills point at that recipe's steps and resolve to empty until repointed.
 
-## Critical rules — formulas
+## Critical rules: formulas
 
 These apply when constructing or reviewing any formula-mode expression (see `formula-mode.md` for full detail):
 
-1. **Allowlist only.** If a method isn't in these files, it's blocked — including `eval`, `send`, `JSON.parse`, file/network IO. `formula-reference.md` is the complete allowlist — if a formula isn't listed there, it does not exist.
+1. **Allowlist only.** If a method isn't in these files, it's blocked, including `eval`, `send`, `JSON.parse`, file/network IO. `formula-reference.md` is the complete allowlist: if a formula isn't listed there, it does not exist.
 2. **No blocks.** `array.map { ... }`, `.select { ... }`, `.reduce { ... }` won't parse. Use `.pluck` / `.where` / `.format_map` / `.smart_join` instead. For per-row logic use a Repeat step in the recipe.
-3. **No `#{...}` interpolation in plain strings.** `"hi #{name}"` is rejected. Build with `+`, `.join`, `.format_map`. **Regex literals are an exception** — `#{...}` does work inside `/.../`, useful for dynamic patterns like `text.scan(/^.*#{_dp("id")}.*$/)`.
+3. **No `#{...}` interpolation in plain strings.** `"hi #{name}"` is rejected. Build with `+`, `.join`, `.format_map`. **Regex literals are an exception**: `#{...}` does work inside `/.../`, useful for dynamic patterns like `text.scan(/^.*#{_dp("id")}.*$/)`.
 4. **Safe-navigation `&.` is partially supported.** Documented for hash bracket chains (`hash["a"]&.[]("b")`); not documented for scalar methods (`value&.upcase`). Prefer `.dig(...)` for nested hashes and `.presence || default` / ternary for scalars.
 5. **Default `now`/`today` are US/Pacific**, not UTC. Add `.in_time_zone("UTC")` (or `.in_time_zone(nil)`) for portable timestamps.
 6. **Integer division truncates**: `4 / 7 == 0`. Cast with `.to_f` first if you want decimals.
 7. **`.to_i`/`.to_f` on non-numeric strings return `0`**, not an error. Validate with `.match?(/^\d+$/)` if you need failure detection.
 
-## Critical rules — Workflow App pages
+## Critical rules: Workflow App pages
 
 These apply when writing page JSON (see `workflow-apps.md` for full detail):
 
@@ -88,7 +88,7 @@ These apply when writing page JSON (see `workflow-apps.md` for full detail):
 
 ## Task to tool
 
-Pick the tool before picking the file. Every name below exists in `packages/shared/src/tools.ts`; `docs/TOOLS.md` in the repo carries the parameters.
+Pick the tool before picking the file. Every `workato_*` name below exists in `packages/shared/src/modules/workato/tool-names.ts` and every `chrome_*` name in `packages/shared/src/tools.ts`; `docs/TOOLS.md` in the repo carries the parameters.
 
 | Task                                           | Tool                                                                                   |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -110,7 +110,7 @@ Pick the tool before picking the file. Every name below exists in `packages/shar
 | Switch environment or client workspace         | `workato_switch_environment` (moves every Workato tab in that Chrome profile)          |
 | Deploy to Test or Production                   | `workato_deploy_plan`, then `workato_deploy_run`                                       |
 | A project's deployment history                 | `workato_deployments_list`                                                             |
-| Put a rebuilt extension and bridge live (dev)  | `workato_reload_extension` (`check_only: true` to see stale profiles)                  |
+| Put a rebuilt extension and bridge live (dev)  | `chrome_reload_extension` (`check_only: true` to see stale profiles)                   |
 
 Deploying a recipe to Test or Production:
 

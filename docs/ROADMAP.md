@@ -6,6 +6,14 @@ Most items come from real recipe-building sessions: the pattern that repeats oft
 
 ## Planned
 
+### 3.0: the 1.x names go
+
+2.0 keeps a 1.x machine working while it moves over. 3.0 removes what only that needs: the old names of the four renamed core tools, the 1.x command aliases of the bridge, the fallback to the 1.x environment variable names, and the empty flow-list answer for bridges older than 2.0. The function registry keeps counting the 1.x commit identity as the machine for good: the vault gate depends on it.
+
+### A module filter per registration
+
+`/mcp?modules=...`, so the sessions of one project see fewer modules than the machine has switched on. The filter is the same code as the popup switch; it waits for a project that needs it.
+
 ### `workato_recipe_refresh_schema`: delivered as `workato_step_schema`
 
 Shipped in the unreleased changes of 2026-09-08 under the name `workato_step_schema`, because the tool turned out to be about writing a NEW step's schemas at least as much as refreshing an old one. It wraps `POST /connections/<id or adapter slug>/extended_schema.json`, returns `input_schema` / `output_schema`, and `apply_to: {recipe_id, step}` writes both into a step in one version. The earlier "returned empty for `execute_suiteql`" worry was a driver problem, not an endpoint one: the endpoint returns two empty arrays whenever an input field flagged `extends_schema` is unset, and the tool now names the missing drivers. Verified across a connectionless adapter, the clock trigger, a standard connector through a connection and a custom SDK connector. Still open: a "refresh every step of this recipe" convenience that walks the tree and calls it per step, the way the editor's Refresh button does (minus the save that button performs).
@@ -25,7 +33,7 @@ Each of these is a gap a shipped package named for itself rather than hid.
 | Item                                               | Why it matters                                                                                                                                                                                                                                                                                                                                         |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | A continuation cursor for `workato_recipe_callers` | A workspace-wide scan can list up to `max_recipes` candidates and read each one's code sequentially. When the time budget runs out the response says so (`completeness: partial`, with the unread count), but there is no cursor to resume from, so the next attempt starts over                                                                       |
-| Auto-file cleanup                                  | Files written by `auto_file` accumulate under `<tmpdir>/workatomcp-results/session-<pid>-<stamp>/` for the life of the machine's temp directory. No TTL, no size cap                                                                                                                                                                                   |
+| Auto-file cleanup                                  | Files written by `auto_file` accumulate under `<tmpdir>/mokutab-results/session-<pid>-<stamp>/` for the life of the machine's temp directory. No TTL, no size cap                                                                                                                                                                                      |
 | `windowId` coverage                                | `findWorkatoTab` takes a `windowId` now, but `resolveTabId` still falls THROUGH to global discovery when the named window holds no Workato tab, and several tools (`workato_test_recipe` among them) expose no `windowId` at all. Unifying the two would change behaviour for every `workato_ui`, lookup and data-table tool, so it needs its own pass |
 | A transitive write gate for `workato_test_recipe`  | The gate reads only the recipe under test. A connectionless recipe whose step calls a callee that does touch Salesforce runs without `allow_writes`. The callee index from `workato_recipe_callers` is the natural input                                                                                                                               |
 | Job `title` matching                               | `match` on the `title` field is implemented and unit-tested but was never validated live: the probe found no job anywhere in the workspace with a non-empty title, and whether the server `query` matches a title is likewise unverified                                                                                                               |
@@ -39,7 +47,7 @@ Each of these is a gap a shipped package named for itself rather than hid.
 
 All of them are small, local fixes. Once they are done, the extension typecheck can gate CI like the bridge and shared ones.
 
-**CI now runs both test suites.** The extension vitest suite and the bridge jest suite gate the build after Lint, alongside the typecheck of `workatomcp-shared` and `workatomcp-bridge`. The extension typecheck is still reported without failing the run. Bridge coverage thresholds are explicitly non-gating: a red test should fail the build, a percentage should not.
+**CI now runs both test suites.** The extension vitest suite and the bridge jest suite gate the build after Lint, alongside the typecheck of `@mokuhub/mokutab-shared` and `@mokuhub/mokutab-bridge`. The extension typecheck is still reported without failing the run. Bridge coverage thresholds are explicitly non-gating: a red test should fail the build, a percentage should not.
 
 ## Considered and rejected
 
@@ -66,7 +74,7 @@ Some things are better left as code the agent writes, not tools:
 | Nested-path Python round-trips        | `workato_recipe_set_input_path` / `delete_input_path` / `set_py_eval_code`                                                                                                                                                                                                                                                                                                                        |
 | "Active tab isn't Workato" failures   | Unified tab resolution: explicit `tabId`, pinned session tab, or any Workato app tab, with the pinned workspace verified before every write                                                                                                                                                                                                                                                       |
 
-Stub files for the superseded tools remain in the source tree as historical reference for the endpoint shapes.
+The stub files for the superseded tools are gone from the source tree; their notes on the endpoint shapes stay in [`docs/design/plans/`](design/plans/).
 
 ## Design notes
 

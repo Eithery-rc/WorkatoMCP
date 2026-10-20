@@ -4,9 +4,9 @@ Reference doc mined from three production recipes:
 
 - **62529313** (csv compare flow, 1.4 MB)
 - **68617131** (Debug Gemini)
-- **72652236** (AOF — Asset / Install Base sync; Salesforce-triggered, full control-flow + Variables-by-Workato coverage)
+- **72652236** (AOF: Asset / Install Base sync; Salesforce-triggered, full control-flow + Variables-by-Workato coverage)
 
-All JSON below is **verbatim** from those recipes (large `extended_*_schema` arrays truncated). Two additional recipes (67195786, 64168560) were spot-checked — no new node types.
+All JSON below is **verbatim** from those recipes (large `extended_*_schema` arrays truncated). Two additional recipes (67195786, 64168560) were spot-checked: no new node types.
 
 ---
 
@@ -75,7 +75,7 @@ Setting only `input` saves cleanly and leaves the editor showing an empty picker
 
 ## Triggers
 
-### Schedule — `provider:"clock", name:"scheduled_event"`
+### Schedule: `provider:"clock", name:"scheduled_event"`
 
 ```json
 {
@@ -107,9 +107,9 @@ Required: `as`, `input.time_unit`, `input.trigger_every`. `time_unit` ∈ `minut
 
 The option list is a range, one entry per integer in the unit (minutes 1 to 60, hours 1 to 24, days 1 to 31), and the value the step already carries must be inside it. Evidence: recipe 82145419 versions 4 and 5 dropped the field, version 7 persisted it and the editor showed "Trigger every 60 minutes".
 
-You rarely have to write this by hand: the native mutation engine derives it (see [Extended schemas](#extended-schemas--not-safe-to-omit-silent-strip-rule)).
+You rarely have to write this by hand: the native mutation engine derives it (see [Extended schemas](#extended-schemas-not-safe-to-omit-silent-strip-rule)).
 
-### Recipe Function — `provider:"workato_recipe_function", name:"execute"`
+### Recipe Function: `provider:"workato_recipe_function", name:"execute"`
 
 ```json
 {
@@ -131,7 +131,7 @@ You rarely have to write this by hand: the native mutation engine derives it (se
 
 Gotcha: `parameters_schema_json` is a string containing JSON, not nested JSON.
 
-### Salesforce — `provider:"salesforce", name:"new_custom_object"` (single) / `"sobject_batch_created"` (batch)
+### Salesforce: `provider:"salesforce", name:"new_custom_object"` (single) / `"sobject_batch_created"` (batch)
 
 ```json
 {
@@ -168,7 +168,7 @@ For batch triggers, the datapill path starts with the plural array name and uses
 
 ## Control flow
 
-### Foreach — `keyword:"foreach"`
+### Foreach: `keyword:"foreach"`
 
 ```json
 {
@@ -211,7 +211,7 @@ Batch variant:
 
 **Critical**: `source` is at the **node root**, not under `input`. Workato's UI labels the field "Input list" which is misleading.
 
-### If / Elsif / Else — `keyword:"if" | "elsif" | "else"`
+### If / Elsif / Else: `keyword:"if" | "elsif" | "else"`
 
 `if`:
 
@@ -250,7 +250,7 @@ Batch variant:
 - `input.type` is always `"compound"`. `input.operand` joins conditions (`"and"`/`"or"`).
 - Each condition: `{ lhs, operand, rhs, uuid }`. `lhs`/`rhs` are literals or `#{_dp(...)}` (interpolated) / `=_dp(...)` (formula).
 - Observed operands: `equals_to`, `blank`, `greater_than`, `less_than`. Documented but TODO: `not_equals_to`, `contains`, `present`, `starts_with`, `ends_with`.
-- **`elsif`/`else` are NESTED CHILDREN of `if.block`** — they go INSIDE the if's own `block` array, at the END, after the if-branch steps. Verified by parent-search on AOF (recipe 72652236) on 2026-05-12: every if-with-else has its else as the last entry of `if.block`, never as a sibling.
+- **`elsif`/`else` are NESTED CHILDREN of `if.block`**: they go INSIDE the if's own `block` array, at the END, after the if-branch steps. Verified by parent-search on AOF (recipe 72652236) on 2026-05-12: every if-with-else has its else as the last entry of `if.block`, never as a sibling.
   ```
   if (cond):
     block:
@@ -259,7 +259,7 @@ Batch variant:
       - else: block: [<else-branch steps>]              ← nested INSIDE if.block
   ```
 
-### Repeat + while_condition — `keyword:"repeat"`
+### Repeat + while_condition: `keyword:"repeat"`
 
 ```json
 {
@@ -297,7 +297,7 @@ Batch variant:
 
 There is **no `repeat_while` keyword**. The loop is `keyword:"repeat"`; its first child is the `while_condition` predicate (no `block`, no `as`). Use `_dp(...,provider:"repeat",line:"<repeat as>",path:["index"])` for the 0-based counter and `["is_first"]` for first-iteration boolean.
 
-### Try / Catch — catch nests inside try.block
+### Try / Catch: catch nests inside try.block
 
 `catch` is the **LAST entry inside `try.block`**, not a sibling of `try`. Verified by parent-search on AOF (recipe 72652236) on 2026-05-12: `try.block` ends with `..., 'catch'` in every case.
 
@@ -327,7 +327,7 @@ There is **no `repeat_while` keyword**. The loop is `keyword:"repeat"`; its firs
 - **A `catch` needs no `extended_output_schema`.** Its output shape comes from the runtime, so `workato_recipe_validate` never raises `datapill_target_no_output_schema` on one, and nothing auto-derives a schema for it. Declaring one is still allowed (Workato accepts the names you declare) but it is not the fix for an unresolved catch field.
 - **A step inside the catch reading the catch's own output is not a forward reference.** `workato_recipe_validate`'s upstream check exempts it: the catch node is in scope for its own block.
 
-### Stop — `keyword:"stop"`
+### Stop: `keyword:"stop"`
 
 ```json
 {
@@ -351,7 +351,7 @@ With error:
 
 `stop_reason` is required when `stop_with_error="true"`; supports `#{_dp(...)}` interpolation. Omit otherwise.
 
-### Return result — `keyword:"action", name:"return_result", provider:"workato_recipe_function"`
+### Return result: `keyword:"action", name:"return_result", provider:"workato_recipe_function"`
 
 ```json
 {
@@ -364,17 +364,17 @@ With error:
 }
 ```
 
-`keyword:"action"` (not its own keyword!). With `input:{}` it returns nothing. Output schema for Recipe Functions is declared elsewhere — TODO, not observed.
+`keyword:"action"` (not its own keyword!). With `input:{}` it returns nothing. Output schema for Recipe Functions is declared elsewhere (TODO, not observed).
 
 ---
 
-## Variables by Workato — `provider:"workato_variable"`
+## Variables by Workato: `provider:"workato_variable"`
 
 **This is the missing piece for foreach-over-typed-list workflows.** The `source` of a foreach must be a **list datapill**, not a literal `=['a','b','c']`. To get one, declare a typed list with `declare_list` and (usually) populate via `insert_to_list` or inline `list_items`.
 
-### declare_list — `name:"declare_list"` (verified end-to-end 2026-05-12)
+### declare_list: `name:"declare_list"` (verified end-to-end 2026-05-12)
 
-Complete shape — pre-populated list, ready for foreach iteration:
+Complete shape: pre-populated list, ready for foreach iteration:
 
 ```json
 {
@@ -427,13 +427,13 @@ Complete shape — pre-populated list, ready for foreach iteration:
 }
 ```
 
-| Input                   | Required | Notes                                                                                                                                                               |
-| ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                  | yes      | Human label ("Items")                                                                                                                                               |
-| `list_item_schema_json` | yes      | **String-encoded JSON array** of field defs. Each: `{name, type, control_type, label, optional}`. Use `type:"string", control_type:"text"` for strings.             |
-| `list_items`            | optional | Inline pre-population as a **real JSON array** of objects matching `list_item_schema_json` field names. No `____source` wrapper — just `[{value:"a"},{value:"b"}]`. |
+| Input                   | Required | Notes                                                                                                                                                              |
+| ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`                  | yes      | Human label ("Items")                                                                                                                                              |
+| `list_item_schema_json` | yes      | **String-encoded JSON array** of field defs. Each: `{name, type, control_type, label, optional}`. Use `type:"string", control_type:"text"` for strings.            |
+| `list_items`            | optional | Inline pre-population as a **real JSON array** of objects matching `list_item_schema_json` field names. No `____source` wrapper: just `[{value:"a"},{value:"b"}]`. |
 
-**CRITICAL — silent strip risk:** Workato persists `input.list_items` ONLY if you also include `extended_input_schema` declaring a `list_items` array field. Without it, the save reports `code_errors:[]` but the items are SILENTLY DROPPED on readback.
+**CRITICAL, silent strip risk:** Workato persists `input.list_items` ONLY if you also include `extended_input_schema` declaring a `list_items` array field. Without it, the save reports `code_errors:[]` but the items are SILENTLY DROPPED on readback.
 
 **For foreach to source this list**, you MUST also include `extended_output_schema` with the same `list_items` array shape. Without it, foreach.source fails with `"Unknown data field 'List items' used in source"`.
 
@@ -447,9 +447,9 @@ Complete shape — pre-populated list, ready for foreach iteration:
 - `path` is `["list_items"]` (the literal field name from extended_output_schema).
 - Inside the foreach: `provider:"foreach", line:"<foreach.as>", path:["value"]` (or whatever list_item field name).
 
-`insert_to_list` (alternative to inline `list_items`): still uses the `"<declare_list.uuid>:<declare_list.as>"` composite for `input.name` — that's a separate lookup format, not the datapill format.
+`insert_to_list` (alternative to inline `list_items`): still uses the `"<declare_list.uuid>:<declare_list.as>"` composite for `input.name`: that's a separate lookup format, not the datapill format.
 
-### insert_to_list — `name:"insert_to_list"`
+### insert_to_list: `name:"insert_to_list"`
 
 ```json
 {
@@ -470,7 +470,7 @@ Complete shape — pre-populated list, ready for foreach iteration:
 
 `location` observed: `"end"`. `"start"`/numeric index TODO. `list_item` keys must match `list_item_schema_json` field names.
 
-### declare_variable — `name:"declare_variable"` (single typed variable)
+### declare_variable: `name:"declare_variable"` (single typed variable)
 
 ```json
 {
@@ -491,7 +491,7 @@ Complete shape — pre-populated list, ready for foreach iteration:
 
 Multiple variables in one step: add more keys to `data` and entries to `schema`.
 
-### update_variables — `name:"update_variables"`
+### update_variables: `name:"update_variables"`
 
 ```json
 {
@@ -512,7 +512,7 @@ Multiple variables in one step: add more keys to `data` and entries to `schema`.
 
 ## Actions (alphabetical)
 
-### Clock — `clock / wait_for_interval`
+### Clock: `clock / wait_for_interval`
 
 ```json
 { "input": { "interval": "10" } }
@@ -520,7 +520,7 @@ Multiple variables in one step: add more keys to `data` and entries to `schema`.
 
 `interval` is seconds (string integer or formula). Useful inside `repeat` loops for backoff.
 
-### CSV parser — `csv_parser / parse_csv`
+### CSV parser: `csv_parser / parse_csv`
 
 ```json
 {
@@ -530,7 +530,7 @@ Multiple variables in one step: add more keys to `data` and entries to `schema`.
 
 `column_value_by`: `"index"` (rows at `<as>/lines/column_N`) or `"header"` (named columns).
 
-### Email — `email / send_mail`
+### Email: `email / send_mail`
 
 ```json
 {
@@ -546,7 +546,7 @@ Multiple variables in one step: add more keys to `data` and entries to `schema`.
 
 `email_type`: `"html"` or `"plain"`. Single attachment supported.
 
-### Google Sheets — `google_sheets / add_row_v4_bulk`
+### Google Sheets: `google_sheets / add_row_v4_bulk`
 
 ```json
 {
@@ -564,7 +564,7 @@ Multiple variables in one step: add more keys to `data` and entries to `schema`.
 
 Bulk action: `rows.____source` is the iterable list pill; `col_<HeaderName>` references per-item values via `current_item`.
 
-### Logger — `logger / log_message`
+### Logger: `logger / log_message`
 
 ```json
 { "input": { "message": "...", "user_logs_enabled": "false" } }
@@ -572,7 +572,7 @@ Bulk action: `rows.____source` is the iterable list pill; `col_<HeaderName>` ref
 
 `message`: plain text or `#{_dp(...)}`. `user_logs_enabled:"true"` sends to Workato's customer log service.
 
-### NetSuite — `netsuite / execute_suiteql`
+### NetSuite: `netsuite / execute_suiteql`
 
 ```json
 {
@@ -587,7 +587,7 @@ Bulk action: `rows.____source` is the iterable list pill; `col_<HeaderName>` ref
 
 `query` is a Ruby-formula string (note the `=` prefix). `output_schema` is string-encoded; rows under `<as>/items`.
 
-### Python — `py_eval / invoke_custom_py_code`
+### Python: `py_eval / invoke_custom_py_code`
 
 ```json
 {
@@ -605,7 +605,7 @@ Bulk action: `rows.____source` is the iterable list pill; `col_<HeaderName>` ref
 
 Function signature `def main(input): ... return {...}`. Inputs in `input["<name>"]`; outputs declared in `code_output_schema_json` accessible at `<as>/output/<field>`.
 
-### Salesforce — `salesforce / search_sobjects_soql_v2` (read) & `update_bulk_job` (write)
+### Salesforce: `salesforce / search_sobjects_soql_v2` (read) & `update_bulk_job` (write)
 
 ```json
 {
@@ -619,7 +619,7 @@ Function signature `def main(input): ... return {...}`. Inputs in `input["<name>
 
 Bulk update: `input.object`, `input.csv_data.{csv,csv_columns,col_sep,skip_first_line}`, `input.records.<sf_field>` (CSV column index as string), `input.advanced.{wait_to_complete,csv_chunk_size}`.
 
-### Workato Files — `workato_files / store_file` and `get_file_contents`
+### Workato Files: `workato_files / store_file` and `get_file_contents`
 
 ```json
 {
@@ -634,7 +634,7 @@ Bulk update: `input.object`, `input.csv_data.{csv,csv_columns,col_sep,skip_first
 
 `get_file_contents`: only `input.file_path`. Output pill `content`.
 
-### Workato Pub-Sub — `workato_pub_sub / publish_to_topic_batch`
+### Workato Pub-Sub: `workato_pub_sub / publish_to_topic_batch`
 
 ```json
 {
@@ -653,7 +653,7 @@ Bulk update: `input.object`, `input.csv_data.{csv,csv_columns,col_sep,skip_first
 
 **A recipe step is the ONLY way to publish to a topic.** There is no publish API: `POST /web_api/pub_sub/topics/<id>/messages.json` is a 404 and the topics UI has no publish action (probed 2026-09-07), which is why no `workato_publish_message` tool exists. To put a message on a topic, build a `workato_pub_sub` / `publish_to_topic` (or `publish_to_topic_batch`) step with `input {topic_id, message}` plus the matching `extended_input_schema`, and run it with `workato_test_recipe`. `workato_call_action` cannot do it either: its endpoint needs a real connection id and rejects an adapter name. Topic CRUD and the message history endpoint are in `platform-endpoints.md`.
 
-### Workato Recipe Function — `workato_recipe_function / call_recipe`
+### Workato Recipe Function: `workato_recipe_function / call_recipe`
 
 ```json
 {
@@ -678,7 +678,7 @@ Bulk update: `input.object`, `input.csv_data.{csv,csv_columns,col_sep,skip_first
 
 `parameters` must match the target trigger's `parameters_schema_json`. Outputs available under `provider:"workato_recipe_function", line:"<as>", path:[...]`.
 
-**Silent-strip rule applies here too** — `input.parameters` is dropped on save unless you include the matching `extended_input_schema`:
+**Silent-strip rule applies here too**: `input.parameters` is dropped on save unless you include the matching `extended_input_schema`:
 
 ```json
 "extended_input_schema": [{
@@ -699,12 +699,12 @@ Each parameter in the target's `parameters_schema_json` becomes one entry in `pr
 
 ### Datapill formulas
 
-- **Interpolated string**: `"#{_dp('{\"pill_type\":\"output\",\"provider\":\"salesforce\",\"line\":\"147f5e51\",\"path\":[\"Id\"]}')}"` — embeds the value inline within a string field.
-- **Pure formula**: `"=_dp('{...}').is_true? ? 0 : 10"` — `=` prefix makes the whole field a Ruby expression.
+- **Interpolated string**: `"#{_dp('{\"pill_type\":\"output\",\"provider\":\"salesforce\",\"line\":\"147f5e51\",\"path\":[\"Id\"]}')}"`: embeds the value inline within a string field.
+- **Pure formula**: `"=_dp('{...}').is_true? ? 0 : 10"`: `=` prefix makes the whole field a Ruby expression.
 - **Path elements**: literal strings (`"Id"`, `"records"`) or annotated objects:
-  - `{"path_element_type":"current_item"}` — current loop item (inside foreach/bulk lists).
-  - `{"path_element_type":"size"}` — count of an array.
-- **Pill types**: `"output"` (step result), `"job_context"` (job/recipe metadata — paths like `["job_id"]`, `["recipe_name"]`, `["parameters","<name>"]`).
+  - `{"path_element_type":"current_item"}`: current loop item (inside foreach/bulk lists).
+  - `{"path_element_type":"size"}`: count of an array.
+- **Pill types**: `"output"` (step result), `"job_context"` (job/recipe metadata, with paths like `["job_id"]`, `["recipe_name"]`, `["parameters","<name>"]`).
 - **Provider sources**: app names (`"salesforce"`, `"netsuite"`, `"py_eval"`), control flow (`"foreach"`, `"repeat"`, `"catch"`), or `"workato_variable"`.
 
 ### Numbering
@@ -713,7 +713,7 @@ Each parameter in the target's `parameters_schema_json` becomes one entry in `pr
 
 ### `as` and UUID
 
-- `as` is **exactly 8 lowercase hex chars** (`/^[0-9a-f]{8}$/`) — e.g. `"7a8394a3"`, `"641f89e1"`. Required on every node that produces output. Used as the datapill `line`.
+- `as` is **exactly 8 lowercase hex chars** (`/^[0-9a-f]{8}$/`), e.g. `"7a8394a3"`, `"641f89e1"`. Required on every node that produces output. Used as the datapill `line`.
 - **A non-hex `as` is a real hazard, but not a universal rejection.** `"declare1"` (contains `l`, which is not hex) is treated as an invalid identifier and a `foreach.source` pointing at it fails with `"Unknown data field <Capitalized>"`. Other hand-written anchors do work: `tjcall01` was observed live on a running recipe. So `workato_recipe_validate` and the mutation engine report a non-hex `as` on an existing step as a WARNING rather than refusing the save, and leave the anchor alone. Always MINT proper hex yourself, `crypto.randomBytes(4).toString('hex')`.
 - **`uuid` is required on every node.** It is the full UUID v4. A tree with a node missing one is rejected outright with `code is invalid: line=0, uuid not present` (verified live), whatever the shape of the action, so the older "tolerated on simple action shapes" reading is wrong. Generate with `crypto.randomUUID()`. The native mutation engine mints one for every node it creates and refuses the save otherwise; a node that predates the rule and has none is reported as a warning rather than an error, so a legacy recipe stays editable.
 
@@ -721,7 +721,7 @@ Each parameter in the target's `parameters_schema_json` becomes one entry in `pr
 
 Each distinct `provider` used in the recipe gets one entry. Providers that need no connection omit `account_id`; connection-based providers include it. The mutation engine MERGES this array rather than rebuilding it, so an existing `account_id` and `skip_validation` always survive a write and only a provider new to the recipe is appended. A `remove_step` that leaves a provider unused drops its entry only when the entry carries no `account_id`; a bound entry is kept, because dropping a binding is not something a step deletion should decide. `workato_recipe_connections` reports a left-over entry as `status: "unused"` and `workato_recipe_validate` as `config_entry_unused`, neither of which blocks anything. The general test is `connection_required` from `workato_adapter_meta` (`config.required` in the raw meta): do not rely on a fixed list, which is how `email` gets missed: it is not a system provider by name but its config entry carries no `account_id` either. Verified live: `{"keyword":"application","name":"email","provider":"email","skip_validation":false}` alongside a salesforce entry that does have one. Connection-free by inspection: `logger`, `workato_recipe_function`, `workato_variable`, `workato_pub_sub`, `clock`, `csv_parser`, `py_eval`, `email`. See `discovering-connectors.md`.
 
-### Extended schemas — NOT safe to omit (silent-strip rule)
+### Extended schemas: NOT safe to omit (silent-strip rule)
 
 `extended_input_schema` and `extended_output_schema` are **NOT** universally safe to omit. The rule:
 
@@ -774,7 +774,7 @@ Two paths do NOT derive, because they drive the save tool directly rather than t
 
 ### Not observed (TODO)
 
-- `keyword:"handle_errors"` — never seen; error handling uses `try`/`catch` instead.
+- `keyword:"handle_errors"`: never seen; error handling uses `try`/`catch` instead.
 - Foreach `repeat_mode` values other than `"simple"` and `"batch"`.
 - Conditional operands beyond `equals_to`, `blank`, `greater_than`, `less_than`.
 - Recipe Function output schema declaration location.
@@ -783,13 +783,13 @@ Two paths do NOT derive, because they drive the save tool directly rather than t
 
 ## How to use this skill
 
-When authoring or mutating Workato recipes via the WorkatoMCP tools:
+When authoring or mutating Workato recipes via the tools of MokuTab's Workato module:
 
 1. **For each step** you want to add, find the matching schema above. Copy the verbatim sample. Customize ONLY the fields the row table marks as required + the inputs you actually need.
 
 2. **Compose into a tree** with proper sequential `number` values and a fresh `as`/`uuid` per output-producing node.
 
-3. **Save** via `workato_ui_save_recipe_code(recipe_id, code, config)` — `code` is the trigger object with nested `block`; `config` is the deduplicated `[{keyword:"application", name, provider, skip_validation:false, account_id?}]` array.
+3. **Save** via `workato_ui_save_recipe_code(recipe_id, code, config)`: `code` is the trigger object with nested `block`; `config` is the deduplicated `[{keyword:"application", name, provider, skip_validation:false, account_id?}]` array.
 
 4. **Validate**: check the response's `code_errors`. Empty `[]` = clean save. Otherwise the errors point to fields/blocks that need fixing.
 
@@ -797,9 +797,9 @@ Common mistakes:
 
 - Putting `source` inside `foreach.input` (it goes at root).
 - Inlining `=['a','b','c']` as foreach `source` instead of using a Variables `declare_list` + datapill reference.
-- Using `keyword:"repeat_while"` (there's no such thing — use `repeat` with a `while_condition` first child).
-- **Treating `else`/`elsif` as siblings of `if`** — they NEST inside `if.block` at the end. Same for `catch`: nests as the last entry inside `try.block`.
+- Using `keyword:"repeat_while"` (there's no such thing: use `repeat` with a `while_condition` first child).
+- **Treating `else`/`elsif` as siblings of `if`**: they NEST inside `if.block` at the end. Same for `catch`: nests as the last entry inside `try.block`.
 - **Trusting documented catch field names `error_message`/`error_type`.** Workato rejects those; `catch.<as>.message` is the one confirmed to resolve. A catch needs no `extended_output_schema` for it.
 - **Using a non-hex `as`** (e.g. `"caller00"`, `"declare1"`). Must be `/^[0-9a-f]{8}$/`.
-- **Omitting `extended_output_schema`** on a step whose output is referenced by a downstream datapill — the reference fails validation.
-- **Omitting `extended_input_schema`** when writing structured `input` fields (arrays, nested objects) — Workato silently drops them on save. Symptom: `code_errors:[]` but `pull_recipe` shows the data is gone.
+- **Omitting `extended_output_schema`** on a step whose output is referenced by a downstream datapill: the reference fails validation.
+- **Omitting `extended_input_schema`** when writing structured `input` fields (arrays, nested objects): Workato silently drops them on save. Symptom: `code_errors:[]` but `pull_recipe` shows the data is gone.
