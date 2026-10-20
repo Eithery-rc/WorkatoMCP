@@ -27,6 +27,8 @@ export interface ExtensionModule {
   /** Same id as the shared module descriptor and the bridge module. */
   id: string;
   title: string;
+  /** One line for the popup's Modules section; the module owns its text. */
+  description: string;
   executors: ModuleToolExecutor[];
   /**
    * Runs on the result of each of this module's tools before it goes back to

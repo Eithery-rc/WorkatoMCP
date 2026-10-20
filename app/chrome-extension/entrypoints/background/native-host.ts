@@ -17,28 +17,13 @@ import { runWatchProbe } from './watch-probe';
 import { applyBridgeModulesState } from './extension-module';
 import { EXTENSION_MODULES } from './modules';
 import { moduleStatesOf, readStoredModulesState } from '@/common/module-state';
+import { BridgeRequests } from './bridge-requests';
+import { createModulePopupHandlers } from './module-popup';
 
 const LOG_PREFIX = '[NativeHost]';
 
-/** How long the popup waits for the bridge to answer a module request. */
-const BRIDGE_REQUEST_TIMEOUT_MS = 5000;
-
-interface PendingBridgeRequest {
-  resolve: (value: any) => void;
-  reject: (reason: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-/** Requests this extension sent to the bridge (module switch), by request id. */
-const pendingBridgeRequests = new Map<string, PendingBridgeRequest>();
-
-function rejectPendingBridgeRequests(reason: string): void {
-  for (const [id, pending] of pendingBridgeRequests) {
-    clearTimeout(pending.timer);
-    pendingBridgeRequests.delete(id);
-    pending.reject(new Error(reason));
-  }
-}
+/** Requests this extension sent to the bridge (module switch). */
+const bridgeRequests = new BridgeRequests();
 
 let nativePort: chrome.runtime.Port | null = null;
 /**
@@ -403,42 +388,6 @@ async function ensureNativeConnected(trigger: string, portOverride?: unknown): P
 
 // ==================== Module Switch (bridge state) ====================
 
-/**
- * Ask the bridge something over this profile's WebSocket and wait for its
- * answer (`{responseToRequestId, payload: {status, data | error}}`).
- */
-function bridgeRequest(type: string, payload?: unknown): Promise<any> {
-  const ws = wsClient;
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    return Promise.reject(new Error('not connected to the bridge'));
-  }
-  const requestId = crypto.randomUUID();
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pendingBridgeRequests.delete(requestId);
-      reject(new Error('the bridge did not answer (a bridge older than the module switch?)'));
-    }, BRIDGE_REQUEST_TIMEOUT_MS);
-    pendingBridgeRequests.set(requestId, { resolve, reject, timer });
-    try {
-      ws.send(JSON.stringify({ type, requestId, payload }));
-    } catch (error) {
-      clearTimeout(timer);
-      pendingBridgeRequests.delete(requestId);
-      reject(error instanceof Error ? error : new Error(String(error)));
-    }
-  });
-}
-
-function settleBridgeRequest(message: any): boolean {
-  const pending = pendingBridgeRequests.get(message.responseToRequestId);
-  if (!pending) return false;
-  clearTimeout(pending.timer);
-  pendingBridgeRequests.delete(message.responseToRequestId);
-  if (message.payload?.status === 'success') pending.resolve(message.payload.data);
-  else pending.reject(new Error(message.payload?.error || 'the bridge refused'));
-  return true;
-}
-
 /** A modules_state push or answer: keep it, and tell an open popup. */
 async function onBridgeModulesState(payload: unknown): Promise<void> {
   const stored = await applyBridgeModulesState(payload);
@@ -449,52 +398,14 @@ async function onBridgeModulesState(payload: unknown): Promise<void> {
     });
 }
 
-/**
- * What the popup shows: every module compiled into the extension, with the
- * bridge's state. `bridge` says whether the switch can be changed right now.
- */
-async function modulesForPopup(
-  bridge: 'connected' | 'disconnected' | 'unsupported',
-  error?: string,
-) {
-  const states = moduleStatesOf(await readStoredModulesState());
-  return {
-    success: true,
-    bridge,
-    ...(error ? { error } : {}),
-    modules: EXTENSION_MODULES.map((module) => ({
-      id: module.id,
-      title: module.title,
-      enabled: states[module.id] ?? true,
-    })),
-  };
-}
-
-async function handleGetModules() {
-  if (!wsClient) return modulesForPopup('disconnected');
-  try {
-    await onBridgeModulesState(await bridgeRequest(NativeMessageType.MODULES_GET));
-    return modulesForPopup('connected');
-  } catch (error) {
-    return modulesForPopup('unsupported', error instanceof Error ? error.message : String(error));
-  }
-}
-
-async function handleSetModule(id: unknown, enabled: unknown) {
-  if (!wsClient) return { ...(await modulesForPopup('disconnected')), success: false };
-  try {
-    await onBridgeModulesState(await bridgeRequest(NativeMessageType.MODULES_SET, { id, enabled }));
-    return modulesForPopup('connected');
-  } catch (error) {
-    return {
-      ...(await modulesForPopup(
-        'connected',
-        error instanceof Error ? error.message : String(error),
-      )),
-      success: false,
-    };
-  }
-}
+/** get_modules / set_module from the popup, answered over the bridge socket. */
+const modulePopup = createModulePopupHandlers({
+  socket: () => wsClient,
+  requests: bridgeRequests,
+  applyState: onBridgeModulesState,
+  storedStates: async () => moduleStatesOf(await readStoredModulesState()),
+  modules: EXTENSION_MODULES,
+});
 
 // ==================== WebSocket Client Helpers ====================
 
@@ -557,7 +468,7 @@ async function connectWebSocket(port: number): Promise<boolean> {
 
         if (message.responseToRequestId) {
           // The bridge answering a request this extension sent (module switch).
-          settleBridgeRequest(message);
+          bridgeRequests.settle(message);
         } else if (message.type === NativeMessageType.MODULES_STATE) {
           await onBridgeModulesState(message.payload);
         } else if (message.type === NativeMessageType.CALL_TOOL && message.requestId) {
@@ -663,7 +574,7 @@ async function connectWebSocket(port: number): Promise<boolean> {
       console.warn(`${LOG_PREFIX} WebSocket connection closed`);
       wsClient = null;
       isWsConnecting = false;
-      rejectPendingBridgeRequests('the bridge connection closed');
+      bridgeRequests.rejectAll('the bridge connection closed');
 
       // If we didn't initiate a manual disconnect, handle reconnection
       if (!manualDisconnect && autoConnectEnabled) {
@@ -950,14 +861,16 @@ export const initNativeHostListener = () => {
 
     // Module switch: the popup reads and writes the bridge's state through here.
     if (message.type === BACKGROUND_MESSAGE_TYPES.GET_MODULES) {
-      handleGetModules()
+      modulePopup
+        .getModules()
         .then(sendResponse)
         .catch((e) => sendResponse({ success: false, error: String(e) }));
       return true;
     }
 
     if (message.type === BACKGROUND_MESSAGE_TYPES.SET_MODULE) {
-      handleSetModule(message.id, message.enabled)
+      modulePopup
+        .setModule(message.id, message.enabled)
         .then(sendResponse)
         .catch((e) => sendResponse({ success: false, error: String(e) }));
       return true;

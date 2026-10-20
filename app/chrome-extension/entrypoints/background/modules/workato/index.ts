@@ -27,9 +27,22 @@ const executors = Object.values({
     typeof (value as ModuleToolExecutor).execute === 'function',
 );
 
+const DESCRIPTION_KEY = 'moduleDescription_workato';
+const DESCRIPTION = 'Recipes, jobs, connections, tables and Workflow App pages in Workato.';
+
+/** The popup line: the locale's text when there is one, this module's own otherwise. */
+function description(): string {
+  try {
+    return chrome.i18n?.getMessage?.(DESCRIPTION_KEY) || DESCRIPTION;
+  } catch {
+    return DESCRIPTION;
+  }
+}
+
 export const workatoExtensionModule: ExtensionModule = {
   id: WORKATO_MODULE.id,
   title: WORKATO_MODULE.title,
+  description: description(),
   executors,
   // Say which tab/workspace the call actually ran in. Best effort: it never
   // turns a successful call into a failure (see maybeAppendContextBlock).

@@ -26,8 +26,6 @@ const fallbackMessages: Record<string, string> = {
   bookmarksBarLabel: 'Bookmarks Bar',
   configCopiedNotification: 'Configuration copied to clipboard',
   modulesSectionLabel: 'Modules',
-  moduleDescription_workato:
-    'Recipes, jobs, connections, tables and Workflow App pages in Workato.',
   modulesBridgeOffNote:
     'Connect to the bridge to change modules. The switch applies to every Chrome profile on this machine.',
   modulesBridgeOldNote: 'This bridge cannot switch modules. Update the bridge to change them.',

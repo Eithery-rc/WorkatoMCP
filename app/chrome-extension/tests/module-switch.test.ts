@@ -41,6 +41,9 @@ beforeEach(() => {
   storage.local.set = vi.fn(async (items: Record<string, unknown>) => {
     Object.assign(stored, items);
   });
+  storage.local.remove = vi.fn(async (keys: string | string[]) => {
+    for (const key of Array.isArray(keys) ? keys : [keys]) delete stored[key];
+  });
   storage.onChanged = {
     addListener: vi.fn((listener: ChangeListener) => listeners.push(listener)),
     removeListener: vi.fn((listener: ChangeListener) => {

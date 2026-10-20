@@ -27,6 +27,9 @@ export interface StoredModulesState {
 
 export type ModuleStates = Record<string, boolean>;
 
+/** A module the bridge never mentioned is on. Step 3 of the 2.0 plan flips this. */
+export const DEFAULT_ENABLED = true;
+
 /** The id -> on map of a stored (or pushed) state; anything malformed is skipped. */
 export function moduleStatesOf(raw: unknown): ModuleStates {
   const out: ModuleStates = {};
@@ -41,7 +44,7 @@ export function moduleStatesOf(raw: unknown): ModuleStates {
 }
 
 export function isModuleOn(states: ModuleStates, id: string): boolean {
-  return states[id] ?? true;
+  return states[id] ?? DEFAULT_ENABLED;
 }
 
 export async function readStoredModulesState(): Promise<StoredModulesState | null> {

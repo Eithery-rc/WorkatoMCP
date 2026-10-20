@@ -97,8 +97,8 @@
             <div v-for="module in modules" :key="module.id" class="module-row">
               <div class="module-text">
                 <p class="module-name">{{ module.title }}</p>
-                <p v-if="moduleDescription(module.id)" class="module-description">
-                  {{ moduleDescription(module.id) }}
+                <p v-if="module.description" class="module-description">
+                  {{ module.description }}
                 </p>
               </div>
               <button
@@ -194,6 +194,8 @@ const copyButtonText = ref(getMessage('copyConfigButton'));
 interface PopupModule {
   id: string;
   title: string;
+  /** Each module's own one-line description, sent by the background. */
+  description?: string;
   enabled: boolean;
 }
 type ModulesBridge = 'connected' | 'disconnected' | 'unsupported';
@@ -211,12 +213,6 @@ const modulesNote = computed(() => {
   if (modulesBridge.value === 'unsupported') return getMessage('modulesBridgeOldNote');
   return '';
 });
-
-const moduleDescription = (id: string): string => {
-  const key = `moduleDescription_${id}`;
-  const text = getMessage(key);
-  return text === key ? '' : text;
-};
 
 const applyModulesReply = (reply: any) => {
   if (Array.isArray(reply?.modules)) modules.value = reply.modules;
