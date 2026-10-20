@@ -189,6 +189,16 @@ describe('the data dir', () => {
     expect(outcome.check.message).toMatch(/both .* exist; the bridge uses \/home\/me\/\.mokutab/);
   });
 
+  test('both present: a copied function has to be committed by hand, with the command', () => {
+    const outcome = dataDirCheck(state({ currentExists: true, legacyExists: true }));
+    const functions = path.join('/home/me/.mokutab', 'functions');
+    expect(outcome.check.message).toMatch(/committed there by hand/);
+    expect(outcome.nextSteps).toHaveLength(3);
+    expect(outcome.nextSteps[1]).toContain(`git -C "${functions}" add <namespace>/<name>.yaml`);
+    expect(outcome.nextSteps[1]).toContain(`git -C "${functions}" commit -m`);
+    expect(outcome.nextSteps[2]).toBe('then delete /home/me/.workatomcp');
+  });
+
   test('not moved yet: warn, the next start moves it', () => {
     const outcome = dataDirCheck(state({ legacyExists: true }));
     expect(outcome.check.status).toBe('warn');

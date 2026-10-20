@@ -300,17 +300,28 @@ export function dataDirCheck(
     };
   }
   if (state.currentExists && state.legacyExists) {
+    const functions = path.join(state.current, 'functions');
+    const fix = [
+      `copy each function still needed from ${path.join(state.legacy, 'functions')} to the ` +
+        `same place under ${functions}`,
+      // A copy is not committed: a vault function then refuses to run
+      // (handCommitted), and chrome_fn_save refuses to save over it.
+      `commit it there yourself: git -C "${functions}" add <namespace>/<name>.yaml && ` +
+        `git -C "${functions}" commit -m "<name> v<version>: moved from ${state.legacy}"`,
+      `then delete ${state.legacy}`,
+    ];
     return {
       check: {
         ...base,
         status: 'warn',
         message:
           `both ${state.current} and ${state.legacy} exist; the bridge uses ${state.current} and ` +
-          `leaves ${state.legacy} alone. Copy over anything still needed from it (a function ` +
-          'committed by hand), then delete it.',
-        details,
+          `leaves ${state.legacy} alone. A function still needed from it has to be copied into ` +
+          `${functions} and committed there by hand (an uncommitted copy of a vault function ` +
+          'does not run); then delete the old dir.',
+        details: { ...details, fix },
       },
-      nextSteps: [],
+      nextSteps: fix,
     };
   }
   if (state.legacyExists) {
