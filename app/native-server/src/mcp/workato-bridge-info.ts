@@ -17,7 +17,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { TOOL_SCHEMAS } from 'workatomcp-shared';
+import { installedToolSchemas } from './catalogue';
 import { withOutFileToolSchemas, type AutoFileRules } from './workato-auto-file';
 
 export const BRIDGE_INFO_TOOL = 'workato_bridge_info';
@@ -151,11 +151,11 @@ export interface BuildBridgeInfoOptions {
 /**
  * The catalogue as listTools serves it, without the injected profile and lease
  * params. The router passes the tools of core plus the modules that are on, and
- * its combined auto-file rules; the defaults (every tool, core rules) are for
- * callers outside a router.
+ * its combined auto-file rules; the defaults (every installed tool, core rules)
+ * are for callers outside a router.
  */
 export function servedToolSchemas(
-  tools: Tool[] = TOOL_SCHEMAS as Tool[],
+  tools: Tool[] = installedToolSchemas(),
   rules?: AutoFileRules,
 ): Tool[] {
   return withOutFileToolSchemas(tools, rules);

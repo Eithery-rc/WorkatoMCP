@@ -13,16 +13,17 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { INSTALLED_MODULES } from '../modules';
 import { moduleSwitch } from './module-switch';
-import { listedToolSchemas, withProfileRoutingToolSchemas } from './register-tools';
+import { listedToolSchemas } from './catalogue';
+import { withProfileRoutingToolSchemas } from './register-tools';
 import { buildServerInstructions, SERVER_NAME, serverVersion } from './server-identity';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /** How often the stdio proxy looks at the module switch file for a change. */
 const MODULE_SWITCH_POLL_MS = 2000;
 
 const enabledModules = () =>
   INSTALLED_MODULES.filter((module) => moduleSwitch.isEnabled(module.id));
-import * as fs from 'fs';
-import * as path from 'path';
 
 let stdioMcpServer: Server | null = null;
 let mcpClient: Client | null = null;

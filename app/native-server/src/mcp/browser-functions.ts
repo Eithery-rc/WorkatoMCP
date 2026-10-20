@@ -19,7 +19,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { NativeMessageType, TOOL_NAMES, sanitizeAndLimitOutput } from 'workatomcp-shared';
+import { NativeMessageType, CORE_TOOL_NAMES, sanitizeAndLimitOutput } from 'workatomcp-shared';
 import {
   checkParams,
   isHelperName,
@@ -41,11 +41,11 @@ import {
   type StepsOutcome,
 } from './fn-runner';
 
-export const FN_LIST_TOOL = TOOL_NAMES.BROWSER.FN_LIST;
-export const FN_GET_TOOL = TOOL_NAMES.BROWSER.FN_GET;
-export const FN_RUN_TOOL = TOOL_NAMES.BROWSER.FN_RUN;
-export const FN_SAVE_TOOL = TOOL_NAMES.BROWSER.FN_SAVE;
-export const FN_RUNS_TOOL = TOOL_NAMES.BROWSER.FN_RUNS;
+export const FN_LIST_TOOL = CORE_TOOL_NAMES.BROWSER.FN_LIST;
+export const FN_GET_TOOL = CORE_TOOL_NAMES.BROWSER.FN_GET;
+export const FN_RUN_TOOL = CORE_TOOL_NAMES.BROWSER.FN_RUN;
+export const FN_SAVE_TOOL = CORE_TOOL_NAMES.BROWSER.FN_SAVE;
+export const FN_RUNS_TOOL = CORE_TOOL_NAMES.BROWSER.FN_RUNS;
 const FN_TOOLS = new Set<string>([
   FN_LIST_TOOL,
   FN_GET_TOOL,

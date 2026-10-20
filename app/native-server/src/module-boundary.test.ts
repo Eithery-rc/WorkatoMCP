@@ -79,6 +79,46 @@ function isInside(dir: string, target: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
+/**
+ * Exports of workatomcp-shared that carry module knowledge: the whole
+ * catalogue and the module list. Core gets its tool lists from
+ * mcp/catalogue.ts (core schemas plus the installed modules, through the
+ * registry) instead, so a module that is not installed cannot leak in.
+ */
+const AGGREGATE_EXPORT = /^(?:TOOL_SCHEMAS|TOOL_NAMES|MODULES|moduleOfTool|WORKATO_\w+)$/;
+
+const SHARED_IMPORT = /import\s+(type\s+)?(\{[^}]*\}|\*\s+as\s+\w+)\s+from\s+'workatomcp-shared'/g;
+
+/** Non-test files outside `modulesDir` that import an aggregate shared export. */
+export function aggregateImports(root: string, modulesDir: string): string[] {
+  const offenders: string[] = [];
+  for (const file of walk(root)) {
+    if (file === __filename || /\.test\.ts$/.test(file)) continue;
+    if (!path.relative(modulesDir, file).startsWith('..')) continue;
+    const source = fs.readFileSync(file, 'utf8');
+    const rel = path.relative(root, file).replace(/\\/g, '/');
+    for (const match of source.matchAll(SHARED_IMPORT)) {
+      if (match[2].startsWith('*')) {
+        offenders.push(`${rel}: * as (namespace import)`);
+        continue;
+      }
+      const names = match[2]
+        .slice(1, -1)
+        .split(',')
+        .map((part) =>
+          part
+            .trim()
+            .replace(/^type\s+/, '')
+            .split(/\s+as\s+/)[0]
+            .trim(),
+        )
+        .filter(Boolean);
+      for (const name of names) if (AGGREGATE_EXPORT.test(name)) offenders.push(`${rel}: ${name}`);
+    }
+  }
+  return offenders.sort();
+}
+
 const BRIDGE_SRC = __dirname;
 const SHARED_SRC = path.join(__dirname, '..', '..', '..', 'packages', 'shared', 'src');
 
@@ -96,6 +136,10 @@ describe('core never imports a module', () => {
     // register-tools reaches the installed modules through the index.
     const router = fs.readFileSync(path.join(BRIDGE_SRC, 'mcp', 'register-tools.ts'), 'utf8');
     expect(router).toMatch(/from '\.\.\/modules'/);
+  });
+
+  test('bridge core imports no aggregate catalogue or module list from the shared package', () => {
+    expect(aggregateImports(BRIDGE_SRC, path.join(BRIDGE_SRC, 'modules'))).toEqual([]);
   });
 });
 
@@ -119,6 +163,26 @@ describe('the checker itself', () => {
       'lazy.ts -> ./modules/alpha',
       'leak.ts -> ./modules/alpha/thing',
       'modules/beta/index.ts -> ../alpha',
+    ]);
+  });
+
+  test('flags aggregate shared imports in core, not core names or module files', () => {
+    const shared = fs.mkdtempSync(path.join(require('os').tmpdir(), 'boundary-shared-'));
+    const put = (rel: string, body: string) => {
+      const file = path.join(shared, rel);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, body);
+    };
+    put('ok.ts', "import { CORE_TOOL_NAMES, type ToolModule } from 'workatomcp-shared';\n");
+    put('all.ts', "import {\n  NativeMessageType,\n  TOOL_SCHEMAS,\n} from 'workatomcp-shared';\n");
+    put('alias.ts', "import { WORKATO_TOOL_NAMES as W } from 'workatomcp-shared';\n");
+    put('star.ts', "import * as shared from 'workatomcp-shared';\n");
+    put('modules/alpha/index.ts', "import { TOOL_NAMES } from 'workatomcp-shared';\n");
+    put('core.test.ts', "import { TOOL_SCHEMAS } from 'workatomcp-shared';\n");
+    expect(aggregateImports(shared, path.join(shared, 'modules'))).toEqual([
+      'alias.ts: WORKATO_TOOL_NAMES',
+      'all.ts: TOOL_SCHEMAS',
+      'star.ts: * as (namespace import)',
     ]);
   });
 });

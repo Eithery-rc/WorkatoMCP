@@ -76,9 +76,6 @@ export const CORE_READ_TOOLS = new Set<string>([
   // the agent inline, never as a summary of a file.
 ]);
 
-/** Core tools whose served schema gains the out_file / auto_file properties. */
-export const AUTO_FILE_SCHEMA_TOOLS = new Set<string>([...CORE_READ_TOOLS, SCREENSHOT_TOOL]);
-
 export const CORE_AUTO_FILE_RULES: AutoFileRules = {
   readTools: CORE_READ_TOOLS,
   advertised: new Set([SCREENSHOT_TOOL]),

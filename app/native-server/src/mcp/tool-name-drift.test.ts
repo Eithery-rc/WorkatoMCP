@@ -18,7 +18,7 @@ import { describe, expect, test } from '@jest/globals';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CORE_TOOL_NAMES, CORE_TOOL_SCHEMAS } from 'workatomcp-shared';
-import { CORE_READ_TOOLS, AUTO_FILE_SCHEMA_TOOLS, SCREENSHOT_TOOL } from './workato-auto-file';
+import { CORE_AUTO_FILE_RULES, CORE_READ_TOOLS, SCREENSHOT_TOOL } from './workato-auto-file';
 import { BRIDGE_INFO_TOOL } from './workato-bridge-info';
 import { RELOAD_EXTENSION_TOOL } from './workato-reload-extension';
 import { LEASE_TAB_TOOL, RELEASE_TAB_TOOL } from './tab-leases';
@@ -40,7 +40,7 @@ function knownCoreNames(): Set<string> {
 
 const NAME_SETS: Record<string, string[]> = {
   CORE_READ_TOOLS: [...CORE_READ_TOOLS],
-  AUTO_FILE_SCHEMA_TOOLS: [...AUTO_FILE_SCHEMA_TOOLS],
+  'CORE_AUTO_FILE_RULES.advertised': [...(CORE_AUTO_FILE_RULES.advertised ?? [])],
   singletons: [BRIDGE_INFO_TOOL, RELOAD_EXTENSION_TOOL, LEASE_TAB_TOOL, RELEASE_TAB_TOOL],
   screenshot: [SCREENSHOT_TOOL],
   'browser-functions': [FN_LIST_TOOL, FN_GET_TOOL, FN_RUN_TOOL, FN_SAVE_TOOL, FN_RUNS_TOOL],

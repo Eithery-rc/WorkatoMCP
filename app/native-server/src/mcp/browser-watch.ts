@@ -15,13 +15,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createHash, randomBytes } from 'crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { CORE_TOOL_NAMES } from 'workatomcp-shared';
 import { NATIVE_SERVER_PORT } from '../constant';
 
-export const WATCH_START_TOOL = TOOL_NAMES.BROWSER.WATCH_START;
-export const WATCH_STOP_TOOL = TOOL_NAMES.BROWSER.WATCH_STOP;
-export const WATCH_LIST_TOOL = TOOL_NAMES.BROWSER.WATCH_LIST;
-export const WATCH_EVENTS_TOOL = TOOL_NAMES.BROWSER.WATCH_EVENTS;
+export const WATCH_START_TOOL = CORE_TOOL_NAMES.BROWSER.WATCH_START;
+export const WATCH_STOP_TOOL = CORE_TOOL_NAMES.BROWSER.WATCH_STOP;
+export const WATCH_LIST_TOOL = CORE_TOOL_NAMES.BROWSER.WATCH_LIST;
+export const WATCH_EVENTS_TOOL = CORE_TOOL_NAMES.BROWSER.WATCH_EVENTS;
 export const WATCH_TOOLS = new Set<string>([
   WATCH_START_TOOL,
   WATCH_STOP_TOOL,

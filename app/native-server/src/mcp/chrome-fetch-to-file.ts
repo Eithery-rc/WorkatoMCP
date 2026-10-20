@@ -15,9 +15,9 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { CORE_TOOL_NAMES } from 'workatomcp-shared';
 
-export const FETCH_TO_FILE_TOOL = TOOL_NAMES.BROWSER.FETCH_TO_FILE;
+export const FETCH_TO_FILE_TOOL = CORE_TOOL_NAMES.BROWSER.FETCH_TO_FILE;
 
 const OUT_FILE_ARG = 'out_file';
 /** Extension-side signal that the bridge owns the reply (see fetch-to-file.ts). */

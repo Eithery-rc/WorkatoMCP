@@ -12,7 +12,8 @@
 
 import { randomBytes } from 'crypto';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { CORE_TOOL_NAMES, TOOL_SCHEMAS } from 'workatomcp-shared';
+import { CORE_TOOL_NAMES } from 'workatomcp-shared';
+import { installedToolSchemas } from './catalogue';
 
 export const LEASE_TAB_TOOL = CORE_TOOL_NAMES.BROWSER.LEASE_TAB;
 export const RELEASE_TAB_TOOL = CORE_TOOL_NAMES.BROWSER.RELEASE_TAB;
@@ -53,19 +54,27 @@ export interface TabLease {
   adopted?: boolean;
 }
 
-const schemaProperties = new Map<string, Record<string, unknown>>();
-for (const tool of TOOL_SCHEMAS) {
-  const props = ((tool.inputSchema as any)?.properties ?? {}) as Record<string, unknown>;
-  schemaProperties.set(tool.name, props);
+/** Input properties of every installed tool (core and modules, on or off), built once. */
+let schemaProperties: Map<string, Record<string, unknown>> | null = null;
+
+function propertiesOf(name: string): Record<string, unknown> {
+  if (!schemaProperties) {
+    schemaProperties = new Map();
+    for (const tool of installedToolSchemas()) {
+      const props = ((tool.inputSchema as any)?.properties ?? {}) as Record<string, unknown>;
+      schemaProperties.set(tool.name, props);
+    }
+  }
+  return schemaProperties.get(name) ?? {};
 }
 
 /** The tool's schema has a tabId, so it targets a tab. */
 export function toolTargetsTab(name: string): boolean {
-  return Object.prototype.hasOwnProperty.call(schemaProperties.get(name) ?? {}, 'tabId');
+  return Object.prototype.hasOwnProperty.call(propertiesOf(name), 'tabId');
 }
 
 function toolHasBackground(name: string): boolean {
-  return Object.prototype.hasOwnProperty.call(schemaProperties.get(name) ?? {}, 'background');
+  return Object.prototype.hasOwnProperty.call(propertiesOf(name), 'background');
 }
 
 /** Add an optional `lease` to every tool that takes a tabId. */
