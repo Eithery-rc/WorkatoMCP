@@ -173,9 +173,15 @@ export class ModuleSwitch implements ModuleSwitchView {
     modules[id] = enabled;
     doc.modules = modules;
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n');
-    fs.renameSync(tmp, file);
+    // Per process: popups of several profiles can switch at once.
+    const tmp = `${file}.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n');
+      fs.renameSync(tmp, file);
+    } catch (err) {
+      fs.rmSync(tmp, { force: true });
+      throw err;
+    }
     this.states = { ...this.states, [id]: enabled };
     const written = this.statFile(file);
     this.signature = written.kind === 'file' ? written.signature : undefined;

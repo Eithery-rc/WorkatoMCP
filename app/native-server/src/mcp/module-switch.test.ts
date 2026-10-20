@@ -223,6 +223,18 @@ describe('writing the module switch', () => {
     ).toBe(true);
   });
 
+  test("set writes through a temp file of its own and leaves another process's alone", () => {
+    // Another bridge process mid-write.
+    const theirs = `${file}.99999.tmp`;
+    fs.writeFileSync(theirs, '{"half":');
+    switches.set('workato', true);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ modules: { workato: true } });
+    expect(fs.readFileSync(theirs, 'utf8')).toBe('{"half":');
+    expect(fs.readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([
+      'config.json.99999.tmp',
+    ]);
+  });
+
   test('set creates the data dir and file when they are missing', () => {
     const nested = path.join(dir, 'a', 'b', 'config.json');
     const fresh = new ModuleSwitch(
