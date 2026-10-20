@@ -126,7 +126,7 @@ export interface BridgeModule {
   aliases?: Readonly<Record<string, string>>;
   /**
    * 1.x served this module's tools with no switch, so a machine upgraded from
-   * 1.x keeps it on (the data dir move writes it into config.json). A module
+   * 1.x keeps it on (its first 2.x start records that in config.json). A module
    * added later leaves this unset and starts off everywhere.
    */
   onAfterUpgrade?: boolean;

@@ -1,7 +1,8 @@
 /**
  * The module switch default across the first 2.x start (spec 3.4): a fresh
- * install starts with Workato off, a machine upgraded from 1.x keeps it on,
- * and an explicit setting in config.json always wins.
+ * install starts with Workato off, a machine that ran 1.x keeps it on, the
+ * decision is recorded once, and an explicit setting in config.json always
+ * wins.
  */
 import { afterEach, beforeEach, describe, expect, test } from '@jest/globals';
 import * as fs from 'fs';
@@ -12,6 +13,7 @@ import { ModuleSwitch } from './mcp/module-switch';
 import { migrateOnStart, type StartupMigrationOptions } from './startup-migration';
 
 let home: string;
+/** The 1.x (and 2.x) bridge state dir: %LOCALAPPDATA%\mcp-chrome-bridge in real life. */
 let stateDir: string;
 let current: string;
 let legacy: string;
@@ -39,40 +41,74 @@ const workatoOn = (move: DataDirMove) =>
     { recheckMs: 0 },
   ).isEnabled('workato');
 
-const config = (dir: string) => JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'));
+const configText = (dir: string) => fs.readFileSync(path.join(dir, 'config.json'), 'utf8');
+const config = (dir: string) => JSON.parse(configText(dir));
 
 function put(file: string, text: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, text);
 }
 
+/** What a 2.x run leaves in the state dir (watches, default profile). */
+function runWritesStateDir(): void {
+  put(path.join(stateDir, 'watches.json'), '[]');
+}
+
 describe('a fresh install', () => {
-  test('neither data dir existed: Workato starts off and nothing is written', () => {
+  test('no data dir and no state dir: Workato starts off, and that is recorded', () => {
     const move = start();
     expect(move.outcome).toBe('fresh');
+    expect(config(current)).toEqual({ modules: { workato: false } });
     expect(workatoOn(move)).toBe(false);
-    expect(fs.existsSync(current)).toBe(false);
+    expect(logs.join('\n')).toMatch(/workato off: a fresh install/);
   });
 
-  test('an explicit setting in ~/.mokutab wins', () => {
-    put(path.join(current, 'config.json'), JSON.stringify({ modules: { workato: true } }));
+  test('a second start, after the first one created the state dir, stays off', () => {
+    start();
+    runWritesStateDir();
+    const before = configText(current);
     const move = start();
     expect(move.outcome).toBe('current');
-    expect(workatoOn(move)).toBe(true);
+    expect(configText(current)).toBe(before);
+    expect(workatoOn(move)).toBe(false);
+  });
+
+  test('an explicit setting in ~/.mokutab is never rewritten', () => {
+    for (const workato of [true, false]) {
+      const text = JSON.stringify({ modules: { workato } });
+      put(path.join(current, 'config.json'), text);
+      const move = start();
+      expect(configText(current)).toBe(text);
+      expect(workatoOn(move)).toBe(workato);
+    }
   });
 });
 
-describe('an upgrade from 1.x', () => {
-  test('a ~/.workatomcp with no config.json (functions only) keeps Workato on', () => {
+describe('a machine that ran 1.x', () => {
+  test('only the 1.x state dir (no function ever saved): Workato on, and recorded', () => {
+    fs.mkdirSync(path.join(stateDir, 'logs'), { recursive: true });
+    const move = start();
+    expect(move.outcome).toBe('fresh');
+    expect(config(current)).toEqual({ modules: { workato: true } });
+    expect(workatoOn(move)).toBe(true);
+    expect(logs.join('\n')).toMatch(/workato on: this machine ran 1\.x \(.*state exists\)/);
+
+    // Recorded: the next start reads it and writes nothing.
+    const before = configText(current);
+    expect(workatoOn(start())).toBe(true);
+    expect(configText(current)).toBe(before);
+  });
+
+  test('only ~/.workatomcp, with no config.json (functions only): Workato on', () => {
     put(path.join(legacy, 'functions', 'acme', 'case.read.yaml'), 'name: acme.case.read\n');
     const move = start();
     expect(move.outcome).toBe('moved');
     expect(config(current)).toEqual({ modules: { workato: true } });
     expect(workatoOn(move)).toBe(true);
-    expect(logs.join('\n')).toMatch(/kept workato on: this machine was upgraded from 1\.x/);
+    expect(logs.join('\n')).toMatch(/this machine ran 1\.x \(.*\.workatomcp exists\)/);
   });
 
-  test('an existing config that does not mention Workato keeps its keys and gets it on', () => {
+  test('a config that does not mention Workato keeps its keys and gets it on', () => {
     put(
       path.join(legacy, 'config.json'),
       JSON.stringify({ keep: 'me', modules: { other: false } }),
@@ -82,19 +118,25 @@ describe('an upgrade from 1.x', () => {
     expect(workatoOn(move)).toBe(true);
   });
 
-  test('{"modules":{"workato":true}} moves as it was', () => {
-    const text = JSON.stringify({ modules: { workato: true } });
-    put(path.join(legacy, 'config.json'), text);
-    const move = start();
-    expect(fs.readFileSync(path.join(current, 'config.json'), 'utf8')).toBe(text);
-    expect(workatoOn(move)).toBe(true);
+  test('an explicit setting moves as it was, whatever the evidence', () => {
+    for (const workato of [true, false]) {
+      fs.rmSync(current, { recursive: true, force: true });
+      fs.mkdirSync(stateDir, { recursive: true });
+      const text = JSON.stringify({ modules: { workato } });
+      put(path.join(legacy, 'config.json'), text);
+      const move = start();
+      expect(move.outcome).toBe('moved');
+      expect(configText(current)).toBe(text);
+      expect(workatoOn(move)).toBe(workato);
+    }
   });
 
-  test('an explicit off survives the upgrade', () => {
+  test('an explicit off in ~/.mokutab stays off next to the 1.x state dir', () => {
+    fs.mkdirSync(stateDir, { recursive: true });
     const text = JSON.stringify({ modules: { workato: false } });
-    put(path.join(legacy, 'config.json'), text);
+    put(path.join(current, 'config.json'), text);
     const move = start();
-    expect(fs.readFileSync(path.join(current, 'config.json'), 'utf8')).toBe(text);
+    expect(configText(current)).toBe(text);
     expect(workatoOn(move)).toBe(false);
   });
 
@@ -117,7 +159,7 @@ describe('an upgrade from 1.x', () => {
     expect(readDataDirMoveFailure(stateDir)).toBeNull();
   });
 
-  test('only the modules 1.x served are switched on', () => {
+  test('only the modules 1.x served are written', () => {
     fs.mkdirSync(legacy);
     start({ modules: [{ id: 'workato', onAfterUpgrade: true }, { id: 'later' }] });
     expect(config(current)).toEqual({ modules: { workato: true } });
@@ -126,14 +168,14 @@ describe('an upgrade from 1.x', () => {
   test('a malformed config is left for the switch to report, not overwritten', () => {
     put(path.join(legacy, 'config.json'), '{ broken');
     const move = start();
-    expect(fs.readFileSync(path.join(current, 'config.json'), 'utf8')).toBe('{ broken');
+    expect(configText(current)).toBe('{ broken');
     expect(workatoOn(move)).toBe(false);
-    expect(logs.join('\n')).toMatch(/not valid JSON.*not keeping workato on/);
+    expect(logs.join('\n')).toMatch(/not valid JSON.*not recording workato/);
   });
 });
 
-describe('neither an override nor a second start writes anything', () => {
-  test('an override dir is not seeded', () => {
+describe('what is never written', () => {
+  test('an override dir is left alone', () => {
     fs.mkdirSync(legacy);
     const dir = path.join(home, 'override');
     const move = start({ env: { MOKUTAB_DATA_DIR: dir } });
@@ -148,5 +190,13 @@ describe('neither an override nor a second start writes anything', () => {
     const move = start();
     expect(move.outcome).toBe('current');
     expect(workatoOn(move)).toBe(false);
+  });
+
+  test('bridges starting together write the same answer and leave no temp file', () => {
+    fs.mkdirSync(stateDir, { recursive: true });
+    start();
+    start();
+    expect(config(current)).toEqual({ modules: { workato: true } });
+    expect(fs.readdirSync(current).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 });

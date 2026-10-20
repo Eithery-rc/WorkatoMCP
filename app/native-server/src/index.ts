@@ -9,9 +9,11 @@ import { installModuleSync } from './server/module-sync';
 import { wireToolListChanged } from './mcp/mcp-server';
 import { migrateOnStart } from './startup-migration';
 
-// First, before anything reads the data dir: the first 2.x start moves
-// ~/.workatomcp to ~/.mokutab. It never throws, and a failure must not keep
-// the bridge from starting either.
+// First, before anything reads the data dir or writes the state dir: the
+// first 2.x start moves ~/.workatomcp to ~/.mokutab and records whether this
+// machine is an upgrade, which it reads off the state dir 1.x left (so
+// nothing below may create that dir earlier). It never throws, and a failure
+// must not keep the bridge from starting either.
 try {
   migrateOnStart();
 } catch (error) {

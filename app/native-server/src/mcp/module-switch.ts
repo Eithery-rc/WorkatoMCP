@@ -7,15 +7,16 @@
  * depend on which profile it happens to route to. Every profile's popup reads
  * and writes this one value through the extension-to-bridge connection.
  *
- * A missing file or a missing key means DEFAULT_ENABLED: off, so a fresh
- * install starts with the core only. A machine upgraded from 1.x keeps the
- * modules 1.x served: the data dir move writes them into config.json as on
- * (seedUpgradeModules), which is what makes an upgrade different from a fresh
- * install from then on. An explicit true or false in the file always wins. A
- * malformed file never crashes the bridge: the last good state (or the
- * default) stays in force and the problem is logged. A read that fails for
- * another reason (a file locked by an editor or a sync tool) changes nothing
- * and is retried on the next check.
+ * A missing file or a missing key means DEFAULT_ENABLED: off. The first 2.x
+ * start decides, once, between a fresh install (the core only) and an upgrade
+ * from 1.x (which keeps the modules 1.x served on), and writes the answer into
+ * config.json as an explicit value (recordModuleDefaults, run by
+ * startup-migration.ts), so later starts never have to guess again. An
+ * explicit true or false in the file always wins. A malformed file never
+ * crashes the bridge: the last good state (or the default) stays in force and
+ * the problem is logged. A read that fails for another reason (a file locked
+ * by an editor or a sync tool) changes nothing and is retried on the next
+ * check.
  */
 
 import * as fs from 'fs';
@@ -23,7 +24,7 @@ import * as path from 'path';
 import { performance } from 'perf_hooks';
 import { configFile } from '../data-dir';
 
-/** A module the config does not mention is off (a fresh install; an upgrade has it written). */
+/** A module the config does not mention is off (the first start writes it either way). */
 export const DEFAULT_ENABLED = false;
 
 /** The file is stat'ed at most this often; a change shows up within this window. */
@@ -275,48 +276,71 @@ export class ModuleSwitch implements ModuleSwitchView {
   }
 }
 
+/** The ids `doc` sets to true or false. */
+function explicitIds(doc: Record<string, unknown>, ids: readonly string[]): Set<string> {
+  const modules = isRecord(doc.modules) ? doc.modules : {};
+  return new Set(ids.filter((id) => typeof modules[id] === 'boolean'));
+}
+
 /**
- * Write `true` into `file` for each of `ids` it does not set to true or false,
- * keeping every other key: the modules a machine upgraded from 1.x used,
- * whose bridge served their tools with no switch. An explicit value is never
- * touched. A file that is not a JSON object is left alone (the switch reports
- * it as usual, and the default applies). Returns the ids written.
+ * Write `on` into `file` for each of `ids` it does not set to true or
+ * false yet, keeping every other key: how the first start records whether
+ * this machine is a fresh install or an upgrade (`why` says which, for the
+ * log). An explicit value is never touched. A file that is not a JSON object
+ * is left alone (the switch reports it as usual, and the default applies).
+ * Returns the ids written.
+ *
+ * Several bridge processes start at once during a reload, all deciding the
+ * same thing: each writes its own temp file and renames it into place, so a
+ * reader never sees half a file, and a rename that loses to another
+ * process's leaves that one's (equal) answer.
  */
-export function seedUpgradeModules(
+export function recordModuleDefaults(
   file: string,
   ids: readonly string[],
+  on: boolean,
+  why: string,
   log: (message: string) => void = defaultLog,
 ): string[] {
-  let doc: Record<string, unknown> = {};
-  try {
-    const parsed = parseConfig(fs.readFileSync(file, 'utf8'));
-    if (!parsed.ok) {
-      log(`${file} is ${parsed.reason}; not keeping ${ids.join(', ')} on for the upgrade`);
-      return [];
+  const read = (): ParsedConfig | null => {
+    try {
+      return parseConfig(fs.readFileSync(file, 'utf8'));
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') return { ok: true, doc: {} };
+      log(`could not read ${file} (${err?.code || err?.message}); nothing recorded`);
+      return null;
     }
-    doc = parsed.doc;
-  } catch (err: any) {
-    if (err?.code !== 'ENOENT') {
-      log(`could not read ${file} (${err?.code || err?.message}); not keeping modules on`);
-      return [];
-    }
+  };
+  const parsed = read();
+  if (!parsed) return [];
+  if (!parsed.ok) {
+    log(`${file} is ${parsed.reason}; not recording ${ids.join(', ')} (${why})`);
+    return [];
   }
+  const doc = parsed.doc;
+  const explicit = explicitIds(doc, ids);
+  const written = ids.filter((id) => !explicit.has(id));
+  if (written.length === 0) return [];
   const modules = isRecord(doc.modules) ? { ...doc.modules } : {};
-  const seeded = ids.filter((id) => typeof modules[id] !== 'boolean');
-  if (seeded.length === 0) return [];
-  for (const id of seeded) modules[id] = true;
+  for (const id of written) modules[id] = on;
   doc.modules = modules;
+  const tmp = `${file}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = `${file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n');
     fs.renameSync(tmp, file);
   } catch (err: any) {
-    log(`could not write ${file} (${err?.code || err?.message}); ${seeded.join(', ')} stay off`);
+    fs.rmSync(tmp, { force: true });
+    // Another bridge may have recorded the same answer a moment ago.
+    const now = read();
+    if (now?.ok && explicitIds(now.doc, ids).size === ids.length) return [];
+    log(
+      `could not write ${file} (${err?.code || err?.message}); ${written.join(', ')} not recorded`,
+    );
     return [];
   }
-  log(`kept ${seeded.join(', ')} on: this machine was upgraded from 1.x (${file})`);
-  return seeded;
+  log(`${written.join(', ')} ${on ? 'on' : 'off'}: ${why} (recorded in ${file})`);
+  return written;
 }
 
 /** The process-wide switch, read from the bridge config file. */
