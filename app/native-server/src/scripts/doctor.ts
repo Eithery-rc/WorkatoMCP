@@ -25,6 +25,16 @@ import {
   getLogDir,
 } from './utils';
 import { NATIVE_SERVER_PORT } from '../constant';
+import { readDataDirMoveFailure } from '../data-dir';
+import {
+  claudeConfigPath,
+  claudeRegistrationCheck,
+  dataDirCheck,
+  globalModuleRoots,
+  manifestTargetIssues,
+  oldPackageCheck,
+  readDataDirState,
+} from './migration-checks';
 
 const EXPECTED_PORT = 12306;
 const SCHEMA_VERSION = 1;
@@ -535,6 +545,15 @@ async function attemptFixes(
 // JSON File Reading
 // ============================================================================
 
+/** A file's text, or null when it cannot be read (most often: it does not exist). */
+function readTextOrNull(filePath: string): string | null {
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 function readJsonFile(
   filePath: string,
 ): { ok: true; value: unknown } | { ok: false; error: string } {
@@ -847,7 +866,7 @@ export async function collectDoctorReport(options: DoctorOptions): Promise<Docto
       const actual = normalizeComparablePath(manifest.path);
       const expected = normalizeComparablePath(wrapperPath);
       if (actual !== expected) issues.push('path does not match installed wrapper');
-      if (!fs.existsSync(manifest.path)) issues.push('path target does not exist');
+      issues.push(...manifestTargetIssues(manifest.path));
     }
     const allowedOrigins = manifest.allowed_origins;
     if (
@@ -1038,6 +1057,17 @@ export async function collectDoctorReport(options: DoctorOptions): Promise<Docto
       hint: 'Wrapper logs are created when Chrome launches the native host.',
     },
   });
+
+  // Check 9: what a 1.x (WorkatoMCP) install left behind. Read-only.
+  const claudeConfig = claudeConfigPath();
+  for (const outcome of [
+    oldPackageCheck(globalModuleRoots(rootDir)),
+    claudeRegistrationCheck(readTextOrNull(claudeConfig), claudeConfig),
+    dataDirCheck(readDataDirState(os.homedir(), process.env, readDataDirMoveFailure())),
+  ]) {
+    checks.push(outcome.check);
+    nextSteps.push(...outcome.nextSteps);
+  }
 
   // Compute summary
   const summary = computeSummary(checks);
