@@ -47,7 +47,7 @@ workatomcp-bridge fix-permissions
 
 ## Chrome shows a different extension ID
 
-The expected ID is `bpjpdgkeelhkijkllcmogemkmndgeana`, derived from the public key pinned in `app/chrome-extension/wxt.config.ts`. A different ID means the build used a different key, and native messaging will refuse the connection.
+The expected ID is `bpjpdgkeelhkijkllcmogemkmndgeana`, derived from the public key pinned in `app/chrome-extension/wxt.config.ts`. A different ID means the build used a different key, and native messaging will refuse the connection. So will the bridge's WebSocket: its log (stderr) then shows `[bridge] refused GET /ws-client: origin "chrome-extension://<id>" not allowed`, and the extension keeps retrying with backoff.
 
 ```bash
 rm -rf app/chrome-extension/dist app/chrome-extension/.wxt
