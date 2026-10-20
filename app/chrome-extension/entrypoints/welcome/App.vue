@@ -4,11 +4,14 @@ import { LINKS, NATIVE_HOST } from '@/common/constants';
 
 import '@/entrypoints/styles/theme.css';
 
+const MCP_URL = 'http://127.0.0.1:' + NATIVE_HOST.DEFAULT_PORT + '/mcp';
+
 const COMMANDS = {
   npmInstall: 'npm install -g @mokuhub/mokutab-bridge',
   pnpmInstall: 'pnpm add -g @mokuhub/mokutab-bridge',
   yarnInstall: 'yarn global add @mokuhub/mokutab-bridge',
-  mcpUrl: 'http://127.0.0.1:' + NATIVE_HOST.DEFAULT_PORT + '/mcp',
+  mcpUrl: MCP_URL,
+  claudeCodeAdd: `claude mcp add --transport http -s user mokutab ${MCP_URL}`,
   doctor: 'mokutab-bridge doctor',
   fix: 'mokutab-bridge doctor --fix',
   workatoUrl: 'https://app.workato.com',
@@ -18,7 +21,7 @@ const COMMANDS = {
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://127.0.0.1:${NATIVE_HOST.DEFAULT_PORT}/mcp",
+        "${MCP_URL}",
         "--allow-http"
       ]
     }
@@ -29,6 +32,8 @@ const COMMANDS = {
 } as const;
 
 type CommandKey = keyof typeof COMMANDS;
+
+const UPGRADE_URL = `${LINKS.REPO}#upgrade-from-workatomcp-1x`;
 
 const copiedKey = ref<CommandKey | null>(null);
 
@@ -41,6 +46,29 @@ const DIAGNOSTICS = [
   { label: 'Doctor', key: 'doctor' },
   { label: 'Auto-fix', key: 'fix' },
 ] as const satisfies ReadonlyArray<{ label: string; key: CommandKey }>;
+
+const CORE_TOOLS = [
+  {
+    tools: ['chrome_snapshot', 'chrome_snapshot_click', 'chrome_snapshot_fill'],
+    text: 'read a page and act on it, element by element',
+  },
+  {
+    tools: ['chrome_lease_tab'],
+    text: 'a tab of its own for each agent, so several can work at once',
+  },
+  {
+    tools: ['chrome_fn_run', 'chrome_fn_save'],
+    text: 'saved browser flows, versioned and run by name',
+  },
+  {
+    tools: ['chrome_watch_start'],
+    text: 'wait for a page to change without spending tokens',
+  },
+  {
+    tools: ['chrome_fetch_to_file', 'chrome_screenshot', 'chrome_network_capture'],
+    text: 'downloads, captures and network traffic',
+  },
+] as const;
 
 function copyLabel(key: CommandKey): string {
   return copiedKey.value === key ? 'Copied' : 'Copy';
@@ -63,20 +91,24 @@ async function copyCommand(key: CommandKey): Promise<void> {
   }
 }
 
-async function openWorkato(): Promise<void> {
+async function openUrl(url: string): Promise<void> {
   try {
-    await chrome.tabs.create({ url: COMMANDS.workatoUrl });
+    await chrome.tabs.create({ url });
   } catch {
-    window.open(COMMANDS.workatoUrl, '_blank', 'noopener,noreferrer');
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 }
 
-async function openDocs(): Promise<void> {
-  try {
-    await chrome.tabs.create({ url: LINKS.TROUBLESHOOTING });
-  } catch {
-    window.open(LINKS.TROUBLESHOOTING, '_blank', 'noopener,noreferrer');
-  }
+function openWorkato(): Promise<void> {
+  return openUrl(COMMANDS.workatoUrl);
+}
+
+function openDocs(): Promise<void> {
+  return openUrl(LINKS.TROUBLESHOOTING);
+}
+
+function openUpgrade(): Promise<void> {
+  return openUrl(UPGRADE_URL);
 }
 </script>
 
@@ -94,7 +126,7 @@ async function openDocs(): Promise<void> {
             <div class="min-w-0">
               <h1 class="welcome-title text-lg font-medium tracking-tight truncate">MokuTab</h1>
               <p class="welcome-muted text-sm truncate">
-                Expose your logged-in browser to AI agents via MCP.
+                Browser tools for AI agents, in the Chrome you already use.
               </p>
             </div>
           </div>
@@ -110,40 +142,17 @@ async function openDocs(): Promise<void> {
 
       <main class="flex-1 px-6 py-8">
         <div class="max-w-3xl mx-auto space-y-6">
-          <!-- STEP 1: Workato login -->
+          <!-- STEP 1: Install bridge -->
           <section class="welcome-card welcome-card--primary p-6">
             <div class="flex items-center gap-2">
               <span class="welcome-step-num">1</span>
-              <h2 class="welcome-title text-xl font-medium">Sign in to Workato</h2>
-            </div>
-            <p class="welcome-muted text-sm mt-2">
-              MokuTab runs every API call as <em>you</em>, piggybacking on your existing browser
-              session. No API tokens, no service accounts — just your normal Workato login. Make
-              sure at least one tab is signed in before agents call any
-              <code class="welcome-code">workato_*</code>
-              tool.
-            </p>
-            <div class="mt-4">
-              <button
-                class="welcome-button welcome-primary-btn px-4 py-2 text-sm font-medium ac-btn"
-                @click="openWorkato"
-              >
-                Open app.workato.com →
-              </button>
-            </div>
-          </section>
-
-          <!-- STEP 2: Install bridge -->
-          <section class="welcome-card p-6">
-            <div class="flex items-center gap-2">
-              <span class="welcome-step-num">2</span>
               <h2 class="welcome-title text-xl font-medium">
                 Install <code class="welcome-code">@mokuhub/mokutab-bridge</code>
               </h2>
             </div>
             <p class="welcome-muted text-sm mt-2">
-              The local Node.js bridge connects this extension to your MCP client over a Chrome
-              Native Messaging channel. Install it globally.
+              The local bridge connects this extension to your MCP client. Chrome starts it on the
+              first tool call; there is nothing to run by hand.
             </p>
 
             <div class="mt-4 space-y-3">
@@ -183,28 +192,39 @@ async function openDocs(): Promise<void> {
               </div>
 
               <div class="welcome-alt-row welcome-muted px-4 py-3 text-xs">
-                Requires Node.js 20+. Check with
-                <code class="welcome-code welcome-code-inline px-1 py-0.5">node -v</code>. The
-                package installs a Chrome Native Messaging host manifest automatically via its
+                Requires Node.js 20+. Its
                 <code class="welcome-code welcome-code-inline px-1 py-0.5">postinstall</code>
-                script.
+                registers the Chrome Native Messaging host. Coming from WorkatoMCP 1.x? Remove the
+                old package first:
+                <button class="welcome-link ac-btn" @click="openUpgrade">upgrade steps</button>.
               </div>
             </div>
           </section>
 
-          <!-- STEP 3: Register MCP server -->
+          <!-- STEP 2: Register MCP server -->
           <section class="welcome-card p-6">
             <div class="flex items-center gap-2">
-              <span class="welcome-step-num">3</span>
-              <h2 class="welcome-title text-xl font-medium">Register with your MCP client</h2>
+              <span class="welcome-step-num">2</span>
+              <h2 class="welcome-title text-xl font-medium">Register it with your MCP client</h2>
             </div>
-            <p class="welcome-muted text-sm mt-2">
-              Add this to your MCP client config for Claude Desktop and similar clients that launch
-              MCP servers with <code class="welcome-code">command</code> /
-              <code class="welcome-code">args</code>:
-            </p>
+            <p class="welcome-muted text-sm mt-2">Claude Code, under the key mokutab:</p>
 
-            <div class="mt-3">
+            <div class="mt-3 space-y-3">
+              <div class="welcome-command-row flex items-center justify-between gap-3 px-4 py-3">
+                <code class="welcome-code text-sm break-all">{{ COMMANDS.claudeCodeAdd }}</code>
+                <button
+                  class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
+                  :style="{ color: copyColor('claudeCodeAdd') }"
+                  @click="copyCommand('claudeCodeAdd')"
+                >
+                  {{ copyLabel('claudeCodeAdd') }}
+                </button>
+              </div>
+
+              <p class="welcome-muted text-sm">
+                Claude Desktop and other clients that launch a
+                <code class="welcome-code">command</code>:
+              </p>
               <div class="welcome-command-row flex items-start justify-between gap-3 px-4 py-3">
                 <pre class="welcome-code text-xs flex-1 overflow-x-auto" style="white-space: pre">{{
                   COMMANDS.claudeMcpConfig
@@ -218,109 +238,93 @@ async function openDocs(): Promise<void> {
                 </button>
               </div>
 
-              <p class="welcome-subtle text-xs mt-3">
-                The bridge auto-launches on first MCP request and listens at
+              <p class="welcome-subtle text-xs">
+                The bridge listens at
                 <code class="welcome-code welcome-code-inline px-1 py-0.5">{{
                   COMMANDS.mcpUrl
                 }}</code>
-                via streamable HTTP.
+                (streamable HTTP). Restart the client after changing its config.
               </p>
             </div>
           </section>
 
-          <!-- STEP 4: Install agent skill -->
-          <section class="welcome-card p-6">
-            <div class="flex items-center gap-2">
-              <span class="welcome-step-num">4</span>
-              <h2 class="welcome-title text-xl font-medium">
-                Install the <code class="welcome-code">workato-recipes</code> skill
-                <span class="welcome-subtle text-xs ml-2">(optional but recommended)</span>
-              </h2>
-            </div>
-            <p class="welcome-muted text-sm mt-2">
-              An index + 7-file reference covering recipe code-tree JSON, control flow,
-              Variables-by-Workato, and the full Ruby-allowlist formula API. When installed, Claude
-              Code auto-loads it whenever you ask it to build, edit, or review a Workato recipe. Two
-              slash commands in your Claude Code session:
-            </p>
-
-            <div class="mt-4 space-y-2">
-              <div class="welcome-command-row flex items-center justify-between gap-3 px-4 py-3">
-                <code class="welcome-code text-sm break-all">{{
-                  COMMANDS.pluginMarketplaceAdd
-                }}</code>
-                <button
-                  class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
-                  :style="{ color: copyColor('pluginMarketplaceAdd') }"
-                  @click="copyCommand('pluginMarketplaceAdd')"
-                >
-                  {{ copyLabel('pluginMarketplaceAdd') }}
-                </button>
-              </div>
-              <div class="welcome-command-row flex items-center justify-between gap-3 px-4 py-3">
-                <code class="welcome-code text-sm break-all">{{ COMMANDS.pluginInstall }}</code>
-                <button
-                  class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
-                  :style="{ color: copyColor('pluginInstall') }"
-                  @click="copyCommand('pluginInstall')"
-                >
-                  {{ copyLabel('pluginInstall') }}
-                </button>
-              </div>
-
-              <div class="welcome-alt-row welcome-muted px-4 py-3 text-xs">
-                Other agents (Codex, Cursor, Cline): copy
-                <code class="welcome-code welcome-code-inline px-1 py-0.5"
-                  >skills/workato-recipes/</code
-                >
-                from
-                <a
-                  href="https://github.com/MokuHub/MokuTab"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="welcome-code"
-                  >github.com/MokuHub/MokuTab</a
-                >
-                into whatever skill/rules directory your agent loads from.
-              </div>
-            </div>
-          </section>
-
-          <!-- WHAT YOU GET -->
+          <!-- WHAT YOU GET: core -->
           <section class="welcome-card p-6">
             <h2 class="welcome-title text-lg font-medium">What your agents can do</h2>
             <p class="welcome-muted text-sm mt-2">
-              Once installed, agents have access to <strong>8 Workato tools</strong> and
-              <strong>28 Chrome browser tools</strong> through your authenticated session.
+              <strong>52 core tools</strong> that act in your own tabs, profiles and signed-in
+              sessions. No API tokens.
             </p>
             <ul class="welcome-muted text-sm mt-3 space-y-1.5 list-disc list-inside">
-              <li>
-                <code class="welcome-code">workato_pull_recipe</code> /
-                <code class="welcome-code">workato_job_trace</code> — inspect recipes &amp; debug
-                failed runs
-              </li>
-              <li>
-                <code class="welcome-code">workato_search_recipes</code> /
-                <code class="welcome-code">workato_search_connections</code> /
-                <code class="welcome-code">workato_list_jobs</code> — discovery
-              </li>
-              <li>
-                <code class="welcome-code">workato_get_connection</code> — connection metadata
-                (secrets always stripped)
-              </li>
-              <li>
-                <code class="welcome-code">workato_run_query</code> — SOQL / SuiteQL / SQL through
-                any connection
-              </li>
-              <li>
-                <code class="welcome-code">workato_call_action</code> — universal connector action
-                runner (writes gated by <code class="welcome-code">allow_writes</code>)
-              </li>
-              <li>
-                <code class="welcome-code">chrome_*</code> tools — navigate, screenshot, click,
-                fill, capture network, inspect DOM
+              <li v-for="item in CORE_TOOLS" :key="item.tools[0]">
+                <code class="welcome-code">{{ item.tools.join(' / ') }}</code
+                >: {{ item.text }}
               </li>
             </ul>
+          </section>
+
+          <!-- MODULES -->
+          <section class="welcome-card p-6">
+            <h2 class="welcome-title text-lg font-medium">Modules</h2>
+            <p class="welcome-muted text-sm mt-2">
+              A module adds the tools for one product. Turn it on under
+              <strong>Modules</strong> in the extension popup; the switch applies to every Chrome
+              profile on this machine.
+            </p>
+
+            <div class="welcome-alt-row p-4 mt-4">
+              <div class="text-sm font-medium">Workato</div>
+              <p class="welcome-muted text-sm mt-1">
+                97 tools for recipes, jobs, connections, tables and Workflow App pages, run as you
+                inside a signed-in Workato tab. Off on a fresh install.
+              </p>
+              <div class="mt-3">
+                <button
+                  class="welcome-button welcome-primary-btn px-4 py-2 text-sm font-medium ac-btn"
+                  @click="openWorkato"
+                >
+                  Open app.workato.com →
+                </button>
+              </div>
+
+              <p class="welcome-muted text-sm mt-4">
+                Optional: the <code class="welcome-code">workato-recipes</code> skill, a reference
+                for recipe JSON and the formula language, from two slash commands in Claude Code:
+              </p>
+              <div class="mt-2 space-y-2">
+                <div class="welcome-command-row flex items-center justify-between gap-3 px-4 py-3">
+                  <code class="welcome-code text-sm break-all">{{
+                    COMMANDS.pluginMarketplaceAdd
+                  }}</code>
+                  <button
+                    class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
+                    :style="{ color: copyColor('pluginMarketplaceAdd') }"
+                    @click="copyCommand('pluginMarketplaceAdd')"
+                  >
+                    {{ copyLabel('pluginMarketplaceAdd') }}
+                  </button>
+                </div>
+                <div class="welcome-command-row flex items-center justify-between gap-3 px-4 py-3">
+                  <code class="welcome-code text-sm break-all">{{ COMMANDS.pluginInstall }}</code>
+                  <button
+                    class="welcome-mono px-2 py-1 text-xs font-medium ac-btn flex-shrink-0"
+                    :style="{ color: copyColor('pluginInstall') }"
+                    @click="copyCommand('pluginInstall')"
+                  >
+                    {{ copyLabel('pluginInstall') }}
+                  </button>
+                </div>
+              </div>
+              <p class="welcome-subtle text-xs mt-2">
+                Other agents: copy
+                <code class="welcome-code">skills/workato-recipes/</code>
+                from
+                <a :href="LINKS.REPO" target="_blank" rel="noopener noreferrer" class="welcome-code"
+                  >github.com/MokuHub/MokuTab</a
+                >
+                into their skill or rules directory.
+              </p>
+            </div>
           </section>
 
           <!-- TROUBLESHOOTING -->
@@ -342,8 +346,8 @@ async function openDocs(): Promise<void> {
                 <div class="text-sm font-medium">Diagnostics</div>
                 <p class="welcome-muted text-sm mt-1">
                   <code class="welcome-code">doctor</code> checks installation, native-messaging
-                  registration, port availability, and Node binary path. If anything fails, run
-                  <code class="welcome-code">--fix</code>.
+                  registration, port availability, the Node binary path and what a 1.x install left
+                  behind. If anything fails, run <code class="welcome-code">--fix</code>.
                 </p>
 
                 <div class="mt-3 space-y-2">
@@ -371,9 +375,7 @@ async function openDocs(): Promise<void> {
                 </div>
 
                 <p class="welcome-subtle text-xs mt-3">
-                  Legacy aliases <code class="welcome-code">mcp-chrome-bridge</code> /
-                  <code class="welcome-code">chrome-mcp-bridge</code> still work for existing
-                  configs.
+                  The 1.x command names still work until 3.0.
                 </p>
               </div>
 
@@ -495,6 +497,15 @@ async function openDocs(): Promise<void> {
   background: var(--ac-surface-muted);
   border: var(--ac-border-width) solid var(--ac-border);
   border-radius: var(--ac-radius-inner);
+}
+
+.welcome-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ac-accent);
+  font: inherit;
+  text-decoration: underline;
 }
 
 .welcome-code-inline {
