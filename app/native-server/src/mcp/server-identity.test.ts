@@ -1,5 +1,5 @@
 import { describe, expect, test } from '@jest/globals';
-import { CORE_TOOL_SCHEMAS, MODULES, TOOL_NAMES } from 'workatomcp-shared';
+import { CORE_TOOL_SCHEMAS, MODULES, TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { INSTALLED_MODULES } from '../modules';
 import {
   buildServerInstructions,

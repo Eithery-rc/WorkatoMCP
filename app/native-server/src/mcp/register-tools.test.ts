@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, jest, test } from '@jest/globals';
-import { NativeMessageType } from 'workatomcp-shared';
+import { NativeMessageType } from '@mokuhub/mokutab-shared';
 import {
   createToolRouter,
   PROFILE_ROUTING_ARG,

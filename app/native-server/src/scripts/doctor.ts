@@ -11,7 +11,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import { EXTENSION_IDS, HOST_NAME, COMMAND_NAME } from './constant';
+import { EXTENSION_IDS, HOST_NAME, COMMAND_NAME, PACKAGE_NAME } from './constant';
 import {
   BrowserType,
   detectInstalledBrowsers,
@@ -629,7 +629,7 @@ export async function collectDoctorReport(options: DoctorOptions): Promise<Docto
   const pkg = readPackageJson();
   const distDir = resolveDistDir();
   const rootDir = path.resolve(distDir, '..');
-  const packageName = typeof pkg.name === 'string' ? pkg.name : 'workatomcp-bridge';
+  const packageName = typeof pkg.name === 'string' ? pkg.name : PACKAGE_NAME;
   const packageVersion = typeof pkg.version === 'string' ? pkg.version : 'unknown';
   const commandInfo = getCommandInfo(pkg);
 
@@ -681,7 +681,7 @@ export async function collectDoctorReport(options: DoctorOptions): Promise<Docto
       message: `Missing required files (${missingHostFiles.length})`,
       details: { missing: missingHostFiles },
     });
-    nextSteps.push(`Reinstall: npm install -g ${COMMAND_NAME}`);
+    nextSteps.push(`Reinstall: npm install -g ${PACKAGE_NAME}`);
   } else {
     checks.push({
       id: 'host.files',

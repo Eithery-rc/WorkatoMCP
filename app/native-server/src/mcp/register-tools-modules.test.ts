@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, jest, test } from '@jest/globals';
-import { CORE_TOOL_SCHEMAS, TOOL_SCHEMAS } from 'workatomcp-shared';
+import { CORE_TOOL_SCHEMAS, TOOL_SCHEMAS } from '@mokuhub/mokutab-shared';
 import { INSTALLED_MODULES } from '../modules';
 import { profileRegistry } from '../server/profile-registry';
 import { createToolRouter } from './register-tools';

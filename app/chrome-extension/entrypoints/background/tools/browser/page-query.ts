@@ -13,7 +13,7 @@
 
 import { riskyRegexReason } from './regex-safety';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { BaseBrowserToolExecutor, getTabOrThrow } from '../base-browser';
 
 const DEFAULT_CONTEXT_CHARS = 80;

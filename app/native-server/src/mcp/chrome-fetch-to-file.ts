@@ -15,7 +15,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { CORE_TOOL_NAMES } from 'workatomcp-shared';
+import { CORE_TOOL_NAMES } from '@mokuhub/mokutab-shared';
 
 export const FETCH_TO_FILE_TOOL = CORE_TOOL_NAMES.BROWSER.FETCH_TO_FILE;
 

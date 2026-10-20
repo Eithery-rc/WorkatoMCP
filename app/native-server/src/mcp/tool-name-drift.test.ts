@@ -17,7 +17,7 @@
 import { describe, expect, test } from '@jest/globals';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CORE_TOOL_NAMES, CORE_TOOL_SCHEMAS } from 'workatomcp-shared';
+import { CORE_TOOL_NAMES, CORE_TOOL_SCHEMAS } from '@mokuhub/mokutab-shared';
 import { CORE_AUTO_FILE_RULES, CORE_READ_TOOLS, SCREENSHOT_TOOL } from './workato-auto-file';
 import { BRIDGE_INFO_TOOL } from './workato-bridge-info';
 import { RELOAD_EXTENSION_TOOL } from './workato-reload-extension';

@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, jest, test } from '@jest/globals';
-import { NativeMessageType, TOOL_SCHEMAS } from 'workatomcp-shared';
+import { NativeMessageType, TOOL_SCHEMAS } from '@mokuhub/mokutab-shared';
 import { createToolRouter, raceAbort } from './register-tools';
 import { profileRegistry } from '../server/profile-registry';
 import { withLeaseToolSchemas } from './tab-leases';

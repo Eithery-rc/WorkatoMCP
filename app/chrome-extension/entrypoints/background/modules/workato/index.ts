@@ -4,7 +4,7 @@
  */
 
 // The id and title only: WORKATO_MODULE would bring every Workato schema along.
-import { WORKATO_MODULE_ID, WORKATO_MODULE_TITLE } from 'workatomcp-shared';
+import { WORKATO_MODULE_ID, WORKATO_MODULE_TITLE } from '@mokuhub/mokutab-shared';
 import type { ExtensionModule, ModuleToolExecutor } from '../../extension-module';
 import * as workatoTools from './tools/workato';
 import * as workatoUiTools from './tools/workato-ui';

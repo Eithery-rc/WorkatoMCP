@@ -69,14 +69,14 @@ export function bridgePackageCandidates(dir: string = __dirname): string[] {
   return [path.join(dir, '..', '..', 'package.json'), path.join(dir, '..', 'package.json')];
 }
 
-/** Where `workatomcp-shared`'s package.json sits, resolved through Node. */
+/** Where `@mokuhub/mokutab-shared`'s package.json sits, resolved through Node. */
 export function sharedPackageCandidates(): string[] {
   const candidates: string[] = [];
   try {
     // The package's "exports" map does not publish ./package.json, so resolve
     // the entry point and walk up from dist/ instead of asking for the
     // manifest by subpath (which throws ERR_PACKAGE_PATH_NOT_EXPORTED).
-    const entry = require.resolve('workatomcp-shared');
+    const entry = require.resolve('@mokuhub/mokutab-shared');
     candidates.push(path.join(path.dirname(entry), '..', 'package.json'));
     candidates.push(path.join(path.dirname(entry), 'package.json'));
   } catch {

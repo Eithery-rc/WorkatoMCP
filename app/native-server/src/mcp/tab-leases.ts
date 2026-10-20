@@ -12,7 +12,7 @@
 
 import { randomBytes } from 'crypto';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { CORE_TOOL_NAMES } from 'workatomcp-shared';
+import { CORE_TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { installedToolSchemas } from './catalogue';
 
 export const LEASE_TAB_TOOL = CORE_TOOL_NAMES.BROWSER.LEASE_TAB;

@@ -22,7 +22,7 @@
  * extension (countToolSchemas): they belong to the bridge and cost about 300 KB
  * per bundle that picks them up.
  *
- * Run: `pnpm --filter workatomcp-extension check:bundle` (also chained after
+ * Run: `pnpm --filter mokutab-extension check:bundle` (also chained after
  * `wxt build`).
  */
 

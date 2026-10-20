@@ -15,7 +15,7 @@ import {
   type ElementPickerResult,
   type ElementPickerResultItem,
   type PickedElement,
-} from 'workatomcp-shared';
+} from '@mokuhub/mokutab-shared';
 
 // ============================================================
 // Types

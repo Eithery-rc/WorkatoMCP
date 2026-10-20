@@ -1,4 +1,4 @@
-/** The sanitizer lives in workatomcp-shared: the bridge redacts with the same rules. */
+/** The sanitizer lives in @mokuhub/mokutab-shared: the bridge redacts with the same rules. */
 export {
   DEFAULT_MAX_OUTPUT_BYTES,
   RAW_MAX_OUTPUT_BYTES,
@@ -8,4 +8,4 @@ export {
   sanitizeText,
   type OutputSanitizerOptions,
   type SanitizedOutput,
-} from 'workatomcp-shared';
+} from '@mokuhub/mokutab-shared';

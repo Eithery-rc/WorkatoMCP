@@ -12,7 +12,7 @@
  */
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 
 export const SWITCH_ENVIRONMENT_TOOL = TOOL_NAMES.WORKATO.SWITCH_ENVIRONMENT;
 

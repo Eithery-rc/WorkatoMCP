@@ -1,6 +1,6 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor, getTabOrThrow } from '../base-browser';
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { LIMITS, NETWORK_FILTERS } from '@/common/constants';
 
 // Static resource file extensions

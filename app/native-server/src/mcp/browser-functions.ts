@@ -19,7 +19,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { NativeMessageType, CORE_TOOL_NAMES, sanitizeAndLimitOutput } from 'workatomcp-shared';
+import {
+  NativeMessageType,
+  CORE_TOOL_NAMES,
+  sanitizeAndLimitOutput,
+} from '@mokuhub/mokutab-shared';
 import {
   checkParams,
   isHelperName,

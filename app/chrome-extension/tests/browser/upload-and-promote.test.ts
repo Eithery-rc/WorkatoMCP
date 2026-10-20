@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TOOL_NAMES, TOOL_SCHEMAS } from 'workatomcp-shared';
+import { TOOL_NAMES, TOOL_SCHEMAS } from '@mokuhub/mokutab-shared';
 
 const resolveElement = vi.fn();
 const snapshotSendCommand = vi.fn();

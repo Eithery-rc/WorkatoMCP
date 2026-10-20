@@ -1,17 +1,20 @@
 {
-  "name": "workatomcp-shared",
+  "name": "@mokuhub/mokutab-shared",
   "version": "1.11.0",
-  "description": "Tool schemas shared by the WorkatoMCP bridge and Chrome extension",
+  "description": "Tool schemas shared by the MokuTab bridge and Chrome extension",
   "author": "Roman Chikalenko <chikalenkor@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Eithery-rc/WorkatoMCP.git",
+    "url": "git+https://github.com/MokuHub/MokuTab.git",
     "directory": "packages/shared"
   },
-  "homepage": "https://github.com/Eithery-rc/WorkatoMCP#readme",
+  "homepage": "https://github.com/MokuHub/MokuTab#readme",
   "bugs": {
-    "url": "https://github.com/Eithery-rc/WorkatoMCP/issues"
+    "url": "https://github.com/MokuHub/MokuTab/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "main": "dist/index.js",
   "module": "./dist/index.mjs",

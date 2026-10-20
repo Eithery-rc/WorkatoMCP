@@ -4,7 +4,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { NativeMessageType } from 'workatomcp-shared';
+import { NativeMessageType } from '@mokuhub/mokutab-shared';
 import {
   BRIDGE_REQUEST_TIMEOUT_MS,
   BridgeRequests,

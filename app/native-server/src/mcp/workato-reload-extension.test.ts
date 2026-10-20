@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from '@jest/globals';
-import { NativeMessageType } from 'workatomcp-shared';
+import { NativeMessageType } from '@mokuhub/mokutab-shared';
 import {
   handleWorkatoReloadExtensionCall,
   resetReloadExtensionState,

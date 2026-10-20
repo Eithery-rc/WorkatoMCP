@@ -12,7 +12,7 @@
  */
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 
 import {
   listOperations,

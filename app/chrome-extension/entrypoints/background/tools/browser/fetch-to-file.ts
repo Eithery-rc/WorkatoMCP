@@ -17,7 +17,7 @@
 
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 
 export const DEFAULT_FETCH_TIMEOUT_MS = 60_000;
 /** The bridge gives one call 120 s; the fetch has to finish well inside that. */

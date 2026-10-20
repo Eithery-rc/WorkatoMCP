@@ -16,7 +16,7 @@
 import { getDialog } from '../dialog-tracker';
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { ERROR_MESSAGES } from '@/common/constants';
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { BaseBrowserToolExecutor, getTabOrThrow } from '../../base-browser';
 import { appendPageReport, assertNoOpenDialog, DialogOpenError, runWithSettle } from '../settle';
 import { captureSnapshot } from './capture';

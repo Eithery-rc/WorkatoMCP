@@ -6,7 +6,7 @@
  * Author: Roman Chikalenko
  * Version: 1.4.0
  */
-import { NativeMessageType } from 'workatomcp-shared';
+import { NativeMessageType } from '@mokuhub/mokutab-shared';
 import { BACKGROUND_MESSAGE_TYPES } from '@/common/message-types';
 import { NATIVE_HOST, STORAGE_KEYS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '@/common/constants';
 import { handleCallTool } from './tools';

@@ -15,7 +15,7 @@
 
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { ERROR_MESSAGES } from '@/common/constants';
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { BaseBrowserToolExecutor } from '@/entrypoints/background/tools/base-browser';
 import { ensureAttached } from '@/entrypoints/background/tools/browser/snapshot/debugger-session';
 import { evaluateInPage, getTabUrl, resolveTabId } from '../workato-ui/dom-helpers';

@@ -9,7 +9,7 @@
 
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { ERROR_MESSAGES } from '@/common/constants';
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { BaseBrowserToolExecutor } from '../../base-browser';
 import {
   appendPageReport,

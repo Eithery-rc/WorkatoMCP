@@ -15,7 +15,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createHash, randomBytes } from 'crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { CORE_TOOL_NAMES } from 'workatomcp-shared';
+import { CORE_TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { NATIVE_SERVER_PORT } from '../constant';
 
 export const WATCH_START_TOOL = CORE_TOOL_NAMES.BROWSER.WATCH_START;

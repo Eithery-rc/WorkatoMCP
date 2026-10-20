@@ -17,7 +17,7 @@
  *   - workato_session_context: the tool form, for agents and for the bridge.
  */
 
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { BaseBrowserToolExecutor } from '@/entrypoints/background/tools/base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';

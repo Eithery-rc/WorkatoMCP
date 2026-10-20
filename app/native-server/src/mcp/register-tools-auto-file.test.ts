@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { TOOL_SCHEMAS } from 'workatomcp-shared';
+import { TOOL_SCHEMAS } from '@mokuhub/mokutab-shared';
 import { createToolRouter } from './register-tools';
 import { profileRegistry } from '../server/profile-registry';
 import nativeMessagingHostInstance from '../native-messaging-host';

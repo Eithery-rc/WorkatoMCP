@@ -6,7 +6,7 @@
  */
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { CORE_TOOL_SCHEMAS } from 'workatomcp-shared';
+import { CORE_TOOL_SCHEMAS } from '@mokuhub/mokutab-shared';
 import { INSTALLED_MODULES } from '../modules';
 import type { BridgeModule } from './module-api';
 

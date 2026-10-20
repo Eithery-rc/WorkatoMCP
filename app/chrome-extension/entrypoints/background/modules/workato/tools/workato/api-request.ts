@@ -13,7 +13,7 @@
  *   - the CSRF token is read from the cookie in-page and never echoed back.
  */
 
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '@/entrypoints/background/tools/base-browser';
 import { findWorkatoTab, runInWorkatoTab, WorkatoDispatchError } from './tab-dispatch';

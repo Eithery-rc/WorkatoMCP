@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { TOOL_NAMES, TOOL_SCHEMAS } from 'workatomcp-shared';
+import { TOOL_NAMES, TOOL_SCHEMAS } from '@mokuhub/mokutab-shared';
 
 /** The documented per-description limit for an MCP tool. */
 const DESCRIPTION_LIMIT_BYTES = 2048;

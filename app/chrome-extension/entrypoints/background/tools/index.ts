@@ -1,6 +1,6 @@
 import { createErrorResponse } from '@/common/tool-handler';
 import { ERROR_MESSAGES } from '@/common/constants';
-import { moduleOffMessage } from 'workatomcp-shared';
+import { moduleOffMessage } from '@mokuhub/mokutab-shared';
 import * as browserTools from './browser';
 import { EXTENSION_MODULES } from '../modules';
 import { moduleEnabled, type ExtensionModule } from '../extension-module';

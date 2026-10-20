@@ -21,7 +21,7 @@ import os from 'os';
 import path from 'path';
 
 const LOG_PREFIX = '[UpdateChecker]';
-const PACKAGE_NAME = 'workatomcp-bridge';
+const PACKAGE_NAME = '@mokuhub/mokutab-bridge';
 const REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
 
 const INITIAL_CHECK_DELAY_MS = 30_000;

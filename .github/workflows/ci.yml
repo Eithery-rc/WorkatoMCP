@@ -40,8 +40,8 @@ jobs:
 
       - name: Typecheck bridge and shared schemas
         run: |
-          pnpm --filter workatomcp-shared exec tsc --noEmit
-          pnpm --filter workatomcp-bridge exec tsc --noEmit
+          pnpm --filter @mokuhub/mokutab-shared exec tsc --noEmit
+          pnpm --filter @mokuhub/mokutab-bridge exec tsc --noEmit
 
       # The extension still carries 14 type errors (inherited gif-recorder,
       # offscreen and network capture code, workato/properties.ts, and two
@@ -51,7 +51,7 @@ jobs:
       - name: Typecheck extension (reported, not gating)
         run: |
           set +e
-          out=$(pnpm --filter workatomcp-extension exec tsc --noEmit 2>&1)
+          out=$(pnpm --filter mokutab-extension exec tsc --noEmit 2>&1)
           count=$(printf '%s\n' "$out" | grep -cE 'error TS')
           if [ "$count" -gt 0 ]; then
             {
@@ -75,12 +75,12 @@ jobs:
       # local quality signal, not a merge gate, and a package that ships code
       # ahead of its tests should fail on a red test, not on a percentage.
       - name: Test extension
-        run: pnpm --filter workatomcp-extension test
+        run: pnpm --filter mokutab-extension test
 
       - name: Test bridge
         # No `--` separator: pnpm forwards it verbatim and jest reads it as a
         # test-name pattern, which then matches nothing.
-        run: pnpm --filter workatomcp-bridge test --coverage=false
+        run: pnpm --filter @mokuhub/mokutab-bridge test --coverage=false
 
       # `wxt build` chains check:bundle, which fails on an in-page function the
       # bundler rewrote into a module-scope helper. See scripts/check-bundle.mjs.

@@ -15,7 +15,7 @@
 import { describe, expect, test } from '@jest/globals';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CORE_TOOL_NAMES, WORKATO_MODULE } from 'workatomcp-shared';
+import { CORE_TOOL_NAMES, WORKATO_MODULE } from '@mokuhub/mokutab-shared';
 import { WORKATO_RECIPE_MUTATOR_TOOLS } from './recipe-engine';
 import { WORKATO_CALLABLE_TOOLS } from './callable-schema';
 import { DATAPILL_TOOL } from './datapill';

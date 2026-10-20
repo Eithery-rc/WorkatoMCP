@@ -1,6 +1,6 @@
 {
-  "name": "workatomcp-extension",
-  "description": "Chrome extension that exposes the user's Workato session as MCP tools for AI agents.",
+  "name": "mokutab-extension",
+  "description": "Chrome extension that exposes the user's logged-in browser session as MCP tools for AI agents.",
   "author": "Roman Chikalenko <chikalenkor@gmail.com>",
   "private": true,
   "version": "1.13.0",
@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.11.0",
-    "workatomcp-shared": "workspace:*",
+    "@mokuhub/mokutab-shared": "workspace:*",
     "date-fns": "^4.1.0",
     "gifenc": "^1.0.3",
     "vue": "^3.5.13"

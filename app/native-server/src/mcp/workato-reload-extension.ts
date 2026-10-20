@@ -18,7 +18,7 @@
  */
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { NativeMessageType } from 'workatomcp-shared';
+import { NativeMessageType } from '@mokuhub/mokutab-shared';
 
 export const RELOAD_EXTENSION_TOOL = 'workato_reload_extension';
 

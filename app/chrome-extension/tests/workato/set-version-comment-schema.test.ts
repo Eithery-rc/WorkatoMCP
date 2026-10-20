@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TOOL_NAMES, TOOL_SCHEMAS } from 'workatomcp-shared';
+import { TOOL_NAMES, TOOL_SCHEMAS } from '@mokuhub/mokutab-shared';
 
 describe('workato_set_version_comment schema', () => {
   it('advertises recipe id, version, and comment as required parameters', () => {

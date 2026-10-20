@@ -3,7 +3,7 @@ import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { NativeMessageType } from 'workatomcp-shared';
+import { NativeMessageType } from '@mokuhub/mokutab-shared';
 import { ModuleSwitch } from '../mcp/module-switch';
 import { installModuleSync } from './module-sync';
 import { ProfileRegistry } from './profile-registry';

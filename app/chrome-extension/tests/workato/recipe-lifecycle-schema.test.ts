@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TOOL_NAMES, TOOL_SCHEMAS } from 'workatomcp-shared';
+import { TOOL_NAMES, TOOL_SCHEMAS } from '@mokuhub/mokutab-shared';
 
 describe('recipe lifecycle schemas', () => {
   it('advertises start and stop recipe tools', () => {

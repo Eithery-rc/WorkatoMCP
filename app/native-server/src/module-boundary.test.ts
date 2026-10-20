@@ -80,28 +80,28 @@ function isInside(dir: string, target: string): boolean {
 }
 
 /**
- * Exports of workatomcp-shared that carry module knowledge: the whole
+ * Exports of @mokuhub/mokutab-shared that carry module knowledge: the whole
  * catalogue and the module list. Core gets its tool lists from
  * mcp/catalogue.ts (core schemas plus the installed modules, through the
  * registry) instead, so a module that is not installed cannot leak in.
  */
 const AGGREGATE_EXPORT = /^(?:TOOL_SCHEMAS|TOOL_NAMES|MODULES|moduleOfTool|WORKATO_\w+)$/;
 
-const SHARED = `['"]workatomcp-shared['"]`;
+const SHARED = `['"]@mokuhub/mokutab-shared['"]`;
 
-/** `import|export [type] {names} | * [as x] from 'workatomcp-shared'` */
+/** `import|export [type] {names} | * [as x] from '@mokuhub/mokutab-shared'` */
 const STATIC_FORM = new RegExp(
   `\\b(import|export)\\s+(?:type\\s+)?(\\{[^}]*\\}|\\*(?:\\s+as\\s+\\w+)?)\\s*from\\s*${SHARED}`,
   'g',
 );
 
-/** `const|let|var {names} = [await] require|import('workatomcp-shared')` */
+/** `const|let|var {names} = [await] require|import('@mokuhub/mokutab-shared')` */
 const DESTRUCTURED_CALL = new RegExp(
   `\\b(?:const|let|var)\\s+(\\{[^}]*\\})\\s*=\\s*(?:await\\s+)?(?:require|import)\\s*\\(\\s*${SHARED}\\s*\\)`,
   'g',
 );
 
-/** Any other `require('workatomcp-shared')` / `import('workatomcp-shared')`: the whole package. */
+/** Any other `require('@mokuhub/mokutab-shared')` / `import('@mokuhub/mokutab-shared')`: the whole package. */
 const WHOLE_CALL = new RegExp(`\\b(require|import)\\s*\\(\\s*${SHARED}\\s*\\)`, 'g');
 
 /** The names a `{ ... }` list binds, with comments, `type` and aliases dropped. */
@@ -210,27 +210,30 @@ describe('the checker itself', () => {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, body);
     };
-    put('ok.ts', "import { CORE_TOOL_NAMES, type ToolModule } from 'workatomcp-shared';\n");
-    put('all.ts', "import {\n  NativeMessageType,\n  TOOL_SCHEMAS,\n} from 'workatomcp-shared';\n");
-    put('alias.ts', "import { WORKATO_TOOL_NAMES as W } from 'workatomcp-shared';\n");
-    put('star.ts', "import * as shared from 'workatomcp-shared';\n");
-    put('reexport.ts', "export { MODULES as installed } from 'workatomcp-shared';\n");
-    put('reexport-all.ts', 'export * from "workatomcp-shared";\n');
+    put('ok.ts', "import { CORE_TOOL_NAMES, type ToolModule } from '@mokuhub/mokutab-shared';\n");
+    put(
+      'all.ts',
+      "import {\n  NativeMessageType,\n  TOOL_SCHEMAS,\n} from '@mokuhub/mokutab-shared';\n",
+    );
+    put('alias.ts', "import { WORKATO_TOOL_NAMES as W } from '@mokuhub/mokutab-shared';\n");
+    put('star.ts', "import * as shared from '@mokuhub/mokutab-shared';\n");
+    put('reexport.ts', "export { MODULES as installed } from '@mokuhub/mokutab-shared';\n");
+    put('reexport-all.ts', 'export * from "@mokuhub/mokutab-shared";\n');
     put(
       'commented.ts',
-      "import {\n  CORE_TOOL_NAMES, // core\n  /* sneaky */ TOOL_NAMES,\n} from 'workatomcp-shared';\n",
+      "import {\n  CORE_TOOL_NAMES, // core\n  /* sneaky */ TOOL_NAMES,\n} from '@mokuhub/mokutab-shared';\n",
     );
     put(
       'required.ts',
-      "const { moduleOfTool, CORE_TOOL_NAMES: C } = require('workatomcp-shared');\n",
+      "const { moduleOfTool, CORE_TOOL_NAMES: C } = require('@mokuhub/mokutab-shared');\n",
     );
-    put('required-ok.ts', "const { CORE_TOOL_SCHEMAS } = require('workatomcp-shared');\n");
-    put('required-whole.ts', "const shared = require('workatomcp-shared');\n");
-    put('dynamic.ts', "const { TOOL_SCHEMAS } = await import('workatomcp-shared');\n");
-    put('dynamic-whole.ts', "void import('workatomcp-shared').then((m) => m);\n");
-    put('resolve-ok.ts', "const entry = require.resolve('workatomcp-shared');\n");
-    put('modules/alpha/index.ts', "import { TOOL_NAMES } from 'workatomcp-shared';\n");
-    put('core.test.ts', "import { TOOL_SCHEMAS } from 'workatomcp-shared';\n");
+    put('required-ok.ts', "const { CORE_TOOL_SCHEMAS } = require('@mokuhub/mokutab-shared');\n");
+    put('required-whole.ts', "const shared = require('@mokuhub/mokutab-shared');\n");
+    put('dynamic.ts', "const { TOOL_SCHEMAS } = await import('@mokuhub/mokutab-shared');\n");
+    put('dynamic-whole.ts', "void import('@mokuhub/mokutab-shared').then((m) => m);\n");
+    put('resolve-ok.ts', "const entry = require.resolve('@mokuhub/mokutab-shared');\n");
+    put('modules/alpha/index.ts', "import { TOOL_NAMES } from '@mokuhub/mokutab-shared';\n");
+    put('core.test.ts', "import { TOOL_SCHEMAS } from '@mokuhub/mokutab-shared';\n");
     expect(aggregateImports(shared, path.join(shared, 'modules'))).toEqual([
       'alias.ts: WORKATO_TOOL_NAMES',
       'all.ts: TOOL_SCHEMAS',

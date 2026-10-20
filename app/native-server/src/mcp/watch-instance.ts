@@ -3,7 +3,7 @@
  * Shared by the MCP tools (chrome_watch_*) and the /watch/wait HTTP route.
  */
 import * as path from 'path';
-import { NativeMessageType } from 'workatomcp-shared';
+import { NativeMessageType } from '@mokuhub/mokutab-shared';
 import { profileRegistry } from '../server/profile-registry';
 import { updateStateDir } from '../update-checker';
 import { WatchManager } from './browser-watch';

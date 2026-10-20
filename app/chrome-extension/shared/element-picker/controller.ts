@@ -14,7 +14,7 @@ import {
   type ShadowHostElements,
   type ShadowHostManager,
 } from '@/shared/shadow-host';
-import type { PickedElement } from 'workatomcp-shared';
+import type { PickedElement } from '@mokuhub/mokutab-shared';
 
 // ============================================================
 // Types

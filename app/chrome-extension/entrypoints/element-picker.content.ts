@@ -16,7 +16,7 @@ import {
   type ElementPickerUiState,
 } from '@/shared/element-picker';
 import { BACKGROUND_MESSAGE_TYPES, TOOL_MESSAGE_TYPES } from '@/common/message-types';
-import type { PickedElement } from 'workatomcp-shared';
+import type { PickedElement } from '@mokuhub/mokutab-shared';
 
 // ============================================================
 // Message Types

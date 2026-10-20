@@ -23,7 +23,7 @@
  * Format reference: skills/workato-recipes/workflow-apps.md.
  */
 
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '@/entrypoints/background/tools/base-browser';
 import {

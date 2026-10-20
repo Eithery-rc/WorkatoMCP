@@ -1,5 +1,5 @@
 import { createApp } from 'vue';
-import { NativeMessageType } from 'workatomcp-shared';
+import { NativeMessageType } from '@mokuhub/mokutab-shared';
 import './style.css';
 import '@/entrypoints/styles/theme.css';
 import App from './App.vue';

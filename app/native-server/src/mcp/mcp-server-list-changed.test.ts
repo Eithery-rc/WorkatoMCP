@@ -5,7 +5,7 @@ import * as path from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
-import { CORE_TOOL_SCHEMAS, TOOL_SCHEMAS } from 'workatomcp-shared';
+import { CORE_TOOL_SCHEMAS, TOOL_SCHEMAS } from '@mokuhub/mokutab-shared';
 import {
   createMcpServer,
   liveMcpServerCount,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TOOL_NAMES, TOOL_SCHEMAS } from 'workatomcp-shared';
+import { TOOL_NAMES, TOOL_SCHEMAS } from '@mokuhub/mokutab-shared';
 
 describe('workato_recipe_callers schema', () => {
   const schema = TOOL_SCHEMAS.find((tool) => tool.name === TOOL_NAMES.WORKATO.RECIPE_CALLERS);

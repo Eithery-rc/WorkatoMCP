@@ -1,4 +1,4 @@
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 
 type OwnerTag = string;
 

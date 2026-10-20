@@ -11,7 +11,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
-import { COMMAND_NAME } from './constant';
+import { PACKAGE_NAME } from './constant';
 import {
   BrowserType,
   detectInstalledBrowsers,
@@ -137,7 +137,7 @@ function readPackageJson(): Record<string, unknown> {
 
 function getToolVersion(): { name: string; version: string } {
   const pkg = readPackageJson();
-  const name = typeof pkg.name === 'string' ? pkg.name : COMMAND_NAME;
+  const name = typeof pkg.name === 'string' ? pkg.name : PACKAGE_NAME;
   const version = typeof pkg.version === 'string' ? pkg.version : 'unknown';
   return { name, version };
 }

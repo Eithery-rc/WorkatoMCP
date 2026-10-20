@@ -22,7 +22,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const PACKAGE_NAME = 'workatomcp-bridge';
+const PACKAGE_NAME = '@mokuhub/mokutab-bridge';
 const MAX_APPLY_ATTEMPTS = 3;
 const ATTEMPT_BACKOFF_MS = 15 * 60_000;
 const FLAG_MAX_AGE_MS = 7 * 24 * 60 * 60_000;

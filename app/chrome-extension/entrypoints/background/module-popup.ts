@@ -3,7 +3,7 @@
  * module switch over the WebSocket, and answer with what the popup shows.
  */
 
-import { NativeMessageType } from 'workatomcp-shared';
+import { NativeMessageType } from '@mokuhub/mokutab-shared';
 import { DEFAULT_ENABLED, type ModuleStates } from '@/common/module-state';
 import type { BridgeRequests, BridgeSocket } from './bridge-requests';
 

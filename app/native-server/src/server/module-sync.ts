@@ -12,7 +12,7 @@ import {
   NativeMessageType,
   type ModuleStateEntry,
   type ModulesStatePayload,
-} from 'workatomcp-shared';
+} from '@mokuhub/mokutab-shared';
 import { INSTALLED_MODULES } from '../modules';
 import type { BridgeModule } from '../mcp/module-api';
 import { moduleSwitch, type ModuleSwitch } from '../mcp/module-switch';

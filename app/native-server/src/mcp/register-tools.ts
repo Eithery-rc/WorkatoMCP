@@ -17,7 +17,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import nativeMessagingHostInstance from '../native-messaging-host';
-import { CORE_TOOL_NAMES, NativeMessageType, moduleOffMessage } from 'workatomcp-shared';
+import { CORE_TOOL_NAMES, NativeMessageType, moduleOffMessage } from '@mokuhub/mokutab-shared';
 import { INSTALLED_MODULES } from '../modules';
 import { listedToolSchemas } from './catalogue';
 import type {

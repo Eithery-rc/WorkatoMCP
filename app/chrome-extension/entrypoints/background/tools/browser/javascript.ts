@@ -21,7 +21,7 @@
 
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { cdpSessionManager } from '@/utils/cdp-session-manager';
 import { resolveElement } from './snapshot/element-actions';
 import { sendCommand as snapshotSendCommand } from './snapshot/debugger-session';

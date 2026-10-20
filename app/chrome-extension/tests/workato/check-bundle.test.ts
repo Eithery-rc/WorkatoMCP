@@ -4,7 +4,7 @@
  *
  * The matcher is exercised against fixture strings rather than the real
  * bundle, so a failure here points at the matcher and not at the build. The
- * real bundle is checked by `pnpm --filter workatomcp-extension check:bundle`,
+ * real bundle is checked by `pnpm --filter mokutab-extension check:bundle`,
  * which `wxt build` chains.
  */
 

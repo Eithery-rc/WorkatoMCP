@@ -1,5 +1,8 @@
 export const COMMAND_NAME = 'workatomcp-bridge';
 
+/** The npm package, for install commands (the command name is not installable). */
+export const PACKAGE_NAME = '@mokuhub/mokutab-bridge';
+
 /**
  * Extension IDs allowed to connect to this bridge: the native-messaging
  * manifest's `allowed_origins` (written by `register`), the extension

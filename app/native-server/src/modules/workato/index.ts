@@ -4,7 +4,7 @@
  */
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { WORKATO_MODULE } from 'workatomcp-shared';
+import { WORKATO_MODULE } from '@mokuhub/mokutab-shared';
 import type { BridgeModule, JsonObject, PreparedModuleCall } from '../../mcp/module-api';
 import { readContextBlock } from '../../mcp/tool-result';
 import {

@@ -18,7 +18,7 @@
  * against a capped slice of each value.
  */
 
-import { TOOL_NAMES } from 'workatomcp-shared';
+import { TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { BaseBrowserToolExecutor } from '@/entrypoints/background/tools/base-browser';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { findWorkatoTab, WorkatoDispatchError } from './tab-dispatch';

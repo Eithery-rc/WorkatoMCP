@@ -11,7 +11,7 @@
  */
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { WORKATO_TOOL_NAMES } from 'workatomcp-shared';
+import { WORKATO_TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import type {
   ExtensionRequest,
   JsonObject,
