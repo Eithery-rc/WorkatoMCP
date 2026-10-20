@@ -20,7 +20,7 @@ import {
   type RawNode,
   type RawSchemaEntry,
   type RecipeVersion,
-} from '@/entrypoints/background/tools/workato/recipe-view';
+} from '@/entrypoints/background/modules/workato/tools/workato/recipe-view';
 
 const version: RecipeVersion = {
   version_no: 12,

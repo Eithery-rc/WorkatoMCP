@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import {
   collectMatchingSteps,
   hitsForCandidate,
-} from '@/entrypoints/background/tools/workato/step-search';
+} from '@/entrypoints/background/modules/workato/tools/workato/step-search';
 
 /** Shaped like a real /recipes/<id>/code.json body: trigger at the root, steps in `block`. */
 const CODE_TREE = {

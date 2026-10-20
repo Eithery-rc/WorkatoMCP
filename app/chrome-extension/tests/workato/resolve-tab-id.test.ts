@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { resolveTabId } from '@/entrypoints/background/tools/workato-ui/dom-helpers';
+import { resolveTabId } from '@/entrypoints/background/modules/workato/tools/workato-ui/dom-helpers';
 
 type Tab = chrome.tabs.Tab;
 const mockTabs: Tab[] = [];

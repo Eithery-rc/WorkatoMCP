@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { summarizeSaveOutcome } from '@/entrypoints/background/tools/workato-ui/save-guards';
+import { summarizeSaveOutcome } from '@/entrypoints/background/modules/workato/tools/workato-ui/save-guards';
 
 describe('summarizeSaveOutcome', () => {
   it('reports a clean save as persisted, valid and verified', () => {

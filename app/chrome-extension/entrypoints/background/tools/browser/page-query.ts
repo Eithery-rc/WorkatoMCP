@@ -11,7 +11,7 @@
  * scope would not exist in the page (see scripts/check-bundle.mjs).
  */
 
-import { riskyRegexReason } from '../workato/recipe-grep';
+import { riskyRegexReason } from './regex-safety';
 import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
 import { TOOL_NAMES } from 'workatomcp-shared';
 import { BaseBrowserToolExecutor, getTabOrThrow } from '../base-browser';

@@ -15,7 +15,7 @@ import {
   describeWorkatoError,
   missingDrivers,
   stripHtml,
-} from '@/entrypoints/background/tools/workato/step-schema';
+} from '@/entrypoints/background/modules/workato/tools/workato/step-schema';
 
 /** /connections/workato_variable/extended_schema.json, declare_list, verbatim. */
 const DECLARE_LIST_RESULT = {

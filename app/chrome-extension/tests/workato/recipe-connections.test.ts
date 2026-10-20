@@ -5,7 +5,7 @@ import {
   projectRecipeConnections,
   summarizeRecipeConnections,
   type RecipeConnectionsRaw,
-} from '@/entrypoints/background/tools/workato/recipe-connections';
+} from '@/entrypoints/background/modules/workato/tools/workato/recipe-connections';
 
 /**
  * Fixtures mirror live captures from 2026-09-07:

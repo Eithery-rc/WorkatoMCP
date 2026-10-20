@@ -22,7 +22,7 @@ import {
   resolvePropertyByName,
   shapeProperty,
   type PropertyRecord,
-} from '@/entrypoints/background/tools/workato/properties';
+} from '@/entrypoints/background/modules/workato/tools/workato/properties';
 
 function record(over: Partial<PropertyRecord> = {}): PropertyRecord {
   return {

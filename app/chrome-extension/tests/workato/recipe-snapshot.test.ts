@@ -17,8 +17,11 @@ import {
   putRecipeSnapshot,
   recipeSnapshotStats,
   snapshotKey,
-} from '@/entrypoints/background/tools/workato/recipe-snapshot';
-import type { RawNode, RecipeVersion } from '@/entrypoints/background/tools/workato/recipe-view';
+} from '@/entrypoints/background/modules/workato/tools/workato/recipe-snapshot';
+import type {
+  RawNode,
+  RecipeVersion,
+} from '@/entrypoints/background/modules/workato/tools/workato/recipe-view';
 
 const version = (versionNo: number): RecipeVersion => ({
   version_no: versionNo,

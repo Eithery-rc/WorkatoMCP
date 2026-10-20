@@ -11,11 +11,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { findOperationInputFields } from '@/entrypoints/background/tools/workato/adapter-meta';
+import { findOperationInputFields } from '@/entrypoints/background/modules/workato/tools/workato/adapter-meta';
 import {
   buildStaticFieldIndex,
   stepsNeedingStaticFields,
-} from '@/entrypoints/background/tools/workato/pull-recipe';
+} from '@/entrypoints/background/modules/workato/tools/workato/pull-recipe';
 import {
   flattenAdapterFields,
   inspectStep,
@@ -24,7 +24,7 @@ import {
   type FieldEntry,
   type RawNode,
   type StaticFieldIndex,
-} from '@/entrypoints/background/tools/workato/recipe-view';
+} from '@/entrypoints/background/modules/workato/tools/workato/recipe-view';
 
 const META = {
   logger: {

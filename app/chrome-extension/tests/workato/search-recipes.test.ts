@@ -14,11 +14,11 @@ import {
   searchRecipesInPage,
   usesApps,
   type SearchRecipesWalkOptions,
-} from '@/entrypoints/background/tools/workato/search-recipes';
+} from '@/entrypoints/background/modules/workato/tools/workato/search-recipes';
 import {
   cleanHighlightMarkup,
   extractHighlights,
-} from '@/entrypoints/background/tools/workato/slim-asset';
+} from '@/entrypoints/background/modules/workato/tools/workato/slim-asset';
 
 function item(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {

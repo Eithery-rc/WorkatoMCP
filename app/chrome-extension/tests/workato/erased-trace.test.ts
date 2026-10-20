@@ -19,7 +19,7 @@ import {
   isErasedJob,
   type RawLineDetailsResponse,
   type RawMetaResponse,
-} from '@/entrypoints/background/tools/workato/slim-trace';
+} from '@/entrypoints/background/modules/workato/tools/workato/slim-trace';
 
 const ERASED_META: RawMetaResponse = {
   result: {

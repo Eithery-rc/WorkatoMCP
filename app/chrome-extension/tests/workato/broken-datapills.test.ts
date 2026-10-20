@@ -9,8 +9,8 @@ import {
   describeBrokenDatapills,
   findBrokenDatapills,
   normalizeCodeTree,
-} from '@/entrypoints/background/tools/workato-ui/save-guards';
-import { isReadAction } from '@/entrypoints/background/tools/workato/call-action';
+} from '@/entrypoints/background/modules/workato/tools/workato-ui/save-guards';
+import { isReadAction } from '@/entrypoints/background/modules/workato/tools/workato/call-action';
 
 const GOOD = `#{_dp('{"pill_type":"output","provider":"py_eval","line":"1616311d","path":["email"]}')}`;
 // What a regex that cut across the pill boundary leaves behind: the payload's

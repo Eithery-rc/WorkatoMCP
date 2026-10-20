@@ -1,25 +1,21 @@
 import { createErrorResponse } from '@/common/tool-handler';
 import { ERROR_MESSAGES } from '@/common/constants';
 import * as browserTools from './browser';
-import * as workatoTools from './workato';
-import * as workatoUiTools from './workato-ui';
-import * as workatoLookupTools from './workato-lookup';
-import * as workatoLcapTools from './workato-lcap';
-import * as workatoDataTableTools from './workato-data-table';
-import * as workatoSessionTools from './workato-session';
-import { maybeAppendContextBlock } from './workato/session-context';
+import { EXTENSION_MODULES } from '../modules';
+import type { ExtensionModule } from '../extension-module';
 import { runExclusiveForTab } from './tab-queue';
 
-const tools = {
-  ...browserTools,
-  ...workatoTools,
-  ...workatoUiTools,
-  ...workatoLookupTools,
-  ...workatoLcapTools,
-  ...workatoDataTableTools,
-  ...workatoSessionTools,
-} as any;
-const toolsMap = new Map(Object.values(tools).map((tool: any) => [tool.name, tool]));
+const toolsMap = new Map<string, any>(
+  Object.values(browserTools as Record<string, any>).map((tool: any) => [tool.name, tool]),
+);
+/** The module each module tool belongs to. */
+const ownerOf = new Map<string, ExtensionModule>();
+for (const module of EXTENSION_MODULES) {
+  for (const executor of module.executors) {
+    toolsMap.set(executor.name, executor);
+    ownerOf.set(executor.name, module);
+  }
+}
 
 /**
  * Tool call parameter interface
@@ -37,21 +33,20 @@ export const handleCallTool = async (param: ToolCallParam) => {
   if (!tool) {
     return createErrorResponse(`Tool ${param.name} not found`);
   }
+  const owner = ownerOf.get(param.name);
   const tabId = param.args?.tabId;
   // chrome_handle_dialog answers the dialog another call on this tab is blocked
   // on; queueing it behind that call would deadlock the tab.
   if (typeof tabId === 'number' && param.name !== 'chrome_handle_dialog') {
-    return runExclusiveForTab(tabId, () => executeTool(tool, param));
+    return runExclusiveForTab(tabId, () => executeTool(tool, param, owner));
   }
-  return executeTool(tool, param);
+  return executeTool(tool, param, owner);
 };
 
-async function executeTool(tool: any, param: ToolCallParam) {
+async function executeTool(tool: any, param: ToolCallParam, owner?: ExtensionModule) {
   try {
     const result = await tool.execute(param.args);
-    // Say which tab/workspace the call actually ran in. Best effort: it never
-    // turns a successful call into a failure (see maybeAppendContextBlock).
-    return await maybeAppendContextBlock(param.name, param.args, result);
+    return owner?.afterCall ? await owner.afterCall(param.name, param.args, result) : result;
   } catch (error) {
     console.error(`Tool execution failed for ${param.name}:`, error);
     return createErrorResponse(

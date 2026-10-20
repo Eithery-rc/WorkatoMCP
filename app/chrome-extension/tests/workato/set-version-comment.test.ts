@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { setVersionCommentInPage } from '@/entrypoints/background/tools/workato/set-version-comment';
+import { setVersionCommentInPage } from '@/entrypoints/background/modules/workato/tools/workato/set-version-comment';
 
 describe('setVersionCommentInPage', () => {
   afterEach(() => {

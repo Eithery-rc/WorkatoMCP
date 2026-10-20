@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildSlimRecipe,
   buildSlimConnection,
-} from '../../entrypoints/background/tools/workato/slim-asset';
+} from '../../entrypoints/background/modules/workato/tools/workato/slim-asset';
 
 const RECIPE_FIXTURE = {
   asset_type: 'recipe',

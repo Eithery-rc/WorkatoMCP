@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSlimTrace } from '../../entrypoints/background/tools/workato/slim-trace';
+import { buildSlimTrace } from '../../entrypoints/background/modules/workato/tools/workato/slim-trace';
 
 const META_OK = {
   result: {

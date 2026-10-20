@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { changeRecipeLifecycleInPage } from '@/entrypoints/background/tools/workato/recipe-lifecycle';
+import { changeRecipeLifecycleInPage } from '@/entrypoints/background/modules/workato/tools/workato/recipe-lifecycle';
 
 describe('changeRecipeLifecycleInPage', () => {
   afterEach(() => {

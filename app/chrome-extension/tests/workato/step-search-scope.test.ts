@@ -14,7 +14,7 @@ import {
   collectMatchingSteps,
   fetchStepCandidatesInPage,
   type StepSearchWalkOptions,
-} from '@/entrypoints/background/tools/workato/step-search';
+} from '@/entrypoints/background/modules/workato/tools/workato/step-search';
 
 const PER_PAGE = 20;
 

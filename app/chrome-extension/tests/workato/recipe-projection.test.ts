@@ -19,7 +19,7 @@ import {
   previewLongValues,
   readPath,
   readPaths,
-} from '@/entrypoints/background/tools/workato/recipe-projection';
+} from '@/entrypoints/background/modules/workato/tools/workato/recipe-projection';
 
 const long = (n: number): string => 'x'.repeat(n);
 

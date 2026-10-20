@@ -13,7 +13,7 @@ import {
   filterPickOptions,
   normalisePickListParams,
   normalisePickOptions,
-} from '@/entrypoints/background/tools/workato/pick-list';
+} from '@/entrypoints/background/modules/workato/tools/workato/pick-list';
 
 /** Verbatim from POST /connections/19092754/pick_list.json, 2026-08-26. */
 const SALESFORCE_SOBJECTS = [

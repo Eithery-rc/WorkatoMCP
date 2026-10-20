@@ -18,7 +18,7 @@ import {
   hasErrors,
   judgeRender,
   layoutEntries,
-} from '@/entrypoints/background/tools/workato-lcap/page-checks';
+} from '@/entrypoints/background/modules/workato/tools/workato-lcap/page-checks';
 
 const widget = (id: string, type: string, extra: Record<string, unknown> = {}) => ({
   id,

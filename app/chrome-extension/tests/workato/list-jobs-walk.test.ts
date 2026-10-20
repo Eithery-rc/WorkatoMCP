@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   listJobsInPage,
   type ListJobsWalkOptions,
-} from '@/entrypoints/background/tools/workato/list-jobs';
+} from '@/entrypoints/background/modules/workato/tools/workato/list-jobs';
 
 const COLUMNS = [
   { name: 'custom_column_0', label: 'Marker code' },

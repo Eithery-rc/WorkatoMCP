@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { recipeIdFromUrl } from '@/entrypoints/background/tools/workato-ui/dom-helpers';
+import { recipeIdFromUrl } from '@/entrypoints/background/modules/workato/tools/workato-ui/dom-helpers';
 
 describe('recipeIdFromUrl', () => {
   it('reads the id from the shapes Workato actually serves', () => {

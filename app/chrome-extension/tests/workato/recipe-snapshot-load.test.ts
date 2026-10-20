@@ -8,18 +8,23 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/entrypoints/background/tools/workato/tab-dispatch', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('@/entrypoints/background/tools/workato/tab-dispatch')>();
-  return { ...actual, runInWorkatoTab: vi.fn() };
-});
+vi.mock(
+  '@/entrypoints/background/modules/workato/tools/workato/tab-dispatch',
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import('@/entrypoints/background/modules/workato/tools/workato/tab-dispatch')
+      >();
+    return { ...actual, runInWorkatoTab: vi.fn() };
+  },
+);
 
-import { runInWorkatoTab } from '@/entrypoints/background/tools/workato/tab-dispatch';
-import { loadRecipeSnapshot } from '@/entrypoints/background/tools/workato/pull-recipe';
+import { runInWorkatoTab } from '@/entrypoints/background/modules/workato/tools/workato/tab-dispatch';
+import { loadRecipeSnapshot } from '@/entrypoints/background/modules/workato/tools/workato/pull-recipe';
 import {
   clearRecipeSnapshots,
   recipeSnapshotStats,
-} from '@/entrypoints/background/tools/workato/recipe-snapshot';
+} from '@/entrypoints/background/modules/workato/tools/workato/recipe-snapshot';
 
 const dispatch = runInWorkatoTab as unknown as ReturnType<typeof vi.fn>;
 

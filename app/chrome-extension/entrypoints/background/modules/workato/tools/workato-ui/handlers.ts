@@ -1,0 +1,2329 @@
+/**
+ * workato_ui_* — macro tools that drive Workato's recipe editor.
+ *
+ * These nine tools sit on top of the CDP/AX-tree primitives in
+ * ../browser/snapshot/. They reuse the 'snapshot' owner tag against
+ * cdpSessionManager (per spec — both families are mutually exclusive in
+ * normal use, so refcount sharing is fine).
+ *
+ * Spec source: prompt — Workato-UI tool family v1.
+ *
+ * Each tool is exported as a runtime INSTANCE (not a class), matching the
+ * convention established by the snapshot handlers: tools/index.ts reads
+ * `.name` on each value to build its registry.
+ */
+
+import { createErrorResponse, type ToolResult } from '@/common/tool-handler';
+import { ERROR_MESSAGES } from '@/common/constants';
+import { TOOL_NAMES } from 'workatomcp-shared';
+import { BaseBrowserToolExecutor } from '@/entrypoints/background/tools/base-browser';
+import {
+  ensureAttached,
+  sendCommand,
+} from '@/entrypoints/background/tools/browser/snapshot/debugger-session';
+import { isWorkatoAppHost, WORKATO_URL_PATTERNS } from '../workato/tab-dispatch';
+import { assertExpectedContext } from '../workato/session-context';
+import { invalidateRecipeSnapshot } from '../workato/recipe-snapshot';
+import {
+  axName,
+  axRole,
+  callFunctionOnObject,
+  clickByAxNode,
+  DIRTY_STATE_SNIPPET,
+  evaluateInPage,
+  findAllAxNodes,
+  findAxNode,
+  getAxTree,
+  getTabUrl,
+  LIST_STEPS_SNIPPET,
+  pollUntil,
+  recipeIdFromUrl,
+  resolveBackendNodeToObjectId,
+  resolveTabId,
+  sleep,
+} from './dom-helpers';
+import {
+  describeBrokenDatapills,
+  describeMissing,
+  diffPersistedTree,
+  findBrokenDatapills,
+  isFullyPersisted,
+  normalizeCodeTree,
+  summarizeSaveOutcome,
+  type TreeDiff,
+} from './save-guards';
+import type {
+  AddStepArgs,
+  AXNode,
+  CreateRecipeArgs,
+  EnterEditModeArgs,
+  ExitEditModeArgs,
+  FocusStepArgs,
+  InsertDatapillArgs,
+  ListStepsArgs,
+  OpenRecipeArgs,
+  SaveRecipeArgs,
+  SaveRecipeCodeArgs,
+  SetFieldArgs,
+  StepInfo,
+} from './types';
+
+// ---------------------------------------------------------------------------
+// workato_ui_open_recipe
+// ---------------------------------------------------------------------------
+
+class WorkatoUiOpenRecipeImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_UI.OPEN_RECIPE;
+
+  async execute(args: OpenRecipeArgs): Promise<ToolResult> {
+    console.log('[workato-ui] open_recipe requested:', args);
+    try {
+      if (typeof args?.recipe_id !== 'number' || !Number.isFinite(args.recipe_id)) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': recipe_id (number) is required',
+        );
+      }
+      const mode = args.mode === 'edit' ? 'edit' : 'view';
+
+      // Find any existing Workato tab on this same recipe. Restrict to
+      // session-bearing hosts (app.* subdomain); docs.workato.com / www etc
+      // would otherwise be picked as a navigation target.
+      const allWorkatoTabs = await chrome.tabs.query({ url: WORKATO_URL_PATTERNS });
+      const workatoTabs = allWorkatoTabs.filter(
+        (t) => typeof t.url === 'string' && isWorkatoAppHost(new URL(t.url).host),
+      );
+      const matchPath = `/recipes/${args.recipe_id}`;
+      const sameRecipeTab = workatoTabs.find(
+        (t) => typeof t.url === 'string' && t.url.includes(matchPath),
+      );
+
+      let targetTabId: number;
+      let originHost: string | undefined;
+
+      if (sameRecipeTab?.id) {
+        targetTabId = sameRecipeTab.id;
+        if (sameRecipeTab.url) originHost = new URL(sameRecipeTab.url).host;
+        await chrome.tabs.update(targetTabId, { active: true });
+        if (typeof sameRecipeTab.windowId === 'number') {
+          await chrome.windows.update(sameRecipeTab.windowId, { focused: true });
+        }
+        // If we're in view mode but caller wants edit, navigate. Otherwise no-op
+        // navigation if already on the desired URL.
+        const currentUrl = sameRecipeTab.url ?? '';
+        const wantEditUrl = currentUrl.endsWith('/edit');
+        if (mode === 'edit' && !wantEditUrl) {
+          await chrome.tabs.update(targetTabId, {
+            url: `${new URL(currentUrl).origin}/recipes/${args.recipe_id}/edit`,
+          });
+        }
+      } else {
+        // Use the active Workato tab as our nav target, otherwise fall back to
+        // active tab in current window.
+        const anyWorkato = workatoTabs.find((t) => typeof t.id === 'number');
+        if (anyWorkato?.id) {
+          targetTabId = anyWorkato.id;
+          if (anyWorkato.url) originHost = new URL(anyWorkato.url).host;
+        } else {
+          targetTabId = await resolveTabId(args);
+        }
+        const origin = originHost ? `https://${originHost}` : 'https://app.workato.com';
+        const url = `${origin}/recipes/${args.recipe_id}${mode === 'edit' ? '/edit' : ''}`;
+        await chrome.tabs.update(targetTabId, { url, active: true });
+      }
+
+      // Wait for the page's AX tree to show a Save (edit mode) or any recipe
+      // toolbar button (view mode). Poll the tab url + AX tree for ~10s.
+      const success = await pollUntil(
+        async () => {
+          const url = await getTabUrl(targetTabId);
+          if (!url.includes(matchPath)) return false;
+          try {
+            const nodes = await getAxTree(targetTabId);
+            // In edit mode: look for Save button. In view mode: look for Edit button.
+            const targetName = mode === 'edit' ? 'Save' : 'Edit';
+            const found = findAxNode(nodes, { role: 'button', nameEquals: targetName });
+            if (found) return true;
+            // Also accept any recipe heading if Save/Edit isn't visible yet.
+            const heading = findAxNode(nodes, { role: 'heading' });
+            return !!heading;
+          } catch {
+            return false;
+          }
+        },
+        { timeoutMs: 12_000, intervalMs: 350 },
+      );
+
+      if (!success) {
+        return createErrorResponse(
+          `workato_ui_open_recipe: timed out waiting for recipe ${args.recipe_id} ` +
+            `to load (mode=${mode}) in tab ${targetTabId}`,
+        );
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `opened recipe ${args.recipe_id} in tab ${targetTabId} (mode=${mode})`,
+          },
+        ],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-ui] open_recipe failed:', error);
+      return createErrorResponse(
+        `workato_ui_open_recipe failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// workato_ui_enter_edit_mode
+// ---------------------------------------------------------------------------
+
+class WorkatoUiEnterEditModeImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_UI.ENTER_EDIT_MODE;
+
+  async execute(args: EnterEditModeArgs): Promise<ToolResult> {
+    console.log('[workato-ui] enter_edit_mode requested:', args);
+    try {
+      const tabId = await resolveTabId(args ?? {});
+      let url = await getTabUrl(tabId);
+
+      if (url.endsWith('/edit')) {
+        return {
+          content: [{ type: 'text', text: `already in edit mode (recipe url: ${url})` }],
+          isError: false,
+        };
+      }
+
+      await ensureAttached(tabId);
+      const nodes = await getAxTree(tabId);
+      const editBtn = findAxNode(nodes, { role: 'button', nameEquals: 'Edit' });
+      if (!editBtn) {
+        return createErrorResponse(
+          'workato_ui_enter_edit_mode: could not find toolbar "Edit" button. ' +
+            'Is the recipe open and viewable?',
+        );
+      }
+
+      await clickByAxNode(tabId, editBtn);
+
+      // Wait up to 8s for Save button to appear.
+      const ok = await pollUntil(
+        async () => {
+          try {
+            const ns = await getAxTree(tabId);
+            return !!findAxNode(ns, { role: 'button', nameEquals: 'Save' });
+          } catch {
+            return false;
+          }
+        },
+        { timeoutMs: 8000, intervalMs: 250 },
+      );
+      if (!ok) {
+        return createErrorResponse(
+          'workato_ui_enter_edit_mode: clicked Edit but Save button did not appear within 8s',
+        );
+      }
+
+      url = await getTabUrl(tabId);
+      return {
+        content: [{ type: 'text', text: `entered edit mode (recipe url: ${url})` }],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-ui] enter_edit_mode failed:', error);
+      return createErrorResponse(
+        `workato_ui_enter_edit_mode failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// workato_ui_list_steps
+// ---------------------------------------------------------------------------
+
+class WorkatoUiListStepsImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_UI.LIST_STEPS;
+
+  async execute(args: ListStepsArgs): Promise<ToolResult> {
+    console.log('[workato-ui] list_steps requested:', args);
+    try {
+      const tabId = await resolveTabId(args ?? {});
+      await ensureAttached(tabId);
+      const raw = await evaluateInPage<StepInfo[] | { __error: string }>(tabId, LIST_STEPS_SNIPPET);
+      if (raw && typeof raw === 'object' && '__error' in raw) {
+        return createErrorResponse(
+          `workato_ui_list_steps: page-side error: ${(raw as { __error: string }).__error}`,
+        );
+      }
+      const steps = Array.isArray(raw) ? raw : [];
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ steps }, null, 2) }],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-ui] list_steps failed:', error);
+      return createErrorResponse(
+        `workato_ui_list_steps failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// workato_ui_focus_step
+// ---------------------------------------------------------------------------
+
+/**
+ * Page-side click helper for focus_step. Given a step number, walks up from the
+ * .recipe-step__number-button (26px bubble) to the .recipe-step card, then
+ * clicks the .recipe-step__title-container (418px title div) with the full
+ * mouse sequence (mousedown+mouseup+click — Workato listens for mousedown).
+ * Returns { ok: true, cmCountBefore } or { ok: false, error }.
+ */
+const FOCUS_STEP_PAGE_FN = `
+((stepNumber) => {
+  try {
+    const buttons = Array.from(document.querySelectorAll('.recipe-step__number-button'));
+    let bubble = null;
+    for (const b of buttons) {
+      const txt = (b.textContent || '').trim();
+      if (txt === String(stepNumber)) { bubble = b; break; }
+    }
+    if (!bubble) return { ok: false, error: 'no .recipe-step__number-button with text=' + stepNumber };
+    const card = bubble.closest('.recipe-step');
+    if (!card) return { ok: false, error: 'could not walk from bubble up to .recipe-step card' };
+    const title = card.querySelector('.recipe-step__title-container');
+    if (!title) return { ok: false, error: 'no .recipe-step__title-container inside the step card' };
+    const r = title.getBoundingClientRect();
+    const cx = r.x + r.width / 2;
+    const cy = r.y + r.height / 2;
+    for (const t of ['mousedown', 'mouseup', 'click']) {
+      title.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: 1, detail: 1 }));
+    }
+    return { ok: true, cmCountBefore: document.querySelectorAll('.CodeMirror').length };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+})
+`;
+
+const CM_COUNT_SNIPPET = `document.querySelectorAll('.CodeMirror').length`;
+
+class WorkatoUiFocusStepImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_UI.FOCUS_STEP;
+
+  async execute(args: FocusStepArgs): Promise<ToolResult> {
+    console.log('[workato-ui] focus_step requested:', args);
+    try {
+      if (typeof args?.step_number !== 'number' || !Number.isFinite(args.step_number)) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': step_number (number) is required',
+        );
+      }
+      const tabId = await resolveTabId(args);
+      await ensureAttached(tabId);
+
+      // Locate via AX tree first to verify the step bubble exists with the
+      // expected number — but click the .recipe-step__title-container (not the
+      // bubble button, which doesn't open the panel for saved steps).
+      const nodes = await getAxTree(tabId);
+      const candidates = findAllAxNodes(nodes, {
+        role: 'button',
+        nameEquals: String(args.step_number),
+      });
+      if (candidates.length === 0) {
+        return createErrorResponse(
+          `workato_ui_focus_step: no step bubble with number=${args.step_number} found`,
+        );
+      }
+
+      const expr = `(${FOCUS_STEP_PAGE_FN})(${JSON.stringify(args.step_number)})`;
+      const clickResult = await evaluateInPage<{
+        ok: boolean;
+        cmCountBefore?: number;
+        error?: string;
+      }>(tabId, expr);
+      if (!clickResult?.ok) {
+        return createErrorResponse(
+          `workato_ui_focus_step: ${clickResult?.error ?? 'unknown error clicking title'}`,
+        );
+      }
+
+      // Verify the config panel opened: poll for CodeMirror count > 0 (and
+      // ideally greater than the pre-click count). Saved-step panels always
+      // surface at least one CodeMirror editor for the action's primary input.
+      const cmBefore = clickResult.cmCountBefore ?? 0;
+      const start = Date.now();
+      const settled = await pollUntil(
+        async () => {
+          try {
+            const count = await evaluateInPage<number>(tabId, CM_COUNT_SNIPPET);
+            if (typeof count === 'number' && count > 0 && count >= cmBefore) {
+              return { elapsedMs: Date.now() - start, count };
+            }
+            return false;
+          } catch {
+            return false;
+          }
+        },
+        { timeoutMs: 3000, intervalMs: 200 },
+      );
+
+      if (!settled) {
+        return createErrorResponse(
+          `workato_ui_focus_step: clicked title for step ${args.step_number} but no CodeMirror panel appeared within 3s`,
+        );
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `focused step ${args.step_number} (panel settled in ${settled.elapsedMs}ms, CodeMirror count=${settled.count})`,
+          },
+        ],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-ui] focus_step failed:', error);
+      return createErrorResponse(
+        `workato_ui_focus_step failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// workato_ui_add_step
+// ---------------------------------------------------------------------------
+
+class WorkatoUiAddStepImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_UI.ADD_STEP;
+
+  async execute(args: AddStepArgs): Promise<ToolResult> {
+    console.log('[workato-ui] add_step requested:', args);
+    try {
+      if (typeof args?.after_step !== 'number') {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': after_step (number) is required',
+        );
+      }
+      if (!args.app || !args.action) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': app and action are required',
+        );
+      }
+      const kind = args.kind ?? 'action';
+      const tabId = await resolveTabId(args);
+      await ensureAttached(tabId);
+
+      // Step 1: find the "Add step" button *after* step `after_step`.
+      // Workato renders one Add-step button per gap. We find them in DOM
+      // order and pick the N-th, where N = after_step (1-indexed from the
+      // first gap-after-step). This is the same semantics as the spec.
+      const nodes = await getAxTree(tabId);
+      const addStepNodes = findAllAxNodes(nodes, { role: 'button', nameContains: 'Add step' });
+      if (addStepNodes.length === 0) {
+        return createErrorResponse(
+          'workato_ui_add_step: no "Add step" buttons found — is the recipe in edit mode?',
+        );
+      }
+      // After step N: there are typically N "Add step" buttons (one between
+      // each step and one after the last). We pick index = after_step - 1.
+      const targetIdx = Math.max(0, Math.min(addStepNodes.length - 1, args.after_step - 1));
+      const addBtn = addStepNodes[targetIdx];
+      await clickByAxNode(tabId, addBtn);
+
+      // Step 2: wait for the action picker menu (role=menuitem items).
+      const menuNodes = await pollUntil(
+        async () => {
+          const ns = await getAxTree(tabId);
+          const items = findAllAxNodes(ns, { role: 'menuitem' });
+          return items.length > 0 ? ns : null;
+        },
+        { timeoutMs: 5000, intervalMs: 200 },
+      );
+      if (!menuNodes) {
+        return createErrorResponse(
+          'workato_ui_add_step: action picker menu did not appear within 5s',
+        );
+      }
+
+      // Map kind → menuitem label.
+      const kindLabelMap: Record<string, string> = {
+        action: 'Action in app',
+        if: 'IF condition',
+        repeat: 'Repeat',
+        stop: 'Stop job',
+        handle_errors: 'Handle errors',
+      };
+      const kindLabel = kindLabelMap[kind] ?? 'Action in app';
+      const kindItems = findAllAxNodes(menuNodes, {
+        role: 'menuitem',
+        nameContains: kindLabel,
+      });
+      if (kindItems.length === 0) {
+        return createErrorResponse(
+          `workato_ui_add_step: could not find menuitem matching "${kindLabel}"`,
+        );
+      }
+      await clickByAxNode(tabId, kindItems[0]);
+
+      // For non-action kinds we're done as far as the picker chain goes.
+      if (kind !== 'action') {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `added ${kind} step after step ${args.after_step}`,
+            },
+          ],
+          isError: false,
+        };
+      }
+
+      // Step 3: wait for app picker side panel — textbox "Text to search".
+      const pickerNodes = await pollUntil(
+        async () => {
+          const ns = await getAxTree(tabId);
+          const sb = findAxNode(ns, { role: 'textbox', nameContains: 'search' });
+          return sb ? ns : null;
+        },
+        { timeoutMs: 6000, intervalMs: 250 },
+      );
+      if (!pickerNodes) {
+        return createErrorResponse(
+          'workato_ui_add_step: app picker side panel did not appear within 6s',
+        );
+      }
+
+      // Step 4: type `app` into the search textbox.
+      const searchBox = findAxNode(pickerNodes, { role: 'textbox', nameContains: 'search' });
+      if (!searchBox || typeof searchBox.backendDOMNodeId !== 'number') {
+        return createErrorResponse('workato_ui_add_step: search textbox lost between AX fetches');
+      }
+      await sendCommand(tabId, 'DOM.focus', { backendNodeId: searchBox.backendDOMNodeId });
+      // Clear with select-all then insertText.
+      await sendCommand(tabId, 'Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        modifiers: 2,
+        key: 'a',
+        code: 'KeyA',
+        text: '\x01',
+        windowsVirtualKeyCode: 65,
+        nativeVirtualKeyCode: 65,
+      });
+      await sendCommand(tabId, 'Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        modifiers: 2,
+        key: 'a',
+        code: 'KeyA',
+        windowsVirtualKeyCode: 65,
+        nativeVirtualKeyCode: 65,
+      });
+      await sendCommand(tabId, 'Input.insertText', { text: args.app });
+      await sleep(400); // let the list filter
+
+      // Snapshot step count + CodeMirror count BEFORE the app click so we can
+      // detect single-action apps (e.g. Logger) where Workato auto-completes
+      // the step the moment the app is picked — no action-button list ever
+      // renders.
+      const stepsBefore = await evaluateInPage<StepInfo[]>(tabId, LIST_STEPS_SNIPPET).catch(
+        () => [] as StepInfo[],
+      );
+      const stepCountBefore = Array.isArray(stepsBefore) ? stepsBefore.length : 0;
+      const cmCountBefore = await evaluateInPage<number>(tabId, CM_COUNT_SNIPPET).catch(() => 0);
+
+      // Step 5: click the app button.
+      const appNodes = await pollUntil(
+        async () => {
+          const ns = await getAxTree(tabId);
+          const btns = findAllAxNodes(ns, {
+            role: 'button',
+            nameContains: args.app,
+          });
+          // Exclude the "Add step" or other unrelated buttons by requiring close-ish name match.
+          const filtered = btns.filter((b) => {
+            const nm = axName(b).toLowerCase();
+            return !nm.includes('add step') && !nm.includes('search');
+          });
+          return filtered.length > 0 ? filtered : null;
+        },
+        { timeoutMs: 5000, intervalMs: 250 },
+      );
+      if (!appNodes) {
+        return createErrorResponse(
+          `workato_ui_add_step: no app button matching "${args.app}" found in picker`,
+        );
+      }
+      await clickByAxNode(tabId, appNodes[0]);
+
+      // Step 6: poll briefly (~600ms) to see if Workato renders an action
+      // picker. If it never appears in that window, treat this as an
+      // auto-completed single-action app (e.g. Logger) and skip to
+      // verification. Only error if action buttons DO appear but none match.
+      type ActionPollResult =
+        | { kind: 'matched'; nodes: AXNode[] }
+        | { kind: 'no-match'; sample: string[] };
+      const actionPoll = await pollUntil<ActionPollResult>(
+        async () => {
+          const ns = await getAxTree(tabId);
+          const allBtns = findAllAxNodes(ns, { role: 'button' }).filter((b) => {
+            const nm = axName(b).toLowerCase();
+            return nm && !nm.includes('add step') && !nm.includes('search');
+          });
+          // Restrict to buttons we'd consider candidates for "action picker
+          // entries". The app-picker app buttons should have already gone away
+          // after the app click; we look for any new button list.
+          const matching = allBtns.filter((b) => {
+            const nm = axName(b).toLowerCase();
+            return nm.includes(args.action.toLowerCase());
+          });
+          if (matching.length > 0) {
+            return { kind: 'matched', nodes: matching };
+          }
+          // If buttons in general appeared but none match, keep polling — but
+          // signal a no-match result so callers can collect a sample.
+          if (allBtns.length > 0) {
+            // Don't return yet; let pollUntil keep trying — many such buttons
+            // are unrelated chrome (sidebar nav etc). We only treat "no match"
+            // as definitive after the poll window ends.
+            return false;
+          }
+          return false;
+        },
+        { timeoutMs: 600, intervalMs: 100 },
+      );
+
+      if (actionPoll && actionPoll.kind === 'matched') {
+        await clickByAxNode(tabId, actionPoll.nodes[0]);
+      } else {
+        // No matching action button surfaced in the 600ms window. Two cases:
+        //   1. Auto-completion (single-action app): no action picker rendered.
+        //   2. Picker rendered but our `action` arg doesn't match any item.
+        // We disambiguate by collecting any action-list buttons that DID
+        // appear, AFTER the poll window.
+        const finalTree = await getAxTree(tabId);
+        const finalBtns = findAllAxNodes(finalTree, { role: 'button' }).filter((b) => {
+          const nm = axName(b).toLowerCase();
+          return nm && !nm.includes('add step') && !nm.includes('search');
+        });
+        const looksLikeActionPicker = finalBtns.some((b) => {
+          // crude heuristic: action picker entries are typically several lines
+          // tall and include verbs like "Get", "Create", "List", "Send", "Log".
+          const nm = axName(b);
+          return /\b(get|create|update|delete|list|search|send|log|trigger|run|fetch|post)\b/i.test(
+            nm,
+          );
+        });
+        if (looksLikeActionPicker) {
+          const sample = finalBtns.slice(0, 8).map((b) => axName(b));
+          return createErrorResponse(
+            `workato_ui_add_step: action picker is visible but no button matches "${args.action}" ` +
+              `(app="${args.app}"). Sample buttons: ${JSON.stringify(sample)}`,
+          );
+        }
+        // Likely auto-completion. Fall through to verification below.
+      }
+
+      // Step 7: verify the step was added — either step count increased OR a
+      // fresh config panel appeared (CodeMirror count went up).
+      await sleep(600);
+      const verified = await pollUntil(
+        async () => {
+          const stepsNow = await evaluateInPage<StepInfo[]>(tabId, LIST_STEPS_SNIPPET).catch(
+            () => [] as StepInfo[],
+          );
+          const stepCountNow = Array.isArray(stepsNow) ? stepsNow.length : 0;
+          const cmCountNow = await evaluateInPage<number>(tabId, CM_COUNT_SNIPPET).catch(() => 0);
+          if (stepCountNow > stepCountBefore || cmCountNow > cmCountBefore) {
+            return { stepsNow, stepCountNow, cmCountNow };
+          }
+          return false;
+        },
+        { timeoutMs: 4000, intervalMs: 250 },
+      );
+
+      if (!verified) {
+        return createErrorResponse(
+          `workato_ui_add_step: app "${args.app}" was clicked but no new step or config panel appeared ` +
+            `(step count stayed at ${stepCountBefore}, CodeMirror count stayed at ${cmCountBefore})`,
+        );
+      }
+
+      const stepsAfter = Array.isArray(verified.stepsNow) ? verified.stepsNow : [];
+      const newStepNum =
+        stepsAfter.length > 0
+          ? Math.max(args.after_step + 1, ...stepsAfter.map((s) => s.number))
+          : args.after_step + 1;
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `added step ${newStepNum} (${args.app} -> ${args.action})`,
+          },
+        ],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-ui] add_step failed:', error);
+      return createErrorResponse(
+        `workato_ui_add_step failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// workato_ui_set_field
+// ---------------------------------------------------------------------------
+
+/**
+ * Find a field by visible label or data-field-id, then write the value
+ * through the most appropriate path (CodeMirror / contenteditable / input).
+ *
+ * Page-side function — kept compact because it ships via Runtime.evaluate.
+ * Returns:
+ *   { ok: true, kind: 'codemirror'|'input'|'textarea'|'contenteditable', label: string }
+ *   { ok: false, error: string }
+ */
+const SET_FIELD_PAGE_FN = `
+(async (field, value, mode) => {
+  try {
+    // ---- find the field's input element ----
+    let wrapper = null;
+    let matchedLabel = '';
+
+    // Strategy 1: visible label match via w-form-field-simple-label > w-searchable.
+    const labels = Array.from(document.querySelectorAll('w-form-field-simple-label, [class*="form-field-simple-label"]'));
+    const fieldLower = field.toLowerCase();
+    for (const lab of labels) {
+      const searchable = lab.querySelector('w-searchable') || lab;
+      const txt = (searchable.textContent || '').trim();
+      if (!txt) continue;
+      if (txt.toLowerCase() === fieldLower || txt.toLowerCase().includes(fieldLower)) {
+        // Walk up to the field container (w-form-field / form-field), then find
+        // the input wrapper inside.
+        let container = lab.closest('w-form-field') || lab.closest('[class~="form-field"]') || lab.parentElement;
+        if (container) {
+          wrapper = container.querySelector('w-text-field, w-textarea, w-formula-field, w-toggle, input, textarea, [contenteditable], .CodeMirror');
+          if (wrapper) {
+            matchedLabel = txt;
+            break;
+          }
+        }
+      }
+    }
+
+    // Strategy 2: data-field-id match. Workato encodes data-field-id as a JSON
+    // array, e.g. data-field-id='["message"]', so we accept both raw and encoded.
+    if (!wrapper) {
+      const wantRaw = field;
+      const wantEncoded = JSON.stringify([field]);
+      const byIdNodes = document.querySelectorAll('[data-field-id]');
+      for (const node of byIdNodes) {
+        const v = node.getAttribute('data-field-id') || '';
+        if (v === wantRaw || v === wantEncoded) {
+          wrapper = node;
+          matchedLabel = field;
+          break;
+        }
+      }
+    }
+
+    if (!wrapper) {
+      return { ok: false, error: 'field not found by label or data-field-id: ' + field };
+    }
+
+    // Optional: toggle text/formula switcher if mode is provided.
+    if (mode === 'text' || mode === 'formula') {
+      const container = wrapper.closest('w-form-field, [class*="form-field"]') || wrapper.parentElement;
+      if (container) {
+        const switcher = container.querySelectorAll('.formula-switcher__item, [class*="formula-switcher"] [class*="item"]');
+        for (const item of switcher) {
+          const t = (item.textContent || '').trim().toLowerCase();
+          if ((mode === 'formula' && t.startsWith('formula')) || (mode === 'text' && t.startsWith('text'))) {
+            const isActive = (item.className || '').includes('active') || (item.getAttribute('aria-selected') === 'true');
+            if (!isActive && typeof item.click === 'function') {
+              item.click();
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // ---- write the value ----
+    // Priority 1: CodeMirror. Workato renders a w-text-field-preview placeholder
+    // and lazy-instantiates CodeMirror on user interaction. If we see the
+    // preview, click to promote it to the live editor, then wait briefly for
+    // the .CodeMirror instance to attach.
+    function fireMouseSeq(el) {
+      const r = el.getBoundingClientRect();
+      const cx = r.x + r.width / 2;
+      const cy = r.y + r.height / 2;
+      for (const t of ['mousedown', 'mouseup', 'click']) {
+        el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: 1, detail: 1 }));
+      }
+    }
+    const findCmRoot = () =>
+      wrapper.classList && wrapper.classList.contains('CodeMirror')
+        ? wrapper
+        : wrapper.querySelector('.CodeMirror') || (wrapper.closest && wrapper.closest('.CodeMirror'));
+    let cmRoot = findCmRoot();
+    if (cmRoot && !cmRoot.CodeMirror) {
+      const container = wrapper.closest('w-form-field') || wrapper.closest('[class~="form-field"]') || wrapper.parentElement;
+      const preview = container && container.querySelector('w-text-field-preview, [class*="text-field-preview"], [class*="text-field__preview"]');
+      // Workato listens for mousedown (not click) to promote the preview into a
+      // live CodeMirror instance — dispatch the full mouse sequence.
+      fireMouseSeq(preview || cmRoot);
+      // Wait up to 1.5s for the CodeMirror instance to attach.
+      const start = Date.now();
+      while (Date.now() - start < 1500) {
+        await new Promise(r => setTimeout(r, 50));
+        cmRoot = findCmRoot();
+        if (cmRoot && cmRoot.CodeMirror) break;
+      }
+    }
+    if (cmRoot && cmRoot.CodeMirror) {
+      cmRoot.CodeMirror.focus();
+      cmRoot.CodeMirror.setValue(value);
+      // Synthesize a focus/blur to nudge Angular's ng-dirty bookkeeping.
+      const ta = cmRoot.querySelector('textarea');
+      if (ta) {
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        ta.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return { ok: true, kind: 'codemirror', label: matchedLabel };
+    }
+
+    // Priority 2: plain input/textarea.
+    const input = wrapper.tagName === 'INPUT' || wrapper.tagName === 'TEXTAREA'
+      ? wrapper
+      : wrapper.querySelector('input, textarea');
+    if (input) {
+      input.focus();
+      // Use native setter so React/Angular controlled inputs see the change.
+      const proto = input.tagName === 'INPUT' ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value') && Object.getOwnPropertyDescriptor(proto, 'value').set;
+      if (setter) setter.call(input, value);
+      else input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return { ok: true, kind: input.tagName.toLowerCase(), label: matchedLabel };
+    }
+
+    // Priority 3: contenteditable.
+    const editable = wrapper.isContentEditable
+      ? wrapper
+      : wrapper.querySelector('[contenteditable="true"]');
+    if (editable) {
+      editable.focus();
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(editable);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand('insertText', false, value);
+      return { ok: true, kind: 'contenteditable', label: matchedLabel };
+    }
+
+    return { ok: false, error: 'found field wrapper but no input/CodeMirror/contenteditable inside' };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+})
+`;
+
+class WorkatoUiSetFieldImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_UI.SET_FIELD;
+
+  async execute(args: SetFieldArgs): Promise<ToolResult> {
+    console.log('[workato-ui] set_field requested:', args);
+    try {
+      if (!args?.field) {
+        return createErrorResponse(ERROR_MESSAGES.INVALID_PARAMETERS + ': field is required');
+      }
+      if (args.value === undefined || args.value === null) {
+        return createErrorResponse(ERROR_MESSAGES.INVALID_PARAMETERS + ': value is required');
+      }
+      const tabId = await resolveTabId(args);
+      await ensureAttached(tabId);
+
+      // Wrap the page-side fn in an IIFE call so Runtime.evaluate returns
+      // the result by-value.
+      const expr = `(${SET_FIELD_PAGE_FN})(${JSON.stringify(args.field)}, ${JSON.stringify(
+        String(args.value),
+      )}, ${JSON.stringify(args.mode ?? null)})`;
+      const result = await evaluateInPage<{
+        ok: boolean;
+        kind?: string;
+        label?: string;
+        error?: string;
+      }>(tabId, expr, { awaitPromise: true });
+
+      if (!result?.ok) {
+        return createErrorResponse(
+          `workato_ui_set_field: ${result?.error ?? 'unknown error'} (field="${args.field}")`,
+        );
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `set "${result.label || args.field}" = ${JSON.stringify(String(args.value))} (kind=${result.kind})`,
+          },
+        ],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-ui] set_field failed:', error);
+      return createErrorResponse(
+        `workato_ui_set_field failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// workato_ui_insert_datapill
+// ---------------------------------------------------------------------------
+
+/**
+ * Two-phase insert. Phase A: HTML5 drag emulation. Phase B (fallback):
+ * pull recipe code, find the source step's `as` line + provider, and write
+ * an `=_dp(...)` formula via the CodeMirror set path.
+ *
+ * The page-side function returns:
+ *   { ok: true, method: 'drag' | 'formula', pill: string }
+ *   { ok: false, error: string, attempted: ['drag', 'formula'] }
+ */
+const INSERT_DATAPILL_PAGE_FN = `
+(async (field, sourceStep, path, recipeId) => {
+  function findFieldWrapper(field) {
+    const labels = Array.from(document.querySelectorAll('w-form-field-simple-label, [class*="form-field-simple-label"]'));
+    const fieldLower = field.toLowerCase();
+    for (const lab of labels) {
+      const searchable = lab.querySelector('w-searchable') || lab;
+      const txt = (searchable.textContent || '').trim();
+      if (!txt) continue;
+      if (txt.toLowerCase() === fieldLower || txt.toLowerCase().includes(fieldLower)) {
+        const container = lab.closest('w-form-field') || lab.closest('[class~="form-field"]') || lab.parentElement;
+        if (container) {
+          const w = container.querySelector('w-text-field, w-textarea, w-formula-field, .CodeMirror, [contenteditable]');
+          if (w) return w;
+        }
+      }
+    }
+    const wantRaw = field;
+    const wantEncoded = JSON.stringify([field]);
+    const byIdNodes = document.querySelectorAll('[data-field-id]');
+    for (const node of byIdNodes) {
+      const v = node.getAttribute('data-field-id') || '';
+      if (v === wantRaw || v === wantEncoded) return node;
+    }
+    return null;
+  }
+
+  function expandStep(sourceStep) {
+    // Datatree groups are usually labeled with the step number/name. Try
+    // clicking any collapsed header that mentions the step number.
+    const groups = Array.from(document.querySelectorAll('w-datatree-group, [class*="datatree-group"]'));
+    for (const g of groups) {
+      const header = g.querySelector('[class*="header"], [role="button"]');
+      if (!header) continue;
+      const txt = (header.textContent || '').trim();
+      if (txt && txt.indexOf(String(sourceStep)) >= 0) {
+        const isCollapsed = g.classList && (g.classList.contains('collapsed') || g.classList.contains('is-collapsed'));
+        if (isCollapsed && typeof header.click === 'function') {
+          try { header.click(); } catch (_) {}
+        }
+        return g;
+      }
+    }
+    return null;
+  }
+
+  function findPill(sourceStep, leafName) {
+    const group = expandStep(sourceStep);
+    const root = group || document;
+    const pills = Array.from(root.querySelectorAll('span.data-tree-pill.data-tree-pill_draggable, span.data-tree-pill_draggable'));
+    const leafLower = leafName.toLowerCase();
+    for (const p of pills) {
+      const txt = (p.textContent || '').trim();
+      if (txt.toLowerCase() === leafLower || txt.toLowerCase().includes(leafLower)) {
+        return p;
+      }
+    }
+    return null;
+  }
+
+  function simulateDrag(pill, dropZone) {
+    if (!pill || !dropZone) return false;
+    try {
+      const dt = new DataTransfer();
+      // Workato's drag handler typically reads HTML/text; we'll let the live
+      // drag-source's own dragstart populate dt where possible.
+      const ds = new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt });
+      pill.dispatchEvent(ds);
+      const over = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt });
+      dropZone.dispatchEvent(over);
+      const drop = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt });
+      dropZone.dispatchEvent(drop);
+      const end = new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: dt });
+      pill.dispatchEvent(end);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function fireMouseSeq(el) {
+    const r = el.getBoundingClientRect();
+    const cx = r.x + r.width / 2;
+    const cy = r.y + r.height / 2;
+    for (const t of ['mousedown', 'mouseup', 'click']) {
+      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: 1, detail: 1 }));
+    }
+  }
+
+  function switchToFormulaMode(wrapper) {
+    // Find the formula switcher tabs ("Text" / "Formula"). When the field is
+    // in Text mode, Workato escapes a leading "=" as a backslash-escape on
+    // save — switching to Formula mode keeps the formula as-is.
+    const container = wrapper.closest('w-form-field') || wrapper.closest('[class~="form-field"]') || wrapper.parentElement;
+    if (!container) return false;
+    const items = Array.from(container.querySelectorAll('.formula-switcher__item, [class*="formula-switcher"] [class*="item"]'));
+    if (items.length === 0) return false;
+    for (const item of items) {
+      const t = (item.textContent || '').trim().toLowerCase();
+      if (!t.startsWith('formula')) continue;
+      const cls = (item.className || '') + '';
+      const isActive = cls.includes('formula-switcher__item_active') || cls.includes('active') || item.getAttribute('aria-selected') === 'true';
+      if (isActive) return true;
+      fireMouseSeq(item);
+      return true;
+    }
+    return false;
+  }
+
+  async function writeFormula(wrapper, formula) {
+    const findCm = () =>
+      wrapper.classList && wrapper.classList.contains('CodeMirror')
+        ? wrapper
+        : wrapper.querySelector('.CodeMirror') || (wrapper.closest && wrapper.closest('.CodeMirror'));
+    let cmRoot = findCm();
+    // Workato lazy-instantiates CodeMirror — if the DOM element exists but the
+    // JS instance doesn't, click the preview placeholder to promote it.
+    if (cmRoot && !cmRoot.CodeMirror) {
+      const container = wrapper.closest('w-form-field') || wrapper.closest('[class~="form-field"]') || wrapper.parentElement;
+      const preview = container && container.querySelector('w-text-field-preview, [class*="text-field-preview"], [class*="text-field__preview"]');
+      // Workato listens for mousedown (not click) to promote the preview.
+      fireMouseSeq(preview || cmRoot);
+      const start = Date.now();
+      while (Date.now() - start < 1500) {
+        await new Promise(r => setTimeout(r, 50));
+        cmRoot = findCm();
+        if (cmRoot && cmRoot.CodeMirror) break;
+      }
+    }
+    // Switch the field into Formula mode so a leading "=" is not escaped on
+    // save. Give Workato a tick to swap the editor in.
+    switchToFormulaMode(wrapper);
+    await new Promise(r => setTimeout(r, 200));
+    cmRoot = findCm();
+    if (cmRoot && cmRoot.CodeMirror) {
+      cmRoot.CodeMirror.focus();
+      cmRoot.CodeMirror.setValue(formula);
+      const ta = cmRoot.querySelector('textarea');
+      if (ta) {
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        ta.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function fetchRecipeCode(rid) {
+    const opts = {
+      credentials: 'include',
+      headers: { accept: 'application/json', 'x-requested-with': 'XMLHttpRequest' },
+    };
+    return fetch('/recipes/' + rid + '/code.json?mode=view', opts).then((r) => r.json()).then((j) => {
+      try { return JSON.parse(j.result); } catch (_) { return null; }
+    });
+  }
+
+  function findStepNode(code, stepNumber) {
+    // Walk the recipe code tree to find the step whose number === stepNumber.
+    // The root flow exposes a 'block' array of nested steps; numbering follows
+    // depth-first order starting at 1 (the trigger).
+    let counter = { n: 0, found: null };
+    function walk(node) {
+      if (!node || counter.found) return;
+      counter.n += 1;
+      if (counter.n === stepNumber) {
+        counter.found = node;
+        return;
+      }
+      if (Array.isArray(node.block)) {
+        for (const b of node.block) walk(b);
+      }
+    }
+    walk(code);
+    return counter.found;
+  }
+
+  const wrapper = findFieldWrapper(field);
+  if (!wrapper) return { ok: false, error: 'field not found: ' + field, attempted: [] };
+
+  const leafName = path[path.length - 1] || '';
+  const pill = findPill(sourceStep, leafName);
+
+  let dragOk = false;
+  if (pill) {
+    // The drop zone is usually the wrapper itself or a child input/CodeMirror.
+    const dropZone = wrapper.querySelector('.CodeMirror, [contenteditable], input, textarea') || wrapper;
+    const beforeText = (dropZone.value || dropZone.textContent || '').slice(0, 40);
+    simulateDrag(pill, dropZone);
+    // Note: HTML5 synthetic drag rarely registers because the browser
+    // requires real mouse events. We mark drag as "attempted" and verify by
+    // checking value/text changed.
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const afterText = (dropZone.value || dropZone.textContent || '').slice(0, 40);
+        dragOk = afterText !== beforeText;
+        if (dragOk) {
+          resolve({ ok: true, method: 'drag', pill: leafName });
+          return;
+        }
+        // Fall back to formula injection.
+        if (!recipeId || !Number.isFinite(recipeId)) {
+          resolve({ ok: false, error: 'drag did not take effect and no recipe_id available for formula fallback', attempted: ['drag'] });
+          return;
+        }
+        fetchRecipeCode(recipeId).then(async (code) => {
+          if (!code) {
+            resolve({ ok: false, error: 'drag failed; could not fetch recipe code for formula fallback', attempted: ['drag', 'formula'] });
+            return;
+          }
+          const stepNode = findStepNode(code, sourceStep);
+          if (!stepNode) {
+            resolve({ ok: false, error: 'drag failed; step ' + sourceStep + ' not found in recipe code', attempted: ['drag', 'formula'] });
+            return;
+          }
+          const line = stepNode.as || stepNode.line || '';
+          const provider = stepNode.provider || '';
+          const dp = { pill_type: 'output', provider: provider, line: line, path: path };
+          const formula = "=_dp('" + JSON.stringify(dp).replace(/'/g, "\\\\'") + "')";
+          const wrote = await writeFormula(wrapper, formula);
+          if (wrote) {
+            resolve({ ok: true, method: 'formula', pill: leafName });
+          } else {
+            resolve({ ok: false, error: 'drag failed; formula fallback could not write to field (no CodeMirror found)', attempted: ['drag', 'formula'] });
+          }
+        }).catch((e) => {
+          resolve({ ok: false, error: 'drag failed; formula fetch error: ' + String(e && e.message || e), attempted: ['drag', 'formula'] });
+        });
+      }, 300);
+    });
+  }
+
+  // No pill found — go straight to formula path if we have a recipe id.
+  if (!recipeId || !Number.isFinite(recipeId)) {
+    return { ok: false, error: 'pill not found for step ' + sourceStep + ' leaf "' + leafName + '" and no recipe_id for formula fallback', attempted: [] };
+  }
+  return fetchRecipeCode(recipeId).then(async (code) => {
+    if (!code) return { ok: false, error: 'could not fetch recipe code for formula fallback', attempted: ['formula'] };
+    const stepNode = findStepNode(code, sourceStep);
+    if (!stepNode) return { ok: false, error: 'step ' + sourceStep + ' not found in recipe code', attempted: ['formula'] };
+    const line = stepNode.as || stepNode.line || '';
+    const provider = stepNode.provider || '';
+    const dp = { pill_type: 'output', provider: provider, line: line, path: path };
+    const formula = "=_dp('" + JSON.stringify(dp).replace(/'/g, "\\\\'") + "')";
+    const wrote = await writeFormula(wrapper, formula);
+    if (wrote) return { ok: true, method: 'formula', pill: leafName };
+    return { ok: false, error: 'formula fallback could not write to field (no CodeMirror)', attempted: ['formula'] };
+  });
+})
+`;
+
+class WorkatoUiInsertDatapillImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_UI.INSERT_DATAPILL;
+
+  async execute(args: InsertDatapillArgs): Promise<ToolResult> {
+    console.log('[workato-ui] insert_datapill requested:', args);
+    try {
+      if (!args?.field) {
+        return createErrorResponse(ERROR_MESSAGES.INVALID_PARAMETERS + ': field is required');
+      }
+      if (typeof args.source_step !== 'number') {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': source_step (number) is required',
+        );
+      }
+      if (!Array.isArray(args.path) || args.path.length === 0) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': path (non-empty string array) is required',
+        );
+      }
+      const tabId = await resolveTabId(args);
+      await ensureAttached(tabId);
+
+      // Try to extract recipe_id from the tab URL (for the formula fallback).
+      const url = await getTabUrl(tabId);
+      const m = url.match(/\/recipes\/(\d+)/);
+      const recipeId = m ? Number(m[1]) : null;
+
+      const expr = `(${INSERT_DATAPILL_PAGE_FN})(${JSON.stringify(args.field)}, ${JSON.stringify(
+        args.source_step,
+      )}, ${JSON.stringify(args.path)}, ${JSON.stringify(recipeId)})`;
+      const result = await evaluateInPage<{
+        ok: boolean;
+        method?: string;
+        pill?: string;
+        error?: string;
+        attempted?: string[];
+      }>(tabId, expr, { awaitPromise: true });
+
+      if (!result?.ok) {
+        return createErrorResponse(
+          `workato_ui_insert_datapill: ${result?.error ?? 'unknown error'} ` +
+            `(attempted: ${(result?.attempted ?? []).join(', ') || 'none'})`,
+        );
+      }
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `inserted datapill from step ${args.source_step} path ${args.path.join('.')} into ${args.field} (method=${result.method})`,
+          },
+        ],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-ui] insert_datapill failed:', error);
+      return createErrorResponse(
+        `workato_ui_insert_datapill failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// workato_ui_save_recipe
+// ---------------------------------------------------------------------------
+
+class WorkatoUiSaveRecipeImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_UI.SAVE_RECIPE;
+
+  async execute(args: SaveRecipeArgs): Promise<ToolResult> {
+    console.log('[workato-ui] save_recipe requested:', args);
+    try {
+      const tabId = await resolveTabId(args ?? {});
+      await ensureAttached(tabId);
+
+      const nodes = await getAxTree(tabId);
+      const saveBtn = findAxNode(nodes, { role: 'button', nameEquals: 'Save' });
+      if (!saveBtn) {
+        return createErrorResponse(
+          'workato_ui_save_recipe: no Save button visible — is the recipe in edit mode?',
+        );
+      }
+      await clickByAxNode(tabId, saveBtn);
+
+      // Poll until ng-dirty count drops to 0 (and no validation errors).
+      const start = Date.now();
+      const cleared = await pollUntil(
+        async () => {
+          const state = await evaluateInPage<{
+            dirtyCount: number;
+            unsavedFlag: boolean;
+            validationErrors: string[];
+          }>(tabId, DIRTY_STATE_SNIPPET);
+          if (state.validationErrors.length > 0) {
+            throw new Error(`validation errors: ${state.validationErrors.join('; ')}`);
+          }
+          if (state.dirtyCount === 0 && !state.unsavedFlag)
+            return { elapsedMs: Date.now() - start };
+          return false;
+        },
+        { timeoutMs: 10_000, intervalMs: 250 },
+      );
+
+      if (!cleared) {
+        return createErrorResponse(
+          `workato_ui_save_recipe: save did not clear ng-dirty within 10s`,
+        );
+      }
+
+      // The editor wrote a new recipe version. This tool never takes a
+      // recipe_id, so the id comes from the tab it just saved in; when the URL
+      // does not name one there is nothing to invalidate and the version-keyed
+      // cache stays correct anyway (a stale key can never be served).
+      const savedRecipeId = recipeIdFromUrl(await getTabUrl(tabId));
+      if (savedRecipeId !== null) invalidateRecipeSnapshot(savedRecipeId);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              `saved recipe (ng-dirty cleared in ${cleared.elapsedMs}ms)` +
+              (savedRecipeId !== null ? ` [recipe ${savedRecipeId}]` : ''),
+          },
+        ],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-ui] save_recipe failed:', error);
+      return createErrorResponse(
+        `workato_ui_save_recipe failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// workato_ui_exit_edit_mode
+// ---------------------------------------------------------------------------
+
+class WorkatoUiExitEditModeImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_UI.EXIT_EDIT_MODE;
+
+  async execute(args: ExitEditModeArgs): Promise<ToolResult> {
+    console.log('[workato-ui] exit_edit_mode requested:', args);
+    try {
+      const tabId = await resolveTabId(args ?? {});
+      await ensureAttached(tabId);
+
+      const nodes = await getAxTree(tabId);
+      const exitBtn = findAxNode(nodes, { role: 'button', nameEquals: 'Exit' });
+      if (!exitBtn) {
+        // Already out of edit mode if there's no Exit button.
+        const url = await getTabUrl(tabId);
+        if (!url.endsWith('/edit')) {
+          return {
+            content: [{ type: 'text', text: `already out of edit mode (url: ${url})` }],
+            isError: false,
+          };
+        }
+        return createErrorResponse(
+          'workato_ui_exit_edit_mode: in /edit but no "Exit" button found',
+        );
+      }
+      await clickByAxNode(tabId, exitBtn);
+      await sleep(300);
+
+      // Check for a confirm dialog.
+      const dialogNodes = await getAxTree(tabId);
+      const dialog = findAxNode(dialogNodes, { role: 'dialog' });
+      if (dialog) {
+        // Choose Discard/Leave (when discard=true) or Cancel/Stay (when discard=false).
+        const wantDiscard = args.discard === true;
+        const buttons = findAllAxNodes(dialogNodes, { role: 'button' });
+        // Filter to buttons inside the dialog (by name heuristic).
+        const discardLikeRe = /(discard|leave|don.t save|exit)/i;
+        const cancelLikeRe = /(cancel|stay|keep editing|back)/i;
+        let target = null;
+        for (const b of buttons) {
+          const nm = axName(b);
+          if (wantDiscard && discardLikeRe.test(nm)) {
+            target = b;
+            break;
+          }
+          if (!wantDiscard && cancelLikeRe.test(nm)) {
+            target = b;
+            break;
+          }
+        }
+        if (target) {
+          await clickByAxNode(tabId, target);
+        }
+      }
+
+      // Verify we navigated off /edit (or stayed if cancel).
+      await sleep(400);
+      const urlAfter = await getTabUrl(tabId);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `exit_edit_mode finished (url: ${urlAfter}, discard=${args.discard === true})`,
+          },
+        ],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-ui] exit_edit_mode failed:', error);
+      return createErrorResponse(
+        `workato_ui_exit_edit_mode failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// workato_ui_create_recipe
+// ---------------------------------------------------------------------------
+
+/**
+ * Page-side helper that POSTs to /web_api/projects.json and/or /recipes.json
+ * using the active Workato tab's authenticated session. The CSRF token is
+ * read from the page's <meta name="csrf-token"> tag, so the request inherits
+ * the user's cookies + organization context without us re-implementing auth.
+ *
+ * IMPORTANT: do NOT set Content-Encoding: gzip even though the captured
+ * browser request shows it — the body is sent plain. The captured header
+ * is a downstream artifact; sending gzip-encoded body gets rejected.
+ *
+ * Returns: { ok: true, recipe_id, folder_id, name, url } | { ok: false, error, stage }
+ */
+const CREATE_RECIPE_PAGE_FN = `
+(async (name, providedFolderId, projectName, description) => {
+  try {
+    // Workato stores the CSRF token in the XSRF-TOKEN-V2 cookie (URL-encoded).
+    // The <meta name="csrf-token"> tag is NOT present on editor pages.
+    function readCookie(n) {
+      const m = document.cookie.match(new RegExp('(?:^|; )' + n.replace(/[-.+*]/g, '\\\\$&') + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    let csrf = readCookie('XSRF-TOKEN-V2') || readCookie('XSRF-TOKEN') || readCookie('csrf-token');
+    if (!csrf) {
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      csrf = csrfMeta && csrfMeta.getAttribute('content');
+    }
+    if (!csrf) {
+      return { ok: false, stage: 'csrf', error: 'could not find CSRF token in XSRF-TOKEN-V2 cookie or meta tag; ensure the active tab is a logged-in Workato page' };
+    }
+
+    let folderId = (typeof providedFolderId === 'number' && Number.isFinite(providedFolderId)) ? providedFolderId : null;
+    const desc = (typeof description === 'string') ? description : '';
+
+    if (folderId === null) {
+      if (!projectName || typeof projectName !== 'string') {
+        return { ok: false, stage: 'args', error: 'either folder_id or project_name is required' };
+      }
+      const projRes = await fetch('/web_api/projects.json', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'content-type': 'application/json',
+          'x-csrf-token': csrf,
+          'x-requested-with': 'XMLHttpRequest',
+          'accept': 'application/json',
+        },
+        body: JSON.stringify({ name: projectName, description: desc }),
+      });
+      if (!projRes.ok) {
+        const t = await projRes.text().catch(() => '');
+        return { ok: false, stage: 'create_project', error: 'POST /web_api/projects.json failed: HTTP ' + projRes.status + ' ' + t.slice(0, 400) };
+      }
+      const projJson = await projRes.json().catch(() => null);
+      const r = projJson && projJson.result;
+      if (!r || typeof r.folder_id !== 'number') {
+        return { ok: false, stage: 'create_project', error: 'project response missing result.folder_id: ' + JSON.stringify(projJson).slice(0, 400) };
+      }
+      folderId = r.folder_id;
+    }
+
+    const initialCode = JSON.stringify({
+      number: 0,
+      keyword: 'trigger',
+      input: {},
+      block: [],
+      uuid: (crypto && typeof crypto.randomUUID === 'function')
+        ? crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = (Math.random() * 16) | 0;
+            return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+          }),
+      unfinished: false,
+    });
+
+    const recipeBody = {
+      flow: {
+        name: name,
+        description: '',
+        visibility_private: false,
+        code: initialCode,
+        config: '[]',
+        worker_concurrency: 1,
+        folder_id: folderId,
+      },
+    };
+
+    const recRes = await fetch('/recipes.json', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'x-csrf-token': csrf,
+        'x-requested-with': 'XMLHttpRequest',
+        'accept': 'application/json',
+      },
+      body: JSON.stringify(recipeBody),
+    });
+    if (!recRes.ok) {
+      const t = await recRes.text().catch(() => '');
+      return { ok: false, stage: 'create_recipe', error: 'POST /recipes.json failed: HTTP ' + recRes.status + ' ' + t.slice(0, 400) };
+    }
+    const recJson = await recRes.json().catch(() => null);
+    const flow = recJson && recJson.result && recJson.result.flow;
+    if (!flow || typeof flow.id !== 'number') {
+      return { ok: false, stage: 'create_recipe', error: 'recipe response missing result.flow.id: ' + JSON.stringify(recJson).slice(0, 400) };
+    }
+
+    return {
+      ok: true,
+      recipe_id: flow.id,
+      folder_id: folderId,
+      name: flow.name || name,
+      url: location.origin + '/recipes/' + flow.id + '/edit',
+    };
+  } catch (e) {
+    return { ok: false, stage: 'exception', error: String(e && e.message || e) };
+  }
+})
+`;
+
+class WorkatoUiCreateRecipeImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_UI.CREATE_RECIPE;
+
+  async execute(args: CreateRecipeArgs): Promise<ToolResult> {
+    console.log('[workato-ui] create_recipe requested:', args);
+    try {
+      if (!args?.name || typeof args.name !== 'string') {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': name (string) is required',
+        );
+      }
+      const hasFolderId = typeof args.folder_id === 'number' && Number.isFinite(args.folder_id);
+      const hasProjectName = typeof args.project_name === 'string' && args.project_name.length > 0;
+      if (!hasFolderId && !hasProjectName) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS +
+            ': either folder_id (number) or project_name (string) is required',
+        );
+      }
+
+      const tabId = await resolveTabId(args);
+      // We don't need ensureAttached for this tool — Runtime.evaluate goes via
+      // CDP debugger, but a plain Runtime.evaluate without prior attach would
+      // need DOM/Runtime domains enabled. Reuse the standard path for safety.
+      await ensureAttached(tabId);
+
+      const url = await getTabUrl(tabId);
+      if (!/workato\.(com|is)/.test(url)) {
+        return createErrorResponse(
+          `workato_ui_create_recipe: active tab is not a Workato page (url=${url}). ` +
+            `Open a Workato tab and sign in first.`,
+        );
+      }
+
+      const expr = `(${CREATE_RECIPE_PAGE_FN})(${JSON.stringify(args.name)}, ${JSON.stringify(
+        hasFolderId ? args.folder_id : null,
+      )}, ${JSON.stringify(hasProjectName ? args.project_name : null)}, ${JSON.stringify(
+        args.description ?? '',
+      )})`;
+
+      const result = await evaluateInPage<{
+        ok: boolean;
+        stage?: string;
+        error?: string;
+        recipe_id?: number;
+        folder_id?: number;
+        name?: string;
+        url?: string;
+      }>(tabId, expr, { awaitPromise: true });
+
+      if (!result?.ok) {
+        return createErrorResponse(
+          `workato_ui_create_recipe: ${result?.error ?? 'unknown error'}` +
+            (result?.stage ? ` (stage=${result.stage})` : ''),
+        );
+      }
+
+      const payload = {
+        recipe_id: result.recipe_id,
+        folder_id: result.folder_id,
+        url: result.url,
+      };
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `created recipe ${result.recipe_id} at ${result.url}\n${JSON.stringify(payload)}`,
+          },
+        ],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-ui] create_recipe failed:', error);
+      return createErrorResponse(
+        `workato_ui_create_recipe failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// workato_save_recipe_code
+// ---------------------------------------------------------------------------
+
+/**
+ * Page-side helper that PUTs to /recipes/<id>.json with a new code tree.
+ * Same auth pattern as create_recipe: cookie session + CSRF from cookie.
+ *
+ * Body shape (captured verbatim from a real browser save):
+ *   {"flow": {
+ *     "code": "<JSON-stringified code tree>",
+ *     "config": "<JSON-stringified config array>",
+ *     "name": "...",
+ *     "description": "..."
+ *   }}
+ *
+ * Browser sends gzip; we send plain JSON (works the same per create_recipe).
+ *
+ * Returns: { ok: true, version_no, code_errors? } | { ok: false, error, stage }
+ */
+const SAVE_RECIPE_CODE_PAGE_FN = `
+(async (recipeId, code, config, name, description) => {
+  try {
+    function readCookie(n) {
+      const m = document.cookie.match(new RegExp('(?:^|; )' + n.replace(/[-.+*]/g, '\\\\$&') + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    let csrf = readCookie('XSRF-TOKEN-V2') || readCookie('XSRF-TOKEN') || readCookie('csrf-token');
+    if (!csrf) {
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      csrf = csrfMeta && csrfMeta.getAttribute('content');
+    }
+    if (!csrf) {
+      return { ok: false, stage: 'csrf', error: 'could not find CSRF token; ensure the active tab is a logged-in Workato page' };
+    }
+
+    const flow = {};
+    flow.code = typeof code === 'string' ? code : JSON.stringify(code);
+    if (config !== undefined && config !== null) {
+      flow.config = typeof config === 'string' ? config : JSON.stringify(config);
+    }
+    if (typeof name === 'string' && name.length > 0) flow.name = name;
+    if (typeof description === 'string') flow.description = description;
+
+    const res = await fetch('/recipes/' + recipeId + '.json', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'x-csrf-token': csrf,
+        'x-requested-with': 'XMLHttpRequest',
+        'accept': 'application/json',
+      },
+      body: JSON.stringify({ flow: flow }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      return { ok: false, stage: 'http', error: 'PUT /recipes/' + recipeId + '.json failed: HTTP ' + res.status + ' ' + t.slice(0, 500) };
+    }
+    const json = await res.json().catch(() => null);
+    const result = json && json.result && json.result.flow;
+    if (!result) {
+      return { ok: false, stage: 'parse', error: 'save response missing result.flow: ' + JSON.stringify(json).slice(0, 400) };
+    }
+    return {
+      ok: true,
+      recipe_id: recipeId,
+      version_no: result.version_no,
+      updated_at: result.updated_at,
+      code_errors: Array.isArray(result.code_errors) ? result.code_errors : [],
+    };
+  } catch (e) {
+    return { ok: false, stage: 'exception', error: String(e && e.message || e) };
+  }
+})
+`;
+
+/**
+ * Slim recipe status probe (GET /recipes/<id>.json — no code tree, ~4 KB).
+ * Used for the optimistic lock, the restart_if_running dance, and to verify
+ * whether a timed-out save actually landed (version_no bumped).
+ */
+const RECIPE_STATUS_PAGE_FN = `
+(async (recipeId) => {
+  try {
+    const res = await fetch('/recipes/' + recipeId + '.json', {
+      credentials: 'include',
+      headers: { 'accept': 'application/json', 'x-requested-with': 'XMLHttpRequest' },
+    });
+    if (!res.ok) return { ok: false, error: 'GET /recipes/' + recipeId + '.json failed: HTTP ' + res.status };
+    const j = await res.json().catch(() => null);
+    const rd = j && j.result && j.result.recipe_data;
+    const flow = rd && rd.flow;
+    if (!flow) return { ok: false, error: 'status response missing result.recipe_data.flow' };
+    return {
+      ok: true,
+      running: !!(rd.running || flow.running),
+      state: String(rd.state || flow.state || 'unknown'),
+      version_no: Number(flow.version_no || 0),
+    };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+})
+`;
+
+/**
+ * GET /recipes/<id>/code.json — the persisted code tree, parsed.
+ *
+ * Read back after every save so the tool can tell the caller what Workato
+ * actually stored. Workato drops dynamic input keys that no
+ * `extended_input_schema` declares, and it does so with a 200 and an empty
+ * `code_errors` — the readback is the only honest signal.
+ */
+const FETCH_CODE_PAGE_FN = `
+(async (recipeId) => {
+  try {
+    const res = await fetch('/recipes/' + recipeId + '/code.json?mode=view', {
+      credentials: 'include',
+      headers: { 'accept': 'application/json', 'x-requested-with': 'XMLHttpRequest' },
+    });
+    if (!res.ok) return { ok: false, error: 'GET /recipes/' + recipeId + '/code.json failed: HTTP ' + res.status };
+    const j = await res.json().catch(() => null);
+    const codeStr = j && j.result;
+    if (typeof codeStr !== 'string') return { ok: false, error: 'code.json response missing result string' };
+    try {
+      return { ok: true, code: JSON.parse(codeStr) };
+    } catch (e) {
+      return { ok: false, error: 'JSON.parse(code.result) failed: ' + String(e && e.message || e) };
+    }
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+})
+`;
+
+/** POST /web_api/recipes/<id>/<start|stop>.json — same call the workato_start/stop_recipe tools make. */
+const LIFECYCLE_PAGE_FN = `
+(async (recipeId, action) => {
+  try {
+    function readCookie(n) {
+      const m = document.cookie.match(new RegExp('(?:^|; )' + n.replace(/[-.+*]/g, '\\\\$&') + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    let csrf = readCookie('XSRF-TOKEN-V2') || readCookie('XSRF-TOKEN') || readCookie('csrf-token');
+    if (!csrf) {
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      csrf = csrfMeta && csrfMeta.getAttribute('content');
+    }
+    if (!csrf) return { ok: false, error: 'could not find CSRF token' };
+    const res = await fetch('/web_api/recipes/' + recipeId + '/' + action + '.json', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'accept': 'application/json',
+        'content-type': 'application/json',
+        'x-csrf-token': csrf,
+        'x-requested-with': 'XMLHttpRequest',
+      },
+      body: '{}',
+    });
+    const t = await res.text().catch(() => '');
+    if (!res.ok) return { ok: false, error: action + ' failed: HTTP ' + res.status + ' ' + t.slice(0, 300) };
+    let j = null;
+    try { j = JSON.parse(t); } catch (e) { /* keep null */ }
+    if (j && j.error) return { ok: false, error: action + ' rejected: ' + JSON.stringify(j.error).slice(0, 300) };
+    return { ok: true, status: j && j.status ? String(j.status) : 'enqueued' };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+})
+`;
+
+/** PUT /recipes/<id>/versions/<version>.json {comment} — same call as workato_set_version_comment. */
+const SET_COMMENT_PAGE_FN = `
+(async (recipeId, version, comment) => {
+  try {
+    function readCookie(n) {
+      const m = document.cookie.match(new RegExp('(?:^|; )' + n.replace(/[-.+*]/g, '\\\\$&') + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    let csrf = readCookie('XSRF-TOKEN-V2') || readCookie('XSRF-TOKEN') || readCookie('csrf-token');
+    if (!csrf) {
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      csrf = csrfMeta && csrfMeta.getAttribute('content');
+    }
+    if (!csrf) return { ok: false, error: 'could not find CSRF token' };
+    const res = await fetch('/recipes/' + recipeId + '/versions/' + version + '.json', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: {
+        'accept': 'application/json',
+        'content-type': 'application/json; charset=utf-8',
+        'x-csrf-token': csrf,
+        'x-requested-with': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({ comment: comment }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      return { ok: false, error: 'set comment failed: HTTP ' + res.status + ' ' + t.slice(0, 300) };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+})
+`;
+
+interface SaveRecipeCodePageResult {
+  ok: boolean;
+  stage?: string;
+  error?: string;
+  recipe_id?: number;
+  version_no?: number;
+  updated_at?: string;
+  code_errors?: unknown[];
+}
+
+interface RecipeStatusPageResult {
+  ok: boolean;
+  error?: string;
+  running?: boolean;
+  state?: string;
+  version_no?: number;
+}
+
+interface FetchCodePageResult {
+  ok: boolean;
+  error?: string;
+  code?: unknown;
+}
+
+/**
+ * The code tree as an object, whichever form the caller passed. Returns null
+ * when a string argument isn't parseable JSON — verification is then skipped
+ * rather than guessed at.
+ */
+function parseTree(code: object | string): unknown {
+  if (typeof code !== 'string') return code;
+  try {
+    return JSON.parse(code);
+  } catch {
+    return null;
+  }
+}
+
+class WorkatoUiSaveRecipeCodeImpl extends BaseBrowserToolExecutor {
+  name = TOOL_NAMES.WORKATO_UI.SAVE_RECIPE_CODE;
+
+  /** Read the persisted code tree back — the ground truth for what a save stored. */
+  private async fetchCode(tabId: number, recipeId: number): Promise<FetchCodePageResult> {
+    try {
+      const result = await evaluateInPage<FetchCodePageResult>(
+        tabId,
+        `(${FETCH_CODE_PAGE_FN})(${JSON.stringify(recipeId)})`,
+        { awaitPromise: true },
+      );
+      return result ?? { ok: false, error: 'code readback returned no value' };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /**
+   * Diff the tree we sent against the one Workato stored. Returns null when
+   * the readback itself failed — a failed verification is reported, never
+   * silently treated as a clean save.
+   */
+  private async verifyPersisted(
+    tabId: number,
+    recipeId: number,
+    sentTree: unknown,
+  ): Promise<{ diff: TreeDiff | null; error?: string }> {
+    if (sentTree === null) return { diff: null, error: 'code was not parseable as a tree' };
+    const readback = await this.fetchCode(tabId, recipeId);
+    if (!readback.ok || readback.code === undefined) {
+      return { diff: null, error: readback.error ?? 'code readback failed' };
+    }
+    return { diff: diffPersistedTree(sentTree, readback.code) };
+  }
+
+  private async fetchStatus(tabId: number, recipeId: number): Promise<RecipeStatusPageResult> {
+    try {
+      const result = await evaluateInPage<RecipeStatusPageResult>(
+        tabId,
+        `(${RECIPE_STATUS_PAGE_FN})(${JSON.stringify(recipeId)})`,
+        { awaitPromise: true },
+      );
+      return result ?? { ok: false, error: 'status probe returned no value' };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  private async lifecycle(
+    tabId: number,
+    recipeId: number,
+    action: 'start' | 'stop',
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const result = await evaluateInPage<{ ok: boolean; error?: string }>(
+        tabId,
+        `(${LIFECYCLE_PAGE_FN})(${JSON.stringify(recipeId)}, ${JSON.stringify(action)})`,
+        { awaitPromise: true },
+      );
+      return result ?? { ok: false, error: `${action} returned no value` };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /** Poll status until `running` equals `wantRunning` or the deadline passes. */
+  private async pollRunning(
+    tabId: number,
+    recipeId: number,
+    wantRunning: boolean,
+    timeoutMs: number,
+  ): Promise<RecipeStatusPageResult | null> {
+    const deadline = Date.now() + timeoutMs;
+    let last: RecipeStatusPageResult | null = null;
+    for (;;) {
+      last = await this.fetchStatus(tabId, recipeId);
+      if (last.ok && last.running === wantRunning) return last;
+      if (Date.now() >= deadline) return last;
+      await sleep(1200);
+    }
+  }
+
+  async execute(args: SaveRecipeCodeArgs): Promise<ToolResult> {
+    console.log('[workato-ui] save_recipe_code requested:', { ...args, code: '<omitted>' });
+    try {
+      if (typeof args?.recipe_id !== 'number' || !Number.isFinite(args.recipe_id)) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': recipe_id (number) is required',
+        );
+      }
+      if (args.code === undefined || args.code === null) {
+        return createErrorResponse(
+          ERROR_MESSAGES.INVALID_PARAMETERS + ': code (object or JSON string) is required',
+        );
+      }
+
+      // resolveTabId now validates an explicit tabId the way findWorkatoTab
+      // does (exists, scriptable, logged-in app host) and throws instead of
+      // retargeting, so a stale pinned tab can no longer redirect this save.
+      const tabId = await resolveTabId(args);
+      // A valid app host is not a valid workspace: when the caller pinned one
+      // (or the recipe file records where it came from) refuse a save into a
+      // different workspace before anything is fetched or written.
+      await assertExpectedContext(args, tabId);
+      await ensureAttached(tabId);
+
+      // --- Datapill integrity ----------------------------------------------
+      // A pill whose payload is not JSON cannot be normalized and cannot
+      // resolve; Workato stores it and returns an empty value at runtime. That
+      // is unrecoverable-looking data loss from a save that reported success,
+      // so it is refused here rather than normalized around.
+      const broken = findBrokenDatapills(args.code);
+      if (broken.length > 0) {
+        return createErrorResponse(
+          `workato_ui_save_recipe_code: ${describeBrokenDatapills(broken)}`,
+        );
+      }
+
+      // --- Datapill normalization ------------------------------------------
+      // Workato matches `#{_dp('<json>')}` byte-for-byte: a pill payload
+      // serialized with json.dumps spacing saves fine and then resolves to
+      // nothing at runtime. Compact every pill before it reaches the wire.
+      const normalized = normalizeCodeTree(args.code);
+      const codeToSave = normalized.code;
+      const sentTree = parseTree(codeToSave);
+
+      // --- Preflight: status probe (optimistic lock + running check) -------
+      const preflight = await this.fetchStatus(tabId, args.recipe_id);
+      const baseVersion = preflight.ok ? (preflight.version_no ?? null) : null;
+
+      // An optimistic lock that cannot read the current version is not a lock.
+      // Failing open here is how a stale tree overwrote a newer one: when the
+      // caller asked for the check, a probe failure refuses the save.
+      if (
+        typeof args.expected_base_version_no === 'number' &&
+        (!preflight.ok || typeof preflight.version_no !== 'number')
+      ) {
+        return createErrorResponse(
+          `workato_ui_save_recipe_code: expected_base_version_no ` +
+            `${args.expected_base_version_no} was requested but the current version of recipe ` +
+            `${args.recipe_id} could not be read` +
+            (preflight.ok ? '' : ` (${preflight.error ?? 'status probe failed'})`) +
+            `. Nothing was saved: the lock is not verifiable, so the save could overwrite a ` +
+            `newer version. Retry, or re-pull and save without the lock only if you mean to ` +
+            `replace whatever is there. (retriable: true)`,
+        );
+      }
+
+      if (
+        typeof args.expected_base_version_no === 'number' &&
+        preflight.ok &&
+        typeof preflight.version_no === 'number' &&
+        preflight.version_no !== args.expected_base_version_no
+      ) {
+        // Drift can also mean "my own previous attempt landed after its
+        // response timed out". Compare the stored tree with what we are about
+        // to write before crying conflict — a retry of an applied save must
+        // not create a duplicate version.
+        const { diff } = await this.verifyPersisted(tabId, args.recipe_id, sentTree);
+        if (diff && isFullyPersisted(diff)) {
+          const payload: Record<string, unknown> = {
+            recipe_id: args.recipe_id,
+            version_no: preflight.version_no,
+            base_version_no: args.expected_base_version_no,
+            save_status: 'already_applied',
+            was_running: preflight.running === true,
+            code_errors: [],
+            persisted: true,
+            valid: true,
+            verified: true,
+          };
+          // The attempt this retries may well be the one that stopped the
+          // recipe and then died before restarting it.
+          if (args.ensure_running === true && preflight.running !== true) {
+            const startRes = await this.lifecycle(tabId, args.recipe_id, 'start');
+            const runningAgain = startRes.ok
+              ? await this.pollRunning(tabId, args.recipe_id, true, 20_000)
+              : null;
+            payload.restarted = runningAgain?.ok === true && runningAgain.running === true;
+            if (payload.restarted !== true) {
+              payload.restart_error =
+                startRes.error ??
+                `start enqueued but recipe not running after 20s (state=${runningAgain?.state ?? 'unknown'})`;
+            }
+          }
+          return {
+            content: [
+              {
+                type: 'text',
+                text:
+                  `recipe ${args.recipe_id} is already at the tree you are saving ` +
+                  `(version ${preflight.version_no}) — no new version created. This is what a ` +
+                  `retry of a save whose response timed out looks like.\n${JSON.stringify(payload)}`,
+              },
+            ],
+            isError: false,
+          };
+        }
+        return createErrorResponse(
+          `workato_ui_save_recipe_code: version drift — expected base version ` +
+            `${args.expected_base_version_no} but recipe ${args.recipe_id} is at ` +
+            `${preflight.version_no}, and the stored tree differs from the one you are saving. ` +
+            `Someone (or something) saved since you pulled. ` +
+            `Re-pull, re-apply your change, then save. (retriable: false)`,
+        );
+      }
+
+      const wasRunning = preflight.ok ? preflight.running === true : undefined;
+      let stoppedForSave = false;
+      let stoppedAt: string | undefined;
+      if (preflight.ok && preflight.running === true) {
+        if (args.restart_if_running !== true) {
+          return createErrorResponse(
+            `workato_ui_save_recipe_code: recipe ${args.recipe_id} is RUNNING — Workato ` +
+              `rejects code saves on running recipes. Pass restart_if_running:true to ` +
+              `stop → save → restart in one call, or stop it yourself first. (retriable: false as-is)`,
+          );
+        }
+        const stopRes = await this.lifecycle(tabId, args.recipe_id, 'stop');
+        if (!stopRes.ok) {
+          return createErrorResponse(
+            `workato_ui_save_recipe_code (restart_if_running): stop failed — ${stopRes.error}. ` +
+              `Nothing was saved. (retriable: true)`,
+          );
+        }
+        const stopped = await this.pollRunning(tabId, args.recipe_id, false, 30_000);
+        if (!stopped || !stopped.ok || stopped.running !== false) {
+          return createErrorResponse(
+            `workato_ui_save_recipe_code (restart_if_running): stop was enqueued but the ` +
+              `recipe did not report stopped within 30s (state=${stopped?.state ?? 'unknown'}). ` +
+              `Nothing was saved; check workato_recipe_status and retry. (retriable: true)`,
+          );
+        }
+        stoppedForSave = true;
+        stoppedAt = new Date().toISOString();
+      }
+
+      // --- Save -------------------------------------------------------------
+      const expr = `(${SAVE_RECIPE_CODE_PAGE_FN})(${JSON.stringify(args.recipe_id)}, ${JSON.stringify(
+        codeToSave,
+      )}, ${JSON.stringify(args.config ?? null)}, ${JSON.stringify(
+        args.name ?? null,
+      )}, ${JSON.stringify(args.description ?? null)})`;
+
+      let result: SaveRecipeCodePageResult | undefined;
+      let saveStatus: string | undefined;
+      // A readback the timeout path already paid for. Reused by the post-save
+      // verification below instead of fetching the same tree twice.
+      let timeoutVerification: { diff: TreeDiff | null; error?: string } | undefined;
+      try {
+        result = await evaluateInPage<SaveRecipeCodePageResult>(tabId, expr, {
+          awaitPromise: true,
+        });
+      } catch (saveErr) {
+        // Timeout ≠ failure: the PUT may have landed. Verify via version_no,
+        // and — when the version alone is inconclusive — by comparing the
+        // stored tree with the one we sent.
+        let after = await this.fetchStatus(tabId, args.recipe_id);
+        const landed =
+          after.ok &&
+          typeof after.version_no === 'number' &&
+          baseVersion !== null &&
+          after.version_no > baseVersion;
+        let treeMatches = false;
+        if (!landed) {
+          timeoutVerification = await this.verifyPersisted(tabId, args.recipe_id, sentTree);
+          treeMatches =
+            timeoutVerification.diff !== null && isFullyPersisted(timeoutVerification.diff);
+        }
+        if (landed || treeMatches) {
+          // The first status probe can lose the same race the save did. When
+          // the tree proves the save landed, ask once more rather than
+          // reporting a version we never read.
+          if (!after.ok) after = await this.fetchStatus(tabId, args.recipe_id);
+          result = {
+            ok: true,
+            recipe_id: args.recipe_id,
+            version_no: typeof after.version_no === 'number' ? after.version_no : undefined,
+            code_errors: [],
+          };
+          saveStatus = 'succeeded_after_timeout';
+        } else {
+          const suffix = stoppedForSave
+            ? ` NOTE: the recipe was stopped for this save and has NOT been restarted (stopped_at=${stoppedAt}).`
+            : '';
+          return createErrorResponse(
+            `workato_ui_save_recipe_code failed: ${
+              saveErr instanceof Error ? saveErr.message : String(saveErr)
+            }.` +
+              (baseVersion !== null
+                ? ` Verified recipe is still at version ${after.ok ? after.version_no : baseVersion} — the save did NOT apply. (retriable: true)`
+                : ' Could not verify whether the save applied — check version_no via workato_recipe_status before retrying.') +
+              suffix,
+          );
+        }
+      }
+
+      if (!result?.ok) {
+        const errText = result?.error ?? 'unknown error';
+        const runningHint = /can'?t modify running recipe/i.test(errText)
+          ? ' (retriable: false — pass restart_if_running:true)'
+          : '';
+        const suffix = stoppedForSave
+          ? ` NOTE: the recipe was stopped for this save and has NOT been restarted (stopped_at=${stoppedAt}).`
+          : '';
+        return createErrorResponse(
+          `workato_ui_save_recipe_code: ${errText}` +
+            (result?.stage ? ` (stage=${result.stage})` : '') +
+            runningHint +
+            suffix,
+        );
+      }
+
+      // The PUT landed and Workato wrote a new version: every cached snapshot
+      // of this recipe now describes an older tree.
+      invalidateRecipeSnapshot(args.recipe_id);
+
+      // --- Post-save: readback verification ---------------------------------
+      // Workato answers 200 with an empty code_errors even when it dropped
+      // dynamic input keys the step's extended_input_schema doesn't declare.
+      // Read the tree back and say so — a "successful" save of empty data is
+      // the single most expensive failure this tool can hand an agent.
+      const verification =
+        args.verify_readback === false
+          ? { diff: null as TreeDiff | null, error: undefined as string | undefined }
+          : (timeoutVerification ?? (await this.verifyPersisted(tabId, args.recipe_id, sentTree)));
+
+      // The save may have landed without us ever reading back a version_no.
+      // Say "unknown" rather than printing the word `undefined` at the caller.
+      const versionLabel =
+        typeof result.version_no === 'number' ? `version ${result.version_no}` : 'version unknown';
+
+      const strippedInputs = verification.diff && verification.diff.missing.length > 0;
+      if (strippedInputs) {
+        const suffix = stoppedForSave
+          ? ` The recipe was stopped for this save and has NOT been restarted (stopped_at=${stoppedAt}).`
+          : '';
+        return createErrorResponse(
+          `workato_ui_save_recipe_code: saved recipe ${args.recipe_id} as ` +
+            `${versionLabel}, but the readback does not match what was sent.\n` +
+            describeMissing(verification.diff!) +
+            suffix +
+            ` (retriable: false — fix the schema first)\n` +
+            JSON.stringify({
+              recipe_id: args.recipe_id,
+              version_no: result.version_no,
+              save_status: 'persisted_incomplete',
+              dropped: verification.diff!.missing,
+            }),
+        );
+      }
+
+      // --- Post-save: version comment --------------------------------------
+      let commentSet: boolean | undefined;
+      let commentError: string | undefined;
+      if (typeof args.comment === 'string' && typeof result.version_no === 'number') {
+        try {
+          const c = await evaluateInPage<{ ok: boolean; error?: string }>(
+            tabId,
+            `(${SET_COMMENT_PAGE_FN})(${JSON.stringify(args.recipe_id)}, ${JSON.stringify(
+              result.version_no,
+            )}, ${JSON.stringify(args.comment)})`,
+            { awaitPromise: true },
+          );
+          commentSet = c?.ok === true;
+          if (!c?.ok) commentError = c?.error ?? 'unknown error';
+        } catch (e) {
+          commentSet = false;
+          commentError = e instanceof Error ? e.message : String(e);
+        }
+      }
+
+      // --- Post-save: restart -----------------------------------------------
+      // `restart_if_running` only restores what this call stopped. A recipe
+      // that was already stopped before the save stays stopped — starting it
+      // would be a surprise the caller never asked for. `ensure_running`
+      // exists for the caller who does want it up either way; without it the
+      // response says out loud that the recipe is lying there stopped.
+      const errCount = Array.isArray(result.code_errors) ? result.code_errors.length : 0;
+      const outcome = summarizeSaveOutcome({
+        code_errors: result.code_errors,
+        verification_error: verification.error,
+        value_mismatches: verification.diff?.changed,
+        verify_readback: args.verify_readback,
+        save_status: saveStatus,
+      });
+
+      // A recipe Workato reports validation errors on must not be started by
+      // this call: starting it either fails or runs a broken version. It stays
+      // stopped and the response says so.
+      const restartWanted = stoppedForSave || (args.ensure_running === true && !wasRunning);
+      const restartSkippedInvalid = restartWanted && !outcome.valid;
+      const startAfterSave = restartWanted && outcome.valid;
+      let restarted: boolean | undefined;
+      let restartError: string | undefined;
+      if (startAfterSave) {
+        const startRes = await this.lifecycle(tabId, args.recipe_id, 'start');
+        if (startRes.ok) {
+          const runningAgain = await this.pollRunning(tabId, args.recipe_id, true, 20_000);
+          restarted = runningAgain?.ok === true && runningAgain.running === true;
+          if (!restarted) {
+            restartError = `start enqueued but recipe not running after 20s (state=${runningAgain?.state ?? 'unknown'})`;
+          }
+        } else {
+          restarted = false;
+          restartError = startRes.error;
+        }
+      }
+
+      const payload: Record<string, unknown> = {
+        recipe_id: result.recipe_id,
+        version_no: result.version_no,
+        updated_at: result.updated_at,
+        code_errors: result.code_errors,
+        persisted: outcome.persisted,
+        valid: outcome.valid,
+        verified: outcome.verified,
+      };
+      if (baseVersion !== null) payload.base_version_no = baseVersion;
+      if (outcome.save_status) payload.save_status = outcome.save_status;
+      if (restartSkippedInvalid) payload.restart_skipped_invalid = true;
+      // Computed by the bridge when a full tree was saved from a file; nothing
+      // downstream ever read them, so a shadowed py_eval input stayed silent.
+      if (Array.isArray(args.py_eval_warnings) && args.py_eval_warnings.length > 0) {
+        payload.py_eval_warnings = args.py_eval_warnings;
+      }
+      // JSON.stringify drops an undefined value outright — flag the gap so a
+      // caller reading the payload can't mistake it for "no version field".
+      if (result.version_no === undefined) payload.version_no_unknown = true;
+      if (normalized.normalized > 0) payload.datapills_normalized = normalized.normalized;
+      if (wasRunning !== undefined) payload.was_running = wasRunning;
+      if (stoppedForSave) payload.stopped_at = stoppedAt;
+      if (startAfterSave) {
+        payload.restarted = restarted;
+        if (restartError) payload.restart_error = restartError;
+      } else if (restartSkippedInvalid || wasRunning === false) {
+        payload.running_after_save = false;
+      }
+      if (verification.error) payload.verification_error = verification.error;
+      if (verification.diff && verification.diff.changed.length > 0) {
+        payload.value_mismatches = verification.diff.changed;
+      }
+      if (commentSet !== undefined) {
+        payload.comment_set = commentSet;
+        if (commentError) payload.comment_error = commentError;
+      }
+
+      // A recipe that was already stopped stays stopped — the one thing an
+      // agent must not mistake for "the chain is live again".
+      const idleNotice =
+        !startAfterSave && !restartSkippedInvalid && wasRunning === false
+          ? ', recipe is STOPPED (it was stopped before this save; pass ensure_running:true to start it)'
+          : '';
+      const text =
+        `saved recipe ${result.recipe_id} (${versionLabel}` +
+        (errCount > 0
+          ? `, PERSISTED BUT INVALID: ${errCount} validation error${errCount === 1 ? '' : 's'}`
+          : '') +
+        (restartSkippedInvalid
+          ? ', NOT restarted because the saved version has validation errors, recipe is stopped'
+          : '') +
+        (startAfterSave
+          ? restarted
+            ? ', restarted'
+            : ', RESTART FAILED — recipe is stopped'
+          : '') +
+        idleNotice +
+        (verification.error ? `, readback NOT verified: ${verification.error}` : '') +
+        `)\n` +
+        JSON.stringify(payload);
+      return {
+        content: [{ type: 'text', text }],
+        isError: false,
+      };
+    } catch (error) {
+      console.error('[workato-ui] save_recipe_code failed:', error);
+      return createErrorResponse(
+        `workato_ui_save_recipe_code failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Exports — runtime instances (tools/index.ts reads `.name`).
+// ---------------------------------------------------------------------------
+
+// Suppress an unused warning for callFunctionOnObject + resolveBackendNodeToObjectId —
+// they're exported helpers reserved for the datapill drag/focus implementation
+// if we later need raw-pointer-event fallback. Mark as referenced.
+void callFunctionOnObject;
+void resolveBackendNodeToObjectId;
+void axRole;
+
+export const WorkatoUiOpenRecipeTool = new WorkatoUiOpenRecipeImpl();
+export const WorkatoUiEnterEditModeTool = new WorkatoUiEnterEditModeImpl();
+export const WorkatoUiListStepsTool = new WorkatoUiListStepsImpl();
+export const WorkatoUiFocusStepTool = new WorkatoUiFocusStepImpl();
+export const WorkatoUiAddStepTool = new WorkatoUiAddStepImpl();
+export const WorkatoUiSetFieldTool = new WorkatoUiSetFieldImpl();
+export const WorkatoUiInsertDatapillTool = new WorkatoUiInsertDatapillImpl();
+export const WorkatoUiSaveRecipeTool = new WorkatoUiSaveRecipeImpl();
+export const WorkatoUiExitEditModeTool = new WorkatoUiExitEditModeImpl();
+export const WorkatoUiCreateRecipeTool = new WorkatoUiCreateRecipeImpl();
+export const WorkatoUiSaveRecipeCodeTool = new WorkatoUiSaveRecipeCodeImpl();

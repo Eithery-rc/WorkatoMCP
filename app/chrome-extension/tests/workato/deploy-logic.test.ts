@@ -20,7 +20,7 @@ import {
   unifiedDiff,
   type DiffAsset,
   type ManifestAsset,
-} from '@/entrypoints/background/tools/workato/deploy-logic';
+} from '@/entrypoints/background/modules/workato/tools/workato/deploy-logic';
 
 const ENVS = [
   { id: 8070978, name: 'Development', type: 'dev' },

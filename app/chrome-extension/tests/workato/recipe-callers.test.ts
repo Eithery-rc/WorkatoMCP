@@ -28,7 +28,7 @@ import {
   type CandidateRow,
   type FailedRead,
   type ScopeInfo,
-} from '@/entrypoints/background/tools/workato/recipe-callers';
+} from '@/entrypoints/background/modules/workato/tools/workato/recipe-callers';
 
 const CALLEE = 999;
 /** A recipe in a folder that is NOT in scope, listed by the folder-blind endpoint. */

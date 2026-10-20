@@ -22,7 +22,7 @@ import {
   shapeSlimJob,
   validateJobFields,
   type JobScanCoverage,
-} from '@/entrypoints/background/tools/workato/job-projection';
+} from '@/entrypoints/background/modules/workato/tools/workato/job-projection';
 
 const COLUMNS = [
   { name: 'custom_column_0', label: 'Marker code' },

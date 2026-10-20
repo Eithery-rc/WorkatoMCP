@@ -20,7 +20,7 @@ import {
   summariseApps,
   type AppEntry,
   type CatalogueEntry,
-} from '@/entrypoints/background/tools/workato/apps-list';
+} from '@/entrypoints/background/modules/workato/tools/workato/apps-list';
 
 const CONNECTIONS = {
   result: {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renameRecipeInPage } from '@/entrypoints/background/tools/workato/rename-recipe';
+import { renameRecipeInPage } from '@/entrypoints/background/modules/workato/tools/workato/rename-recipe';
 
 describe('renameRecipeInPage', () => {
   afterEach(() => {

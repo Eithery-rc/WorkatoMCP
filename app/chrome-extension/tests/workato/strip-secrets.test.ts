@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripConnectionSecrets } from '../../entrypoints/background/tools/workato/strip-secrets';
+import { stripConnectionSecrets } from '../../entrypoints/background/modules/workato/tools/workato/strip-secrets';
 
 describe('stripConnectionSecrets', () => {
   describe('exact-match keys', () => {

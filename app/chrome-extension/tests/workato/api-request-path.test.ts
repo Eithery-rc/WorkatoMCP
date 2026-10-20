@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { resolveWorkatoPath } from '@/entrypoints/background/tools/workato/api-request';
+import { resolveWorkatoPath } from '@/entrypoints/background/modules/workato/tools/workato/api-request';
 
 const ORIGIN = 'https://app.workato.com';
 

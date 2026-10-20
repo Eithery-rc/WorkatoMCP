@@ -14,36 +14,41 @@ const dispatch = vi.hoisted(() => ({
   handlers: new Map<string, (args: unknown[]) => unknown>(),
 }));
 
-vi.mock('@/entrypoints/background/tools/workato/tab-dispatch', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('@/entrypoints/background/tools/workato/tab-dispatch')>();
-  return {
-    ...actual,
-    findWorkatoTab: vi.fn(async (tabId?: number) => ({
-      tabId: tabId ?? 42,
-      host: 'app.workato.com',
-      origin: 'https://app.workato.com',
-    })),
-    runInWorkatoTab: vi.fn(
-      async (
-        _tabId: number,
-        func: (...fnArgs: never[]) => unknown,
-        args: unknown[],
-        options?: unknown,
-      ) => {
-        dispatch.calls.push({ name: func.name, args, options });
-        const handler = dispatch.handlers.get(func.name);
-        if (!handler) throw new Error(`no in-page stub registered for ${func.name}`);
-        return handler(args);
-      },
-    ),
-  };
-});
+vi.mock(
+  '@/entrypoints/background/modules/workato/tools/workato/tab-dispatch',
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import('@/entrypoints/background/modules/workato/tools/workato/tab-dispatch')
+      >();
+    return {
+      ...actual,
+      findWorkatoTab: vi.fn(async (tabId?: number) => ({
+        tabId: tabId ?? 42,
+        host: 'app.workato.com',
+        origin: 'https://app.workato.com',
+      })),
+      runInWorkatoTab: vi.fn(
+        async (
+          _tabId: number,
+          func: (...fnArgs: never[]) => unknown,
+          args: unknown[],
+          options?: unknown,
+        ) => {
+          dispatch.calls.push({ name: func.name, args, options });
+          const handler = dispatch.handlers.get(func.name);
+          if (!handler) throw new Error(`no in-page stub registered for ${func.name}`);
+          return handler(args);
+        },
+      ),
+    };
+  },
+);
 
 import {
   workatoStartRecipeTool,
   workatoStopRecipeTool,
-} from '@/entrypoints/background/tools/workato/recipe-lifecycle';
+} from '@/entrypoints/background/modules/workato/tools/workato/recipe-lifecycle';
 
 function lastJson(text: string): Record<string, unknown> {
   const lines = text.trim().split('\n');

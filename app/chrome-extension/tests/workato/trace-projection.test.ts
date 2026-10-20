@@ -18,7 +18,7 @@ import {
   projectPathsDetailed,
   pruneEmpty,
   stripSchemaNoise,
-} from '@/entrypoints/background/tools/workato/slim-trace';
+} from '@/entrypoints/background/modules/workato/tools/workato/slim-trace';
 
 const PAYLOAD = {
   status: 0,

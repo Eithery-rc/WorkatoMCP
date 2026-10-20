@@ -12,7 +12,7 @@ import {
   normalizeCodeTree,
   normalizeDatapills,
   ISSUE_CAP,
-} from '@/entrypoints/background/tools/workato-ui/save-guards';
+} from '@/entrypoints/background/modules/workato/tools/workato-ui/save-guards';
 
 const pill = (json: string) => `#{_dp('${json}')}`;
 

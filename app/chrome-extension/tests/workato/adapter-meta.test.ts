@@ -11,7 +11,7 @@ import {
   pickAdapterNode,
   slimOperation,
   slimPickList,
-} from '@/entrypoints/background/tools/workato/adapter-meta';
+} from '@/entrypoints/background/modules/workato/tools/workato/adapter-meta';
 
 /** Trimmed from the real /integrations/meta?name=workato_recipe_function body. */
 const RECIPE_FUNCTION_META = {

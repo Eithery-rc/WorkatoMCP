@@ -6,7 +6,7 @@ import {
   mentionsAccountId,
   normalizeConfigErrors,
   normalizeStartError,
-} from '@/entrypoints/background/tools/workato/recipe-state';
+} from '@/entrypoints/background/modules/workato/tools/workato/recipe-state';
 
 /**
  * Fixtures captured live 2026-09-07 from GET /web_api/recipes/<id>/state.json.

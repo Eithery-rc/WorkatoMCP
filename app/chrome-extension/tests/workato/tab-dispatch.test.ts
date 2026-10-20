@@ -4,7 +4,7 @@ import {
   isWorkatoAppHost,
   runInWorkatoTab,
   WorkatoDispatchError,
-} from '../../entrypoints/background/tools/workato/tab-dispatch';
+} from '../../entrypoints/background/modules/workato/tools/workato/tab-dispatch';
 
 type Tab = chrome.tabs.Tab;
 const mockTabs: Tab[] = [];

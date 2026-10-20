@@ -17,16 +17,16 @@ import {
   assertExpectedContext,
   invalidateTabContext,
   resetSessionContextInvalidationForTests,
-} from '@/entrypoints/background/tools/workato/session-context';
+} from '@/entrypoints/background/modules/workato/tools/workato/session-context';
 import {
   WorkatoLookupTableRowCreateTool,
   WorkatoLookupTableDeleteTool,
-} from '@/entrypoints/background/tools/workato-lookup/handlers';
+} from '@/entrypoints/background/modules/workato/tools/workato-lookup/handlers';
 import {
   WorkatoDataTableRowUpdateTool,
   WorkatoDataTableDeleteTool,
-} from '@/entrypoints/background/tools/workato-data-table/handlers';
-import { workatoLcapPageDeleteTool } from '@/entrypoints/background/tools/workato-lcap/handlers';
+} from '@/entrypoints/background/modules/workato/tools/workato-data-table/handlers';
+import { workatoLcapPageDeleteTool } from '@/entrypoints/background/modules/workato/tools/workato-lcap/handlers';
 
 /** The workspace the mocked tab 42 is actually signed in to. */
 const ACTUAL = { workspace_id: 5150, workspace_name: 'Acme prod', environment: 'production' };

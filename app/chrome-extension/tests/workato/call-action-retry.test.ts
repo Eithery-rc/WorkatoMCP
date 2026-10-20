@@ -11,31 +11,36 @@ const dispatch = vi.hoisted(() => ({
   calls: [] as Array<{ name: string; options: unknown }>,
 }));
 
-vi.mock('@/entrypoints/background/tools/workato/tab-dispatch', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('@/entrypoints/background/tools/workato/tab-dispatch')>();
-  return {
-    ...actual,
-    findWorkatoTab: vi.fn(async () => ({
-      tabId: 42,
-      host: 'app.workato.com',
-      origin: 'https://app.workato.com',
-    })),
-    runInWorkatoTab: vi.fn(
-      async (
-        _tabId: number,
-        func: (...fnArgs: never[]) => unknown,
-        _args: unknown[],
-        options?: unknown,
-      ) => {
-        dispatch.calls.push({ name: func.name, options });
-        return { ok: true, raw: { result: { records: [] } } };
-      },
-    ),
-  };
-});
+vi.mock(
+  '@/entrypoints/background/modules/workato/tools/workato/tab-dispatch',
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import('@/entrypoints/background/modules/workato/tools/workato/tab-dispatch')
+      >();
+    return {
+      ...actual,
+      findWorkatoTab: vi.fn(async () => ({
+        tabId: 42,
+        host: 'app.workato.com',
+        origin: 'https://app.workato.com',
+      })),
+      runInWorkatoTab: vi.fn(
+        async (
+          _tabId: number,
+          func: (...fnArgs: never[]) => unknown,
+          _args: unknown[],
+          options?: unknown,
+        ) => {
+          dispatch.calls.push({ name: func.name, options });
+          return { ok: true, raw: { result: { records: [] } } };
+        },
+      ),
+    };
+  },
+);
 
-import { workatoCallActionTool } from '@/entrypoints/background/tools/workato/call-action';
+import { workatoCallActionTool } from '@/entrypoints/background/modules/workato/tools/workato/call-action';
 
 beforeEach(() => {
   dispatch.calls.length = 0;

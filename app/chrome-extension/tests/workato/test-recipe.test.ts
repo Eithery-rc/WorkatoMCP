@@ -21,7 +21,7 @@ import {
   runRecipeTestInPage,
   stopRecipeTestInPage,
   validateTriggerInput,
-} from '@/entrypoints/background/tools/workato/test-recipe';
+} from '@/entrypoints/background/modules/workato/tools/workato/test-recipe';
 
 const PARAMETERS_SCHEMA_JSON = JSON.stringify([
   {

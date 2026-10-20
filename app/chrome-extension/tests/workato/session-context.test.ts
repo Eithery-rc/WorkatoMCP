@@ -11,7 +11,7 @@ import {
   peekTabContext,
   resetSessionContextInvalidationForTests,
   SESSION_CONTEXT_TTL_MS,
-} from '@/entrypoints/background/tools/workato/session-context';
+} from '@/entrypoints/background/modules/workato/tools/workato/session-context';
 
 // --------------------------------------------------------------------------
 // The in-page read

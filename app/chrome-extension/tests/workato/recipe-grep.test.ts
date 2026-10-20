@@ -14,9 +14,9 @@ import {
   riskyRegexReason,
   searchableValues,
   type GrepMatcher,
-} from '@/entrypoints/background/tools/workato/recipe-grep';
-import { decodeCursor } from '@/entrypoints/background/tools/workato/recipe-projection';
-import type { RawNode } from '@/entrypoints/background/tools/workato/recipe-view';
+} from '@/entrypoints/background/modules/workato/tools/workato/recipe-grep';
+import { decodeCursor } from '@/entrypoints/background/modules/workato/tools/workato/recipe-projection';
+import type { RawNode } from '@/entrypoints/background/modules/workato/tools/workato/recipe-view';
 
 const PILL =
   '{"pill_type":"output","provider":"py_eval","line":"e4f443bd","path":["output","total"]}';

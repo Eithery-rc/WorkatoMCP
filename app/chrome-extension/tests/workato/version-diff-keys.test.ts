@@ -8,7 +8,10 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { collectSteps, stepHeader } from '@/entrypoints/background/tools/workato/version-diff';
+import {
+  collectSteps,
+  stepHeader,
+} from '@/entrypoints/background/modules/workato/tools/workato/version-diff';
 
 /** A node without an `as`: Workato writes these for control steps. */
 const anon = (uuid: string, number: number, keyword: string, over: object = {}) => ({
