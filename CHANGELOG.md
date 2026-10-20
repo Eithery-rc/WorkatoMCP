@@ -4,7 +4,7 @@ All notable changes to MokuTab, called WorkatoMCP before 2.0. Versions refer to 
 
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions. Dates are the commit dates of the corresponding release.
 
-## bridge 2.0.0 · shared 2.0.0 (unreleased): `@mokuhub/mokutab-bridge` and `@mokuhub/mokutab-shared`, formerly `workatomcp-bridge` and `workatomcp-shared`
+## bridge 2.0.0 · shared 2.0.0 (2026-10-20): `@mokuhub/mokutab-bridge` and `@mokuhub/mokutab-shared`, formerly `workatomcp-bridge` and `workatomcp-shared`
 
 WorkatoMCP is now **MokuTab**, a MokuHub product: browser tools for AI agents that drive the user's own logged-in Chrome. The code is split into a core and modules, and Workato is the first module, switched on and off in the extension popup. Upstream features this project never used are gone. Read **Breaking changes** and **Migration** before upgrading a 1.x machine.
 
