@@ -94,6 +94,8 @@ jobs:
 
           To update, replace the folder's contents with the new zip and press reload on the extension card.
 
+          Coming from WorkatoMCP 1.x: follow [Upgrade from WorkatoMCP 1.x](https://github.com/${REPO}#upgrade-from-workatomcp-1x) instead. The order matters: the old package has to go before the new one installs.
+
           ## Verify
 
           \`gh attestation verify ${ZIP} --repo ${REPO}\` confirms the zip was built by this repository's release workflow.
