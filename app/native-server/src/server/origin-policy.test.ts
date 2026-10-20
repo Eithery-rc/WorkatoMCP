@@ -1,6 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
 import { EXTENSION_IDS } from '../scripts/constant';
-import { isAllowedOrigin, isAllowedWsOrigin } from './origin-policy';
+import { isAllowedHost, isAllowedOrigin, isAllowedWsOrigin, requestRefusal } from './origin-policy';
 
 const OURS = `chrome-extension://${EXTENSION_IDS[0]}`;
 
@@ -62,5 +62,57 @@ describe('isAllowedOrigin', () => {
     expect(isAllowedOrigin('null')).toBe(false);
     expect(isAllowedOrigin('file://')).toBe(false);
     expect(isAllowedOrigin('not a url')).toBe(false);
+  });
+
+  // Each of these parses to hostname 127.0.0.1, so only the comparison with the
+  // normalized url.origin refuses them: a header that is not the canonical
+  // origin string is not a real Origin.
+  test('a value that only normalizes to the local origin is refused', () => {
+    for (const origin of [
+      'http://127.0.0.1.', // trailing dot
+      'http://user@127.0.0.1', // credentials
+      'HTTP://127.0.0.1', // scheme case
+      'http://127.1', // IPv4 shorthand
+      'http://0x7f.0.0.1', // hex octet
+      ' http://127.0.0.1', // leading whitespace
+      'http://127.0.0.1 ', // trailing whitespace
+      'http://127.0.0.1/', // trailing slash
+      'http://127.0.0.1:80', // the default port spelled out
+      'http://127.0.0.1:012306', // a padded port
+    ]) {
+      expect([origin, isAllowedOrigin(origin)]).toEqual([origin, false]);
+    }
+  });
+});
+
+describe('isAllowedHost', () => {
+  test('a local name on the port the request came in on', () => {
+    expect(isAllowedHost('127.0.0.1:12306', 12306)).toBe(true);
+    expect(isAllowedHost('localhost:12306', 12306)).toBe(true);
+    expect(isAllowedHost('LocalHost:12306', 12306)).toBe(true);
+  });
+
+  test('a rebinding domain, another port or a malformed value is refused', () => {
+    expect(isAllowedHost('attacker.example:12306', 12306)).toBe(false);
+    expect(isAllowedHost('127.0.0.1.attacker.tld:12306', 12306)).toBe(false);
+    expect(isAllowedHost('127.0.0.1:12307', 12306)).toBe(false);
+    expect(isAllowedHost('127.0.0.1', 12306)).toBe(false);
+    expect(isAllowedHost('localhost.:12306', 12306)).toBe(false);
+    expect(isAllowedHost('[::1]:12306', 12306)).toBe(false);
+    expect(isAllowedHost('127.0.0.1:12306:1', 12306)).toBe(false);
+  });
+
+  test('no Host header (an injected request) and an unknown local port only check the name', () => {
+    expect(isAllowedHost(undefined, 12306)).toBe(true);
+    expect(isAllowedHost('127.0.0.1:1', null)).toBe(true);
+    expect(isAllowedHost('attacker.example', null)).toBe(false);
+  });
+
+  test('requestRefusal names what it refused', () => {
+    expect(requestRefusal({ host: '127.0.0.1:12306', port: 12306 })).toBeNull();
+    expect(requestRefusal({ host: 'evil.example', port: 12306 })).toBe('host "evil.example"');
+    expect(
+      requestRefusal({ host: '127.0.0.1:12306', port: 12306, origin: 'https://evil.example' }),
+    ).toBe('origin "https://evil.example"');
   });
 });

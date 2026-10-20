@@ -13,6 +13,10 @@
  *                  manifest allows)
  *     HTTP routes  the same, plus `http://127.0.0.1[:port]` for local
  *                  debugging pages
+ *   Host (every HTTP/1.1 client sends it)
+ *     `127.0.0.1:<port>` or `localhost:<port>`, the port this request came
+ *     in on. A DNS-rebinding page is same-origin with the bridge, so its
+ *     Origin passes; its Host is its own domain, and that is refused.
  *
  * A prefix match once let `http://127.0.0.1.attacker.tld` through, and any
  * `chrome-extension://` origin, i.e. any installed extension.
@@ -21,6 +25,9 @@
 import { EXTENSION_IDS } from '../scripts/constant';
 
 export const LOCAL_HTTP_HOSTS: readonly string[] = ['127.0.0.1'];
+
+/** Host names the bridge answers to (it binds 127.0.0.1; localhost resolves there). */
+export const LOCAL_HOST_NAMES: readonly string[] = ['127.0.0.1', 'localhost'];
 
 function absent(value: string | undefined | null): boolean {
   return value === undefined || value === null || value === '';
@@ -68,6 +75,34 @@ export function isAllowedOrigin(
     return LOCAL_HTTP_HOSTS.includes(url.hostname) && origin === url.origin;
   }
   return false;
+}
+
+/**
+ * The Host header: a local name with the port the request came in on. A
+ * missing header is allowed: every browser sends one, so its absence is a
+ * test injection or a raw HTTP/1.0 client, not a rebinding page.
+ *
+ * @param port The local port of the connection, when known.
+ */
+export function isAllowedHost(host: string | undefined | null, port?: number | null): boolean {
+  if (absent(host)) return true;
+  const match = /^([^:]+)(?::(\d+))?$/.exec(host!.trim().toLowerCase());
+  if (!match) return false;
+  const [, name, portText] = match;
+  if (!LOCAL_HOST_NAMES.includes(name)) return false;
+  if (port === undefined || port === null) return true;
+  return Number(portText ?? 80) === port;
+}
+
+/** Why a request is refused, or null when it may proceed. */
+export function requestRefusal(request: {
+  origin?: string | null;
+  host?: string | null;
+  port?: number | null;
+}): string | null {
+  if (!isAllowedHost(request.host, request.port)) return `host ${JSON.stringify(request.host)}`;
+  if (!isAllowedOrigin(request.origin)) return `origin ${JSON.stringify(request.origin)}`;
+  return null;
 }
 
 /** Refusals go to stderr: stdout is the native-messaging channel, and Fastify's logger is off. */

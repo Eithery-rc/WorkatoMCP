@@ -25,7 +25,7 @@ import { profileRegistry } from './profile-registry';
 import { markMcpActivity } from '../update-checker';
 import { watchManager } from '../mcp/watch-instance';
 import { parseWaitQuery } from '../mcp/browser-watch';
-import { isAllowedOrigin, isAllowedWsOrigin, logRefusal } from './origin-policy';
+import { isAllowedOrigin, isAllowedWsOrigin, logRefusal, requestRefusal } from './origin-policy';
 
 // ============================================================
 // Types
@@ -98,6 +98,21 @@ export class Server {
   }
 
   private setupPlugins(): void {
+    // First, for every route: a request from a foreign browser origin, or one
+    // whose Host is not this bridge (a DNS-rebinding page is same-origin with
+    // us but sends its own domain), is refused before it runs. CORS alone only
+    // withholds headers: the route would still execute, /file would still
+    // read the file. See origin-policy.ts.
+    this.fastify.addHook('onRequest', async (request, reply) => {
+      const refusal = requestRefusal({
+        origin: request.headers.origin,
+        host: request.headers.host,
+        port: request.socket?.localPort ?? null,
+      });
+      if (!refusal) return;
+      logRefusal(`${request.method} ${request.url.split('?')[0]}: ${refusal} not allowed`);
+      return reply.code(HTTP_STATUS.FORBIDDEN).send({ error: `${refusal} not allowed` });
+    });
     // Any request except health checks counts as activity; the update
     // checker's idle restart waits for this to go quiet.
     this.fastify.addHook('onRequest', async (request) => {
