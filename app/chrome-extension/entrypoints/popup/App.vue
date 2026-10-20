@@ -4,7 +4,7 @@
     <div v-show="currentView === 'home'" class="home-view">
       <div class="header">
         <div class="header-content">
-          <h1 class="header-title">WorkatoMCP</h1>
+          <h1 class="header-title">MokuTab</h1>
         </div>
       </div>
       <div class="content">
@@ -144,7 +144,7 @@
             Docs
           </button>
         </div>
-        <p class="footer-text">chrome mcp server for ai</p>
+        <p class="footer-text">browser tools for ai agents</p>
       </div>
     </div>
   </div>
@@ -265,7 +265,7 @@ const mcpConfigJson = computed(() => {
   const port = serverStatus.value.port || nativeServerPort.value;
   const config = {
     mcpServers: {
-      'streamable-mcp-server': {
+      mokutab: {
         type: 'streamable-http',
         url: `http://127.0.0.1:${port}/mcp`,
       },

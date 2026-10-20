@@ -62,7 +62,7 @@ jobs:
       - name: Zip
         id: zip
         run: |
-          name="workatomcp-extension-${{ steps.version.outputs.extension }}.zip"
+          name="mokutab-extension-${{ steps.version.outputs.extension }}.zip"
           (cd app/chrome-extension/dist/chrome-mv3 && zip -r -X -q "$GITHUB_WORKSPACE/$name" .)
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "sha256=$(sha256sum "$name" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
@@ -83,11 +83,11 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           cat > notes.md <<EOF
-          Chrome extension ${EXTENSION}, built by GitHub Actions from this tag. Pairs with [\`workatomcp-bridge\`](https://www.npmjs.com/package/workatomcp-bridge) ${BRIDGE} on npm.
+          Chrome extension ${EXTENSION}, built by GitHub Actions from this tag. Pairs with [\`@mokuhub/mokutab-bridge\`](https://www.npmjs.com/package/@mokuhub/mokutab-bridge) ${BRIDGE} on npm.
 
           ## Install
 
-          1. Unzip \`${ZIP}\` into a folder you will keep, for example \`%LOCALAPPDATA%\WorkatoMCP\extension\`. Chrome loads the extension from there on every start.
+          1. Unzip \`${ZIP}\` into a folder you will keep, for example \`%LOCALAPPDATA%\MokuTab\extension\`. Chrome loads the extension from there on every start.
           2. Open \`chrome://extensions\`, turn on **Developer mode**, click **Load unpacked** and pick that folder.
           3. Check the ID reads \`bpjpdgkeelhkijkllcmogemkmndgeana\`.
           4. Install the bridge and connect your MCP client: [quick start](https://github.com/${REPO}#3-install-the-bridge), step 3 on.
@@ -119,5 +119,5 @@ jobs:
             gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
           else
             gh release create "$GITHUB_REF_NAME" "$ZIP" --verify-tag \
-              --title "WorkatoMCP $GITHUB_REF_NAME" --notes-file notes.md
+              --title "MokuTab $GITHUB_REF_NAME" --notes-file notes.md
           fi

@@ -5,9 +5,9 @@
 
 // Fallback messages for when Chrome APIs aren't available (English)
 const fallbackMessages: Record<string, string> = {
-  extensionName: 'WorkatoMCP',
+  extensionName: 'MokuTab',
   extensionDescription:
-    "Chrome extension that exposes the user's Workato session as MCP tools for AI agents.",
+    "Chrome extension that exposes the user's logged-in browser session as MCP tools for AI agents.",
   nativeServerConfigLabel: 'Native Server Configuration',
   runningStatusLabel: 'Running Status',
   lastUpdatedLabel: 'Last Updated:',

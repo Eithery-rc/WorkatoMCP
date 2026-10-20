@@ -29,7 +29,7 @@ body:
     id: bridge-version
     attributes:
       label: Bridge version
-      description: Output of `workatomcp-bridge --version`
+      description: Output of `mokutab-bridge --version`
       placeholder: 1.11.0
     validations:
       required: true
@@ -71,8 +71,8 @@ body:
     attributes:
       label: Diagnostics
       description: |
-        Output of `workatomcp-bridge doctor`. For connection problems,
-        `workatomcp-bridge report --copy` produces a fuller redacted report.
+        Output of `mokutab-bridge doctor`. For connection problems,
+        `mokutab-bridge report --copy` produces a fuller redacted report.
       render: text
 
   - type: checkboxes

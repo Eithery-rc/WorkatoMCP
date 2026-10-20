@@ -1,10 +1,10 @@
 {
   "extensionName": {
-    "message": "WorkatoMCP",
+    "message": "MokuTab",
     "description": "Extension display name"
   },
   "extensionDescription": {
-    "message": "Chrome extension that exposes the user's Workato session as MCP tools for AI agents.",
+    "message": "Chrome extension that exposes the user's logged-in browser session as MCP tools for AI agents.",
     "description": "Extension description shown in chrome://extensions"
   },
   "nativeServerConfigLabel": {

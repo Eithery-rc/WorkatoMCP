@@ -47,7 +47,7 @@ const DEFAULT_MAX_TABS = 10;
 
 const USER_SCRIPTS_NOTE =
   'Running through the debugger, so Chrome shows its debugging banner on each reading. Turn on ' +
-  '"Allow User Scripts" in chrome://extensions > WorkatoMCP > Details (in this Chrome profile) ' +
+  '"Allow User Scripts" in chrome://extensions > MokuTab > Details (in this Chrome profile) ' +
   'and watches started after that run without it.';
 
 /**

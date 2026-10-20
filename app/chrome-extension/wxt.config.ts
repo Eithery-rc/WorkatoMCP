@@ -67,7 +67,7 @@ export default defineConfig({
     host_permissions: ['<all_urls>'],
     action: {
       default_popup: 'popup.html',
-      default_title: 'WorkatoMCP',
+      default_title: 'MokuTab',
     },
     web_accessible_resources: [
       {

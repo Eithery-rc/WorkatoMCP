@@ -5,16 +5,16 @@ import { LINKS, NATIVE_HOST } from '@/common/constants';
 import '@/entrypoints/styles/theme.css';
 
 const COMMANDS = {
-  npmInstall: 'npm install -g workatomcp-bridge',
-  pnpmInstall: 'pnpm add -g workatomcp-bridge',
-  yarnInstall: 'yarn global add workatomcp-bridge',
+  npmInstall: 'npm install -g @mokuhub/mokutab-bridge',
+  pnpmInstall: 'pnpm add -g @mokuhub/mokutab-bridge',
+  yarnInstall: 'yarn global add @mokuhub/mokutab-bridge',
   mcpUrl: 'http://127.0.0.1:' + NATIVE_HOST.DEFAULT_PORT + '/mcp',
-  doctor: 'workatomcp-bridge doctor',
-  fix: 'workatomcp-bridge doctor --fix',
+  doctor: 'mokutab-bridge doctor',
+  fix: 'mokutab-bridge doctor --fix',
   workatoUrl: 'https://app.workato.com',
   claudeMcpConfig: `{
   "mcpServers": {
-    "workato": {
+    "mokutab": {
       "command": "npx",
       "args": [
         "mcp-remote",
@@ -24,7 +24,7 @@ const COMMANDS = {
     }
   }
 }`,
-  pluginMarketplaceAdd: '/plugin marketplace add Eithery-rc/WorkatoMCP',
+  pluginMarketplaceAdd: '/plugin marketplace add MokuHub/MokuTab',
   pluginInstall: '/plugin install workato-recipes@workato-mcp',
 } as const;
 
@@ -88,13 +88,13 @@ async function openDocs(): Promise<void> {
           <div class="flex items-center gap-3 min-w-0">
             <img
               src="/icon/48.png"
-              alt="WorkatoMCP"
+              alt="MokuTab"
               class="welcome-icon-img w-10 h-10 flex-shrink-0"
             />
             <div class="min-w-0">
-              <h1 class="welcome-title text-lg font-medium tracking-tight truncate">WorkatoMCP</h1>
+              <h1 class="welcome-title text-lg font-medium tracking-tight truncate">MokuTab</h1>
               <p class="welcome-muted text-sm truncate">
-                Expose your Workato session to AI agents via MCP.
+                Expose your logged-in browser to AI agents via MCP.
               </p>
             </div>
           </div>
@@ -117,7 +117,7 @@ async function openDocs(): Promise<void> {
               <h2 class="welcome-title text-xl font-medium">Sign in to Workato</h2>
             </div>
             <p class="welcome-muted text-sm mt-2">
-              WorkatoMCP runs every API call as <em>you</em>, piggybacking on your existing browser
+              MokuTab runs every API call as <em>you</em>, piggybacking on your existing browser
               session. No API tokens, no service accounts — just your normal Workato login. Make
               sure at least one tab is signed in before agents call any
               <code class="welcome-code">workato_*</code>
@@ -138,7 +138,7 @@ async function openDocs(): Promise<void> {
             <div class="flex items-center gap-2">
               <span class="welcome-step-num">2</span>
               <h2 class="welcome-title text-xl font-medium">
-                Install <code class="welcome-code">workatomcp-bridge</code>
+                Install <code class="welcome-code">@mokuhub/mokutab-bridge</code>
               </h2>
             </div>
             <p class="welcome-muted text-sm mt-2">
@@ -275,11 +275,11 @@ async function openDocs(): Promise<void> {
                 >
                 from
                 <a
-                  href="https://github.com/Eithery-rc/WorkatoMCP"
+                  href="https://github.com/MokuHub/MokuTab"
                   target="_blank"
                   rel="noopener noreferrer"
                   class="welcome-code"
-                  >github.com/Eithery-rc/WorkatoMCP</a
+                  >github.com/MokuHub/MokuTab</a
                 >
                 into whatever skill/rules directory your agent loads from.
               </div>

@@ -43,8 +43,8 @@ export const SUCCESS_MESSAGES = {
 
 // External Links
 export const LINKS = {
-  REPO: 'https://github.com/Eithery-rc/WorkatoMCP',
-  TROUBLESHOOTING: 'https://github.com/Eithery-rc/WorkatoMCP#manual-smoke-test',
+  REPO: 'https://github.com/MokuHub/MokuTab',
+  TROUBLESHOOTING: 'https://github.com/MokuHub/MokuTab#manual-smoke-test',
 } as const;
 
 // Network Filtering
