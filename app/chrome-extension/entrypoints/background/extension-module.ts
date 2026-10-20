@@ -76,6 +76,22 @@ export async function applyBridgeModulesState(payload: unknown): Promise<StoredM
   return stored;
 }
 
+/**
+ * Forget the stored state until the bridge pushes its own. Called when the
+ * bridge socket opens: a bridge from before the module switch never pushes,
+ * and an "off" stored under a newer bridge must not keep refusing tools (or
+ * idle the content scripts) on it. A current bridge pushes on connect, so
+ * the real state is back at once.
+ */
+export async function clearModuleStates(): Promise<void> {
+  cache = {};
+  try {
+    await chrome.storage.local.remove(STORAGE_KEYS.MODULES_STATE);
+  } catch {
+    /* the in-memory state still applies */
+  }
+}
+
 /** Test seam: forget the cached state. */
 export function resetModuleStateCache(): void {
   cache = null;

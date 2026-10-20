@@ -8,6 +8,7 @@ import { STORAGE_KEYS } from '@/common/constants';
 import { moduleStatesOf } from '@/common/module-state';
 import {
   applyBridgeModulesState,
+  clearModuleStates,
   moduleEnabled,
   resetModuleStateCache,
 } from '@/entrypoints/background/extension-module';
@@ -71,6 +72,21 @@ describe('the state the background keeps', () => {
 
   test('a fresh service worker reads the stored state', async () => {
     stored[STORAGE_KEYS.MODULES_STATE] = state(false);
+    expect(await moduleEnabled('workato')).toBe(false);
+  });
+
+  test('a new bridge socket clears a stored "off" until that bridge pushes its own', async () => {
+    stored[STORAGE_KEYS.MODULES_STATE] = state(false);
+    expect(await moduleEnabled('workato')).toBe(false);
+
+    await clearModuleStates();
+    // An older bridge never pushes: the module is on again, for the content
+    // scripts too.
+    expect(await moduleEnabled('workato')).toBe(true);
+    expect(stored[STORAGE_KEYS.MODULES_STATE]).toBeUndefined();
+
+    // A current bridge pushes on connect, and that is the state again.
+    await applyBridgeModulesState({ modules: state(false).modules });
     expect(await moduleEnabled('workato')).toBe(false);
   });
 

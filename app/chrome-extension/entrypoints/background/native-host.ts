@@ -14,7 +14,7 @@ import { acquireKeepalive } from './keepalive-manager';
 import { getExtensionBuildInfo, scheduleExtensionReload } from './dev-reload';
 import { agentTabInfo, closeAgentTab, navigateAgentTab, openAgentTab } from './agent-tabs';
 import { runWatchProbe } from './watch-probe';
-import { applyBridgeModulesState } from './extension-module';
+import { applyBridgeModulesState, clearModuleStates } from './extension-module';
 import { EXTENSION_MODULES } from './modules';
 import { moduleStatesOf, readStoredModulesState } from '@/common/module-state';
 import { BridgeRequests } from './bridge-requests';
@@ -441,6 +441,9 @@ async function connectWebSocket(port: number): Promise<boolean> {
 
     ws.onopen = () => {
       console.log(`${LOG_PREFIX} WebSocket connected for profile "${profileName}"`);
+      // Until this bridge pushes its module state, none is known: an older
+      // bridge never pushes, and a stored "off" must not strand it.
+      void clearModuleStates();
       wsClient = ws;
       isWsConnecting = false;
       wsReconnectAttempts = 0;
