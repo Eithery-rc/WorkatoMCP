@@ -28,6 +28,24 @@ export enum NativeMessageType {
   AGENT_TAB_NAVIGATE = 'agent_tab_navigate',
   // Bridge -> extension: run a chrome_watch_start script in its tabs (one tick)
   WATCH_PROBE = 'watch_probe',
+  // Module switch, one per machine, kept in the bridge. Extension -> bridge
+  // requests (the popup reads and writes it); bridge -> extension push of the
+  // current state on connect and on every change.
+  MODULES_GET = 'modules_get',
+  MODULES_SET = 'modules_set',
+  MODULES_STATE = 'modules_state',
+}
+
+/** One installed module and whether it is on, as the bridge reports it. */
+export interface ModuleStateEntry {
+  id: string;
+  title: string;
+  enabled: boolean;
+}
+
+/** Payload of MODULES_STATE and the answer to MODULES_GET / MODULES_SET. */
+export interface ModulesStatePayload {
+  modules: ModuleStateEntry[];
 }
 
 export interface NativeMessage<P = any, E = any> {

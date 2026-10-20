@@ -27,6 +27,7 @@ import {
   type FnDefinition,
   type HelperDefinition,
 } from './fn-definition';
+import { dataDir } from '../data-dir';
 
 export const FN_DIR_ENV = 'WORKATOMCP_FN_DIR';
 const LOCK_FILE = '.fn-save.lock';
@@ -39,7 +40,7 @@ export function defaultRegistryDir(): string {
   const override = process.env[FN_DIR_ENV];
   return override && override.trim()
     ? path.resolve(override.trim())
-    : path.join(os.homedir(), '.workatomcp', 'functions');
+    : path.join(dataDir(), 'functions');
 }
 
 export type GitRunner = (args: string[], cwd: string) => Promise<string>;

@@ -18,3 +18,11 @@ if (!process.env.WORKATOMCP_OPERATIONS_DIR) {
     `workatomcp-jest-operations-${unique}`,
   );
 }
+
+// The same for the data dir (~/.workatomcp): the module switch reads
+// config.json there, and a machine with a module switched off must not turn
+// the suite red. A fresh, empty dir means every module is on.
+if (!process.env.WORKATOMCP_DATA_DIR) {
+  const unique = `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  process.env.WORKATOMCP_DATA_DIR = path.join(os.tmpdir(), `workatomcp-jest-data-${unique}`);
+}

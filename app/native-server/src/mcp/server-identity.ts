@@ -17,38 +17,49 @@ import {
 export const SERVER_NAME = 'WorkatoMCP';
 
 /**
- * Concise task-to-tool guidance, sent once at initialize.
+ * Concise task-to-tool guidance, sent once at initialize: the core snippet,
+ * then the snippet of each module that is on, then one line naming the
+ * installed modules that are off.
  *
- * Documented limit is 2 KB; this is deliberately kept under 1500 bytes so it
- * survives a client that budgets instructions alongside tool descriptions. It
- * names tools only, never repeats their parameters: the schema is the
- * documentation, and duplicating it here is how the two drift apart.
+ * Documented limit is 2 KB; every on/off combination is deliberately kept
+ * under 1500 bytes so it survives a client that budgets instructions alongside
+ * tool descriptions. It names tools only, never repeats their parameters: the
+ * schema is the documentation, and duplicating it here is how the two drift
+ * apart.
  */
-export const SERVER_INSTRUCTIONS = [
-  'Workato tools driving a logged-in browser session. Pick by task:',
-  'which app exists, its adapter name -> workato_apps_list(query);',
-  'what an adapter can do, what a field is called -> workato_adapter_meta;',
-  "a step's real extended_*_schema, never hand-written -> workato_step_schema;",
-  'one field to change -> workato_recipe_set_input_path;',
-  'several edits or any structural change -> workato_recipe_apply;',
-  'find a value in a recipe -> workato_recipe_grep, then read that path;',
-  'inspect a job -> workato_job_trace with paths;',
-  'find jobs -> workato_list_jobs with started_from/started_to or match, no page walking;',
-  'who calls a recipe -> workato_recipe_callers;',
-  'check a recipe can still authenticate -> workato_recipe_connections;',
-  'what a change would break -> workato_recipe_validate;',
-  'a save that stops and restarts callers -> workato_recipe_save_with_dependents,',
-  'then workato_operation_status if it times out;',
-  'run a fixture through a recipe -> workato_test_recipe;',
-  'confirm the workspace a call lands in -> workato_session_context;',
-  'which build answers -> workato_bridge_info;',
-  'change environment or client workspace -> workato_switch_environment;',
-  'deploy -> workato_deploy_plan, review its diff, then workato_deploy_run;',
-  'parallel agents -> each takes chrome_lease_tab and passes its lease;',
-  'wait for a page change -> chrome_watch_start, wait_command in background.',
+export const CORE_INSTRUCTIONS = [
+  'Browser tools driving a logged-in browser session.',
   'Large results spill to a file (auto_file); out_file picks the path.',
   "Writes need their own flag. Read a tool's description before its first call.",
+  'Pick by task: which build answers -> workato_bridge_info;',
+  'parallel agents -> each takes chrome_lease_tab and passes its lease;',
+  'wait for a page change -> chrome_watch_start, wait_command in background.',
 ].join(' ');
+
+export interface InstructionModule {
+  id: string;
+  title: string;
+  instructions: string;
+}
+
+/** The instructions for a session, given the installed modules and which are on. */
+export function buildServerInstructions(
+  installed: readonly InstructionModule[],
+  isEnabled: (id: string) => boolean,
+): string {
+  const parts = [CORE_INSTRUCTIONS];
+  const off: string[] = [];
+  for (const module of installed) {
+    if (isEnabled(module.id)) parts.push(module.instructions);
+    else off.push(module.title);
+  }
+  if (off.length > 0) {
+    parts.push(
+      `Switched off on this machine: ${off.join(', ')} (turn on in the extension popup, Modules).`,
+    );
+  }
+  return parts.join(' ');
+}
 
 /** The bridge version, read once from the package.json that ships with dist. */
 export function serverVersion(): string {

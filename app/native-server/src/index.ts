@@ -5,11 +5,17 @@ import * as path from 'path';
 import { startUpdateChecker, updateStateDir } from './update-checker';
 import { profileRegistry } from './server/profile-registry';
 import { watchManager } from './mcp/watch-instance';
+import { installModuleSync } from './server/module-sync';
+import { wireToolListChanged } from './mcp/mcp-server';
 
 try {
   // The default profile outlives a bridge restart (an extension reload of the
   // profile that owns the port restarts this process).
   profileRegistry.enablePreferencePersistence(path.join(updateStateDir(), 'default-profile.json'));
+  // The module switch: popups read and write it over the extension
+  // connection, profiles get it pushed, open MCP sessions get list_changed.
+  installModuleSync();
+  wireToolListChanged();
   serverInstance.setNativeHost(nativeMessagingHostInstance); // Server needs setNativeHost method
   nativeMessagingHostInstance.setServer(serverInstance); // NativeHost needs setServer method
   nativeMessagingHostInstance.start();

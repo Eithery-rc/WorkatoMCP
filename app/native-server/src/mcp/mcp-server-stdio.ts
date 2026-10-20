@@ -9,11 +9,18 @@ import {
   ListResourcesRequestSchema,
   ListPromptsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { TOOL_SCHEMAS } from 'workatomcp-shared';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { withProfileRoutingToolSchemas } from './register-tools';
-import { SERVER_INSTRUCTIONS, SERVER_NAME, serverVersion } from './server-identity';
+import { INSTALLED_MODULES } from '../modules';
+import { moduleSwitch } from './module-switch';
+import { listedToolSchemas, withProfileRoutingToolSchemas } from './register-tools';
+import { buildServerInstructions, SERVER_NAME, serverVersion } from './server-identity';
+
+/** How often the stdio proxy looks at the module switch file for a change. */
+const MODULE_SWITCH_POLL_MS = 2000;
+
+const enabledModules = () =>
+  INSTALLED_MODULES.filter((module) => moduleSwitch.isEnabled(module.id));
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -43,15 +50,26 @@ export const getStdioMcpServer = () => {
     },
     {
       capabilities: {
-        tools: {},
+        tools: { listChanged: true },
         resources: {},
         prompts: {},
       },
-      instructions: SERVER_INSTRUCTIONS,
+      instructions: buildServerInstructions(INSTALLED_MODULES, (id) => moduleSwitch.isEnabled(id)),
     },
   );
 
   setupTools(stdioMcpServer);
+  // The switch lives in the bridge config file, which this process reads too:
+  // a change made in the popup reaches the stdio client as list_changed
+  // within a poll interval.
+  const server = stdioMcpServer;
+  moduleSwitch.onChange(() => {
+    void server.sendToolListChanged().catch(() => {});
+  });
+  setInterval(
+    () => moduleSwitch.snapshot(INSTALLED_MODULES.map((module) => module.id)),
+    MODULE_SWITCH_POLL_MS,
+  ).unref();
   return stdioMcpServer;
 };
 
@@ -79,7 +97,7 @@ export const ensureMcpClient = async () => {
 export const setupTools = (server: Server) => {
   // List tools handler
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: withProfileRoutingToolSchemas(TOOL_SCHEMAS),
+    tools: withProfileRoutingToolSchemas(listedToolSchemas(enabledModules())),
   }));
 
   // Call tool handler

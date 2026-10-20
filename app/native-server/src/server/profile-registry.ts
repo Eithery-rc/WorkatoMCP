@@ -43,6 +43,50 @@ export class ProfileRegistry {
   /** Per-profile serial of the current socket; a reconnect gets a higher one. */
   private connectionSerials: Map<string, number> = new Map();
   private nextSerial = 0;
+  /** Requests the extension sends to the bridge (popup -> background -> here), by type. */
+  private requestHandlers: Map<string, (payload: any, profileName: string) => unknown> = new Map();
+  private registerListeners: Set<(profileName: string) => void> = new Set();
+
+  /**
+   * Answer extension-initiated requests of `type` (`{type, requestId, payload}`)
+   * with `{responseToRequestId, payload: {status, data | error}}`.
+   */
+  public setRequestHandler(
+    type: string,
+    handler: (payload: any, profileName: string) => unknown,
+  ): void {
+    this.requestHandlers.set(type, handler);
+  }
+
+  /** Called after a profile (re)connects, e.g. to push it the current state. */
+  public onRegister(listener: (profileName: string) => void): () => void {
+    this.registerListeners.add(listener);
+    return () => this.registerListeners.delete(listener);
+  }
+
+  /** Fire-and-forget message to one profile. False when it is not connected. */
+  public notify(profileName: string, type: string, payload: unknown): boolean {
+    const socket = this.connections.get(profileName);
+    if (!socket) return false;
+    try {
+      socket.send(JSON.stringify({ type, payload }));
+      return true;
+    } catch (err: any) {
+      logProfileRegistry(
+        `[ProfileRegistry] Could not send ${type} to profile "${profileName}": ${err?.message}`,
+      );
+      return false;
+    }
+  }
+
+  /** Fire-and-forget message to every connected profile; returns how many got it. */
+  public broadcast(type: string, payload: unknown): number {
+    let sent = 0;
+    for (const profileName of this.connections.keys()) {
+      if (this.notify(profileName, type, payload)) sent += 1;
+    }
+    return sent;
+  }
 
   /**
    * Remember the default profile in `file` across bridge restarts. Only the
@@ -131,6 +175,14 @@ export class ProfileRegistry {
       console.error(`[ProfileRegistry] Socket error for profile "${profileName}":`, err);
       this.handleSocketClosed(profileName, socket);
     });
+
+    for (const listener of this.registerListeners) {
+      try {
+        listener(profileName);
+      } catch (err: any) {
+        logProfileRegistry(`[ProfileRegistry] A connect listener failed: ${err?.message}`);
+      }
+    }
   }
 
   /**
@@ -273,11 +325,39 @@ export class ProfileRegistry {
     });
   }
 
+  /** Run an extension-initiated request and send the answer back on its socket. */
+  private async answerRequest(
+    profileName: string,
+    message: any,
+    handler: (payload: any, profileName: string) => unknown,
+  ): Promise<void> {
+    let payload: Record<string, unknown>;
+    try {
+      payload = { status: 'success', data: await handler(message.payload, profileName) };
+    } catch (err: any) {
+      payload = { status: 'error', error: err?.message || String(err) };
+    }
+    const socket = this.connections.get(profileName);
+    try {
+      socket?.send(JSON.stringify({ responseToRequestId: message.requestId, payload }));
+    } catch (err: any) {
+      logProfileRegistry(
+        `[ProfileRegistry] Could not answer ${message.type} from "${profileName}": ${err?.message}`,
+      );
+    }
+  }
+
   /**
    * Handle incoming message from WebSocket client
    */
   private handleIncomingMessage(profileName: string, message: any): void {
     if (!message || typeof message !== 'object') return;
+
+    if (typeof message.type === 'string' && message.requestId && !message.responseToRequestId) {
+      const handler = this.requestHandlers.get(message.type);
+      if (handler) void this.answerRequest(profileName, message, handler);
+      return;
+    }
 
     if (message.responseToRequestId) {
       const requestId = message.responseToRequestId;

@@ -1,6 +1,17 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { INSTALLED_MODULES } from '../modules';
+import type { BridgeModule } from './module-api';
+import { moduleSwitch, type ModuleSwitch } from './module-switch';
 import { setupTools } from './register-tools';
-import { SERVER_INSTRUCTIONS, SERVER_NAME, serverVersion } from './server-identity';
+import { buildServerInstructions, SERVER_NAME, serverVersion } from './server-identity';
+
+/** Every MCP server with a session open, so a module switch can reach them all. */
+const liveServers = new Set<Server>();
+
+export interface McpServerOptions {
+  modules?: readonly BridgeModule[];
+  switch?: ModuleSwitch;
+}
 
 /**
  * Build a fresh MCP Server per transport/session.
@@ -11,8 +22,14 @@ import { SERVER_INSTRUCTIONS, SERVER_NAME, serverVersion } from './server-identi
  * "Already connected to a transport." Using a factory per session removes
  * that limitation; `setupTools` is stateless registration so the per-call
  * cost is negligible.
+ *
+ * The instructions reflect the modules that are on when the session starts;
+ * the tool list is read per tools/list, and a switch change sends
+ * notifications/tools/list_changed to every live session.
  */
-export const createMcpServer = (): Server => {
+export const createMcpServer = (options: McpServerOptions = {}): Server => {
+  const modules = options.modules ?? INSTALLED_MODULES;
+  const switches = options.switch ?? moduleSwitch;
   const server = new Server(
     {
       name: SERVER_NAME,
@@ -20,12 +37,52 @@ export const createMcpServer = (): Server => {
     },
     {
       capabilities: {
-        tools: {},
+        tools: { listChanged: true },
       },
-      instructions: SERVER_INSTRUCTIONS,
+      instructions: buildServerInstructions(modules, (id) => switches.isEnabled(id)),
     },
   );
 
-  setupTools(server);
+  setupTools(server, { modules, switch: switches });
+  liveServers.add(server);
+  const previousOnClose = server.onclose;
+  server.onclose = () => {
+    liveServers.delete(server);
+    previousOnClose?.();
+  };
   return server;
 };
+
+/** Sessions currently registered for list_changed (test seam and diagnostics). */
+export function liveMcpServerCount(): number {
+  return liveServers.size;
+}
+
+/**
+ * Tell every open session its tool list changed. Best effort: a session whose
+ * client never opened the notification stream, or is mid-shutdown, is skipped.
+ * Returns how many sessions were sent the notification.
+ */
+export function notifyToolListChanged(): number {
+  let sent = 0;
+  for (const server of liveServers) {
+    try {
+      void server.sendToolListChanged().catch(() => {});
+      sent += 1;
+    } catch {
+      // Not connected (yet, or any more).
+    }
+  }
+  return sent;
+}
+
+const wiredSwitches = new WeakSet<ModuleSwitch>();
+
+/** Send list_changed on every change of this module switch. Idempotent per switch. */
+export function wireToolListChanged(switches: ModuleSwitch = moduleSwitch): void {
+  if (wiredSwitches.has(switches)) return;
+  wiredSwitches.add(switches);
+  switches.onChange(() => {
+    notifyToolListChanged();
+  });
+}

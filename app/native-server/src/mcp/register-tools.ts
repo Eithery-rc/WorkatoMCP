@@ -17,7 +17,12 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import nativeMessagingHostInstance from '../native-messaging-host';
-import { CORE_TOOL_NAMES, CORE_TOOL_SCHEMAS, NativeMessageType } from 'workatomcp-shared';
+import {
+  CORE_TOOL_NAMES,
+  CORE_TOOL_SCHEMAS,
+  NativeMessageType,
+  moduleOffMessage,
+} from 'workatomcp-shared';
 import { INSTALLED_MODULES } from '../modules';
 import type {
   BridgeModule,
@@ -26,12 +31,7 @@ import type {
   ModuleCallContext,
   PreparedModuleCall,
 } from './module-api';
-/** Which modules are on. */
-export interface ModuleSwitchView {
-  isEnabled(id: string): boolean;
-}
-
-const ALL_MODULES_ON: ModuleSwitchView = { isEnabled: () => true };
+import { moduleSwitch, type ModuleSwitchView } from './module-switch';
 import { stampContextBlock } from './tool-result';
 import {
   handleWorkatoBridgeInfoCall,
@@ -153,7 +153,7 @@ interface ToolRouter {
 export interface ToolRouterOptions {
   /** Installed modules; defaults to src/modules/index.ts. */
   modules?: readonly BridgeModule[];
-  /** Which modules are on; defaults to all of them. */
+  /** Which modules are on; defaults to the bridge config file. */
   switch?: ModuleSwitchView;
 }
 
@@ -363,7 +363,7 @@ export const setupTools = (server: Server, options: ToolRouterOptions = {}) => {
 
 export function createToolRouter(options: ToolRouterOptions = {}): ToolRouter {
   const installed = options.modules ?? INSTALLED_MODULES;
-  const switches = options.switch ?? ALL_MODULES_ON;
+  const switches = options.switch ?? moduleSwitch;
   const autoFileRules = autoFileRulesFor(installed);
 
   const enabledModules = (): BridgeModule[] =>
@@ -695,7 +695,12 @@ export function createToolRouter(options: ToolRouterOptions = {}): ToolRouter {
     signal?: AbortSignal,
   ): Promise<CallToolResult> => {
     try {
+      // 0. A module switched off on this machine refuses its tools, named, so
+      // a session that still has the old tool list learns why.
       const owner = installedOwner(name);
+      if (owner && !switches.isEnabled(owner.id)) {
+        return routeError(moduleOffMessage(owner, name));
+      }
 
       // 1. Check for Profile Management Admin Tools
       if (name === CORE_TOOL_NAMES.BRIDGE.LIST_PROFILES) {

@@ -1,6 +1,12 @@
 import { describe, expect, test } from '@jest/globals';
-import { TOOL_NAMES, TOOL_SCHEMAS } from 'workatomcp-shared';
-import { SERVER_INSTRUCTIONS, SERVER_NAME, serverVersion } from './server-identity';
+import { CORE_TOOL_SCHEMAS, MODULES, TOOL_NAMES } from 'workatomcp-shared';
+import { INSTALLED_MODULES } from '../modules';
+import {
+  buildServerInstructions,
+  CORE_INSTRUCTIONS,
+  SERVER_NAME,
+  serverVersion,
+} from './server-identity';
 
 /**
  * Tools the instructions name that this wave is still adding in a parallel
@@ -10,8 +16,8 @@ import { SERVER_INSTRUCTIONS, SERVER_NAME, serverVersion } from './server-identi
  */
 const PENDING_TOOL_NAMES: string[] = [];
 
-function toolNamesInInstructions(): string[] {
-  return [...new Set(SERVER_INSTRUCTIONS.match(/workato_[a-z0-9_]+/g) ?? [])];
+function toolNamesIn(text: string): string[] {
+  return [...new Set(text.match(/\b(?:workato|chrome)_[a-z0-9_]+/g) ?? [])];
 }
 
 function allToolNames(): Set<string> {
@@ -21,6 +27,19 @@ function allToolNames(): Set<string> {
   }
   return names;
 }
+
+/** Every on/off combination of the installed modules, as an enabled-id set. */
+function combinations(): Set<string>[] {
+  const ids = INSTALLED_MODULES.map((module) => module.id);
+  const out: Set<string>[] = [];
+  for (let mask = 0; mask < 1 << ids.length; mask++) {
+    out.push(new Set(ids.filter((_, index) => (mask & (1 << index)) !== 0)));
+  }
+  return out;
+}
+
+const instructionsFor = (on: Set<string>) =>
+  buildServerInstructions(INSTALLED_MODULES, (id) => on.has(id));
 
 describe('server identity', () => {
   test('the handshake names the product, not the upstream project', () => {
@@ -35,18 +54,46 @@ describe('server identity', () => {
 });
 
 describe('server instructions', () => {
-  test('stay under the 1500-byte budget the plan sets', () => {
-    const size = Buffer.byteLength(SERVER_INSTRUCTIONS, 'utf8');
-    expect(size).toBeGreaterThan(200);
-    expect(size).toBeLessThan(1500);
+  test('the bridge installs exactly the shared modules', () => {
+    expect(INSTALLED_MODULES.map((module) => module.id)).toEqual(MODULES.map((m) => m.id));
   });
 
-  test('every tool they name is real, apart from the ones shipping in parallel', () => {
-    const known = allToolNames();
-    const unknown = toolNamesInInstructions().filter(
-      (name) => !known.has(name) && !PENDING_TOOL_NAMES.includes(name),
-    );
-    expect(unknown).toEqual([]);
+  test('every on/off combination stays under the 1500-byte budget the plan sets', () => {
+    for (const on of combinations()) {
+      const size = Buffer.byteLength(instructionsFor(on), 'utf8');
+      expect(size).toBeGreaterThan(200);
+      expect(size).toBeLessThan(1500);
+    }
+  });
+
+  test('a module that is on adds its snippet; one that is off is named in one line', () => {
+    const all = new Set(INSTALLED_MODULES.map((module) => module.id));
+    const allOn = instructionsFor(all);
+    const allOff = instructionsFor(new Set());
+    expect(allOn.startsWith(CORE_INSTRUCTIONS)).toBe(true);
+    expect(allOff.startsWith(CORE_INSTRUCTIONS)).toBe(true);
+    for (const module of INSTALLED_MODULES) {
+      expect(allOn).toContain(module.instructions);
+      expect(allOff).not.toContain(module.instructions);
+      expect(allOff).toContain(module.title);
+    }
+    expect(allOn).not.toMatch(/Switched off/);
+    expect(allOff).toMatch(/Switched off on this machine: .*extension popup/);
+  });
+
+  test('every tool they name is served in that combination', () => {
+    for (const on of combinations()) {
+      const served = new Set([
+        ...CORE_TOOL_SCHEMAS.map((tool) => tool.name),
+        ...INSTALLED_MODULES.filter((module) => on.has(module.id)).flatMap((module) =>
+          module.tools.map((tool) => tool.name),
+        ),
+      ]);
+      const missing = toolNamesIn(instructionsFor(on)).filter(
+        (name) => !served.has(name) && !PENDING_TOOL_NAMES.includes(name),
+      );
+      expect(missing).toEqual([]);
+    }
   });
 
   test('a pending tool that has landed must be removed from the pending list', () => {
@@ -57,6 +104,7 @@ describe('server instructions', () => {
   });
 
   test('cover the task-to-tool routes the plan asks for', () => {
+    const allOn = instructionsFor(new Set(INSTALLED_MODULES.map((module) => module.id)));
     for (const name of [
       'workato_recipe_set_input_path',
       'workato_recipe_apply',
@@ -71,20 +119,17 @@ describe('server instructions', () => {
       'workato_session_context',
       'workato_bridge_info',
     ]) {
-      expect(SERVER_INSTRUCTIONS).toContain(name);
+      expect(allOn).toContain(name);
     }
-    expect(SERVER_INSTRUCTIONS).toContain('auto_file');
+    expect(allOn).toContain('auto_file');
+  });
+
+  test('the core snippet names core tools only', () => {
+    const core = new Set(CORE_TOOL_SCHEMAS.map((tool) => tool.name));
+    expect(toolNamesIn(CORE_INSTRUCTIONS).filter((name) => !core.has(name))).toEqual([]);
   });
 
   test('carry no em-dash or en-dash', () => {
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/[–—]/);
-  });
-
-  test('name tools that are actually served, not names alone', () => {
-    const served = new Set(TOOL_SCHEMAS.map((tool) => tool.name));
-    const missing = toolNamesInInstructions().filter(
-      (name) => !served.has(name) && !PENDING_TOOL_NAMES.includes(name),
-    );
-    expect(missing).toEqual([]);
+    for (const on of combinations()) expect(instructionsFor(on)).not.toMatch(/[–—]/);
   });
 });
