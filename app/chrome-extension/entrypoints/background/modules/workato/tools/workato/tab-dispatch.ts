@@ -127,7 +127,7 @@ export async function findWorkatoTab(
           err instanceof Error ? err.message : String(err)
         }. Tab ids are per Chrome PROFILE: a tab that exists in another profile ` +
           `reports exactly this. If the tab is open in front of you, pass the profile it ` +
-          `belongs to (profile:"<name>") — chrome_list_profiles shows what is connected.`,
+          `belongs to (profile:"<name>"); chrome_list_profiles shows what is connected.`,
         { tabId },
       );
     }
