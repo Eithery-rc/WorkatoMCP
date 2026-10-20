@@ -18,7 +18,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { TOOL_SCHEMAS } from 'workatomcp-shared';
-import { withOutFileToolSchemas } from './workato-auto-file';
+import { withOutFileToolSchemas, type AutoFileRules } from './workato-auto-file';
 
 export const BRIDGE_INFO_TOOL = 'workato_bridge_info';
 
@@ -148,9 +148,17 @@ export interface BuildBridgeInfoOptions {
   platform?: string;
 }
 
-/** The catalogue as listTools serves it, without the injected profile and lease params. */
-export function servedToolSchemas(): Tool[] {
-  return withOutFileToolSchemas(TOOL_SCHEMAS as Tool[]);
+/**
+ * The catalogue as listTools serves it, without the injected profile and lease
+ * params. The router passes the tools of core plus the modules that are on, and
+ * its combined auto-file rules; the defaults (every tool, core rules) are for
+ * callers outside a router.
+ */
+export function servedToolSchemas(
+  tools: Tool[] = TOOL_SCHEMAS as Tool[],
+  rules?: AutoFileRules,
+): Tool[] {
+  return withOutFileToolSchemas(tools, rules);
 }
 
 export function buildBridgeInfo(
@@ -175,8 +183,9 @@ export function buildBridgeInfo(
 }
 
 /**
- * Cached because the answer only changes when the process is replaced, and a
- * drift check should not pay two file reads and a catalogue hash every call.
+ * Cached because the versions only change when the process is replaced, and a
+ * drift check should not pay two file reads every call. The catalogue changes
+ * when a module is switched, so it comes from the caller.
  */
 let cachedStatic: {
   bridge: VersionRead;
@@ -200,10 +209,17 @@ export function resetBridgeInfoCache(): void {
   cachedStatic = null;
 }
 
-export function handleWorkatoBridgeInfoCall(context: BridgeInfoContext): CallToolResult {
+/**
+ * @param tools The served catalogue (servedToolSchemas of what the router
+ *   lists); defaults to every tool.
+ */
+export function handleWorkatoBridgeInfoCall(
+  context: BridgeInfoContext,
+  tools?: Tool[],
+): CallToolResult {
   const parts = staticParts();
   const info = buildBridgeInfo(context, {
-    tools: parts.tools,
+    tools: tools ?? parts.tools,
     bridgeVersion: parts.bridge,
     sharedVersion: parts.shared,
   });

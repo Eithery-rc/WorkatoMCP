@@ -1,8 +1,8 @@
 /**
  * Generic out_file / auto-file post-processing for large tool results.
  *
- * workato_pull_recipe, workato_lcap_page_get, workato_api_request and
- * workato_adapter_meta each own a hand-written out_file hook. Everything else
+ * Some module tools own a hand-written out_file hook (the Workato module's
+ * recipe pull, LCAP page get, api_request and adapter_meta). Everything else
  * that can return a large result had no way out: a 200 KB job trace or a broad
  * step search went into the model's context whole.
  *
@@ -25,8 +25,6 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { isWorkatoFileTool } from '../modules/workato/file-io';
-import { isWorkatoLcapFileTool } from '../modules/workato/lcap-io';
 
 export const SCREENSHOT_TOOL = 'chrome_screenshot';
 export const JAVASCRIPT_TOOL = 'chrome_javascript';
@@ -47,37 +45,27 @@ export const AUTO_FILE_THRESHOLD_ARG = 'auto_file_threshold_chars';
 export const NO_INLINE_ARG = 'no_inline';
 
 /**
- * Read tools that spill to a file on their own once a result gets large.
- *
- * Tools with their own out_file hook (pull_recipe, lcap_page_get, api_request,
- * adapter_meta) are deliberately absent: they keep their existing behaviour.
+ * Which tools auto-file serves. Core has its own rules; a module contributes
+ * its read tools (and the tools that accept an explicit out_file) through
+ * BridgeModule.autoFile, and the router combines them.
  */
-export const READ_TOOLS = new Set<string>([
-  'workato_list_jobs',
-  'workato_job_trace',
-  'workato_search_recipes',
-  'workato_recipe_step_search',
-  'workato_recipe_callers',
-  'workato_recipe_grep',
-  'workato_recipe_connections',
-  'workato_recipe_version_diff',
-  'workato_recipe_status',
-  'workato_apps_list',
-  'workato_pick_list',
-  'workato_step_schema',
-  'workato_run_query',
-  'workato_call_action',
-  'workato_lookup_tables_list',
-  'workato_lookup_table_get',
-  'workato_lookup_table_row_search',
-  'workato_data_tables_list',
-  'workato_data_table_get',
-  'workato_data_table_row_list',
-  'workato_deployments_list',
-  // Opens only a draft deployment; its step diffs can run to tens of KB.
-  'workato_deploy_plan',
-  // Browser reads whose output grows with the page: a big snapshot, page text,
-  // script result or match list spills to a file instead of the context.
+export interface AutoFileRules {
+  /** Spill on their own once a result gets large; their schema gains the file params. */
+  readTools: ReadonlySet<string>;
+  /** Also gain out_file / auto_file in the served schema, but spill only when asked. */
+  advertised?: ReadonlySet<string>;
+  /** Also accept an explicit out_file / auto_file, without advertising it. */
+  accepts?(name: string): boolean;
+  /** Stem of an auto-generated file name (default: the tool name). */
+  fileStem?(name: string): string | undefined;
+}
+
+/**
+ * Core read tools that spill to a file on their own once a result gets large:
+ * browser reads whose output grows with the page. A big snapshot, page text,
+ * script result or match list spills to a file instead of the context.
+ */
+export const CORE_READ_TOOLS = new Set<string>([
   'chrome_snapshot',
   'chrome_get_web_content',
   'chrome_javascript',
@@ -88,8 +76,39 @@ export const READ_TOOLS = new Set<string>([
   // the agent inline, never as a summary of a file.
 ]);
 
-/** Tools whose served schema gains the out_file / auto_file properties. */
-export const AUTO_FILE_SCHEMA_TOOLS = new Set<string>([...READ_TOOLS, SCREENSHOT_TOOL]);
+/** Core tools whose served schema gains the out_file / auto_file properties. */
+export const AUTO_FILE_SCHEMA_TOOLS = new Set<string>([...CORE_READ_TOOLS, SCREENSHOT_TOOL]);
+
+export const CORE_AUTO_FILE_RULES: AutoFileRules = {
+  readTools: CORE_READ_TOOLS,
+  advertised: new Set([SCREENSHOT_TOOL]),
+};
+
+/** One rule set from core plus every module's. */
+export function combineAutoFileRules(rules: AutoFileRules[]): AutoFileRules {
+  const readTools = new Set<string>();
+  const advertised = new Set<string>();
+  for (const rule of rules) {
+    for (const name of rule.readTools) readTools.add(name);
+    for (const name of rule.advertised ?? []) advertised.add(name);
+  }
+  return {
+    readTools,
+    advertised,
+    accepts: (name) => rules.some((rule) => rule.accepts?.(name) === true),
+    fileStem: (name) => {
+      for (const rule of rules) {
+        const stem = rule.fileStem?.(name);
+        if (stem !== undefined) return stem;
+      }
+      return undefined;
+    },
+  };
+}
+
+function advertisesFileParams(name: string, rules: AutoFileRules): boolean {
+  return rules.readTools.has(name) || rules.advertised?.has(name) === true;
+}
 
 export interface AutoFilePlan {
   tool: string;
@@ -104,6 +123,8 @@ export interface AutoFilePlan {
   raw?: boolean;
   /** Recipe/job/table id used to name an auto-generated file. */
   idHint?: string;
+  /** Stem of an auto-generated file name, when it is not the tool name. */
+  fileStem?: string;
 }
 
 export interface PreparedAutoFileCall {
@@ -132,9 +153,12 @@ const AUTO_FILE_THRESHOLD_PROPERTY = {
  * Serve out_file / auto_file on every tool that supports them, so the per-tool
  * schema entries do not each have to repeat the three properties.
  */
-export function withOutFileToolSchemas(tools: Tool[]): Tool[] {
+export function withOutFileToolSchemas(
+  tools: Tool[],
+  rules: AutoFileRules = CORE_AUTO_FILE_RULES,
+): Tool[] {
   return tools.map((tool) => {
-    if (!AUTO_FILE_SCHEMA_TOOLS.has(tool.name)) return tool;
+    if (!advertisesFileParams(tool.name, rules)) return tool;
 
     const inputSchema = (tool.inputSchema || { type: 'object' }) as Record<string, any>;
     if (inputSchema.type !== 'object') return tool;
@@ -159,14 +183,19 @@ export function withOutFileToolSchemas(tools: Tool[]): Tool[] {
 }
 
 /** Tools this post-processor may write files for. */
-export function isAutoFileEligible(name: string): boolean {
-  if (isWorkatoFileTool(name) || isWorkatoLcapFileTool(name)) return false;
-  return name === SCREENSHOT_TOOL || name.startsWith('workato_') || READ_TOOLS.has(name);
+export function isAutoFileEligible(
+  name: string,
+  rules: AutoFileRules = CORE_AUTO_FILE_RULES,
+): boolean {
+  return advertisesFileParams(name, rules) || rules.accepts?.(name) === true;
 }
 
 /** Tools that spill without being asked. */
-export function autoFileDefaultsOn(name: string): boolean {
-  return READ_TOOLS.has(name);
+export function autoFileDefaultsOn(
+  name: string,
+  rules: AutoFileRules = CORE_AUTO_FILE_RULES,
+): boolean {
+  return rules.readTools.has(name);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -227,12 +256,12 @@ export function autoFileSessionDir(): string {
   return path.join(os.tmpdir(), 'workatomcp-results', `session-${SESSION_STAMP}`);
 }
 
-function autoFilePath(tool: string, idHint: string | undefined, extension: string): string {
+function autoFilePath(plan: AutoFilePlan, extension: string): string {
   const dir = autoFileSessionDir();
   fs.mkdirSync(dir, { recursive: true });
-  const slug = sanitizeSegment(tool.replace(/^workato_/, '')) || 'tool';
+  const slug = sanitizeSegment(plan.fileStem ?? plan.tool) || 'tool';
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  return path.join(dir, `${slug}-${idHint || 'result'}-${stamp}${extension}`);
+  return path.join(dir, `${slug}-${plan.idHint || 'result'}-${stamp}${extension}`);
 }
 
 function extensionForMime(mimeType: string): string {
@@ -267,14 +296,16 @@ function readThreshold(value: unknown): number {
 export function prepareAutoFileCall(
   name: string,
   rawArgs: Record<string, unknown>,
+  rules: AutoFileRules = CORE_AUTO_FILE_RULES,
 ): PreparedAutoFileCall {
-  if (!isAutoFileEligible(name)) return { args: rawArgs };
+  if (!isAutoFileEligible(name, rules)) return { args: rawArgs };
 
   const hasOutFile = rawArgs[OUT_FILE_ARG] !== undefined;
   const hasAuto = rawArgs[AUTO_FILE_ARG] !== undefined;
   const hasThreshold = rawArgs[AUTO_FILE_THRESHOLD_ARG] !== undefined;
   const hasNoInline = rawArgs[NO_INLINE_ARG] !== undefined;
-  if (!hasOutFile && !hasAuto && !hasThreshold && !hasNoInline && !autoFileDefaultsOn(name)) {
+  const defaultsOn = autoFileDefaultsOn(name, rules);
+  if (!hasOutFile && !hasAuto && !hasThreshold && !hasNoInline && !defaultsOn) {
     return { args: rawArgs };
   }
 
@@ -287,7 +318,7 @@ export function prepareAutoFileCall(
     outFile = resolveOutFile(raw);
   }
 
-  const auto = readBoolean(rawArgs[AUTO_FILE_ARG], AUTO_FILE_ARG) ?? autoFileDefaultsOn(name);
+  const auto = readBoolean(rawArgs[AUTO_FILE_ARG], AUTO_FILE_ARG) ?? defaultsOn;
   const noInline = readBoolean(rawArgs[NO_INLINE_ARG], NO_INLINE_ARG) ?? false;
   const thresholdChars = readThreshold(rawArgs[AUTO_FILE_THRESHOLD_ARG]);
 
@@ -301,6 +332,7 @@ export function prepareAutoFileCall(
   delete args[RAW_OUTPUT_ARG];
   const raw = name === JAVASCRIPT_TOOL && outFile !== undefined;
   if (raw) args[RAW_OUTPUT_ARG] = true;
+  const fileStem = rules.fileStem?.(name);
 
   return {
     args,
@@ -311,6 +343,7 @@ export function prepareAutoFileCall(
       thresholdChars,
       noInline,
       idHint: readIdHint(rawArgs),
+      ...(fileStem !== undefined && fileStem !== name ? { fileStem } : {}),
       ...(raw ? { raw: true } : {}),
     },
   };
@@ -486,7 +519,7 @@ function writeImageResult(
 ): CallToolResult {
   const mimeType = image.mimeType || 'image/png';
   const bytes = Buffer.from(image.data, 'base64');
-  const target = plan.outFile ?? autoFilePath(name, plan.idHint, extensionForMime(mimeType));
+  const target = plan.outFile ?? autoFilePath(plan, extensionForMime(mimeType));
   writeAtomic(target, bytes);
 
   const payload = texts.length > 0 ? parseResultPayload(texts[0].text) : undefined;
@@ -591,7 +624,7 @@ function writeTextResult(
     isJson = false;
   }
 
-  const target = plan.outFile ?? autoFilePath(name, plan.idHint, isJson ? '.json' : '.txt');
+  const target = plan.outFile ?? autoFilePath(plan, isJson ? '.json' : '.txt');
   writeAtomic(target, text);
 
   return {

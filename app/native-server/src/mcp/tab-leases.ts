@@ -12,10 +12,10 @@
 
 import { randomBytes } from 'crypto';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { TOOL_NAMES, TOOL_SCHEMAS } from 'workatomcp-shared';
+import { CORE_TOOL_NAMES, TOOL_SCHEMAS } from 'workatomcp-shared';
 
-export const LEASE_TAB_TOOL = TOOL_NAMES.BROWSER.LEASE_TAB;
-export const RELEASE_TAB_TOOL = TOOL_NAMES.BROWSER.RELEASE_TAB;
+export const LEASE_TAB_TOOL = CORE_TOOL_NAMES.BROWSER.LEASE_TAB;
+export const RELEASE_TAB_TOOL = CORE_TOOL_NAMES.BROWSER.RELEASE_TAB;
 export const LEASE_ARG = 'lease';
 /** A lease nobody used for this long is released and its tab closed. */
 export const LEASE_IDLE_MS = 30 * 60 * 1000;
@@ -29,13 +29,13 @@ const LEASE_PROPERTY = {
 
 /** Tools that never target a tab, or that manage targeting themselves. */
 const STRICT_EXEMPT = new Set<string>([
-  TOOL_NAMES.BROWSER.GET_WINDOWS_AND_TABS,
+  CORE_TOOL_NAMES.BROWSER.GET_WINDOWS_AND_TABS,
   LEASE_TAB_TOOL,
   RELEASE_TAB_TOOL,
-  TOOL_NAMES.WORKATO.LIST_PROFILES,
-  TOOL_NAMES.WORKATO.SWITCH_PROFILE,
-  TOOL_NAMES.WORKATO.BRIDGE_INFO,
-  TOOL_NAMES.WORKATO.RELOAD_EXTENSION,
+  CORE_TOOL_NAMES.BRIDGE.LIST_PROFILES,
+  CORE_TOOL_NAMES.BRIDGE.SWITCH_PROFILE,
+  CORE_TOOL_NAMES.BRIDGE.BRIDGE_INFO,
+  CORE_TOOL_NAMES.BRIDGE.RELOAD_EXTENSION,
 ]);
 
 export interface TabLease {

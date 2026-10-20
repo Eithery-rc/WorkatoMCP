@@ -7,12 +7,23 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import {
   applyAutoFile,
   autoFileSessionDir,
+  combineAutoFileRules,
+  CORE_AUTO_FILE_RULES,
   DEFAULT_AUTO_FILE_THRESHOLD_CHARS,
-  isAutoFileEligible,
   parseResultPayload,
-  prepareAutoFileCall,
-  withOutFileToolSchemas,
-} from './workato-auto-file';
+} from '../../mcp/workato-auto-file';
+import * as autoFile from '../../mcp/workato-auto-file';
+import { workatoModule } from '.';
+
+/**
+ * Core auto-file with the Workato module's rules on top: the rule set the
+ * router uses while the module is installed.
+ */
+const RULES = combineAutoFileRules([CORE_AUTO_FILE_RULES, workatoModule.autoFile!]);
+const isAutoFileEligible = (name: string) => autoFile.isAutoFileEligible(name, RULES);
+const prepareAutoFileCall = (name: string, args: Record<string, unknown>) =>
+  autoFile.prepareAutoFileCall(name, args, RULES);
+const withOutFileToolSchemas = (tools: Tool[]) => autoFile.withOutFileToolSchemas(tools, RULES);
 
 const textResult = (text: string) => ({
   content: [{ type: 'text' as const, text }],

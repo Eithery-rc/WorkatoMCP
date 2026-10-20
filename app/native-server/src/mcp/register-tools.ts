@@ -2,6 +2,11 @@
  * MCP Tools Registry.
  * Handles listing and dispatching MCP tool calls to the active WebSocket Chrome profile connection.
  *
+ * The router is core: profile routing, the session pin of profile + tab,
+ * leases and strict mode, watches, browser functions, fetch-to-file and
+ * auto-file. Module tools reach it through the BridgeModule interface
+ * (module-api.ts); the installed modules come from src/modules/index.ts.
+ *
  * Author: Roman Chikalenko
  * Version: 1.4.0
  */
@@ -12,56 +17,40 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import nativeMessagingHostInstance from '../native-messaging-host';
-import { NativeMessageType, TOOL_SCHEMAS, TOOL_NAMES } from 'workatomcp-shared';
+import { CORE_TOOL_NAMES, CORE_TOOL_SCHEMAS, NativeMessageType } from 'workatomcp-shared';
+import { INSTALLED_MODULES } from '../modules';
+import type {
+  BridgeModule,
+  ExtensionRequest,
+  JsonObject,
+  ModuleCallContext,
+  PreparedModuleCall,
+} from './module-api';
+/** Which modules are on. */
+export interface ModuleSwitchView {
+  isEnabled(id: string): boolean;
+}
+
+const ALL_MODULES_ON: ModuleSwitchView = { isEnabled: () => true };
+import { stampContextBlock } from './tool-result';
 import {
-  isWorkatoFileTool,
-  prepareWorkatoCall,
-  writePulledRecipe,
-  type RecipeFileOrigin,
-} from '../modules/workato/file-io';
-import {
-  isWorkatoLcapFileTool,
-  prepareLcapCall,
-  writeLcapOutFile,
-  type LcapOutFile,
-} from '../modules/workato/lcap-io';
-import {
-  handleWorkatoRecipeMutatorCall,
-  isWorkatoRecipeMutatorTool,
-} from '../modules/workato/recipe-mutators';
-import {
-  handleWorkatoCallableCall,
-  isWorkatoCallableTool,
-} from '../modules/workato/callable-schema';
-import {
-  handleWorkatoSaveWithDependentsCall,
-  isWorkatoSaveWithDependentsTool,
-} from '../modules/workato/save-dependents';
-import { handleWorkatoDatapillCall, isWorkatoDatapillTool } from '../modules/workato/datapill';
-import {
-  handleWorkatoOperationCall,
-  isWorkatoOperationTool,
-} from '../modules/workato/operation-status';
-import { handleWorkatoBridgeInfoCall, isWorkatoBridgeInfoTool } from './workato-bridge-info';
+  handleWorkatoBridgeInfoCall,
+  isWorkatoBridgeInfoTool,
+  servedToolSchemas,
+} from './workato-bridge-info';
 import {
   handleWorkatoReloadExtensionCall,
   isWorkatoReloadExtensionTool,
 } from './workato-reload-extension';
 import {
-  followSwitch,
-  isContextChangingTool,
-  parseSwitchResult,
-} from '../modules/workato/switch-environment';
-import {
-  handleWorkatoStepSchemaApplyCall,
-  isStepSchemaApplyCall,
-} from '../modules/workato/step-schema';
-import {
   applyAutoFile,
+  combineAutoFileRules,
+  CORE_AUTO_FILE_RULES,
   prepareAutoFileCall,
   RAW_OUTPUT_ARG,
   withOutFileToolSchemas,
   type AutoFilePlan,
+  type AutoFileRules,
 } from './workato-auto-file';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { profileRegistry } from '../server/profile-registry';
@@ -120,13 +109,11 @@ const PROFILE_ROUTING_PROPERTY = {
 };
 
 const PROFILE_MANAGEMENT_TOOLS = new Set([
-  TOOL_NAMES.WORKATO.LIST_PROFILES,
-  TOOL_NAMES.WORKATO.SWITCH_PROFILE,
+  CORE_TOOL_NAMES.BRIDGE.LIST_PROFILES,
+  CORE_TOOL_NAMES.BRIDGE.SWITCH_PROFILE,
   // Its own `profile` argument selects which profiles reload, not where to route.
-  TOOL_NAMES.WORKATO.RELOAD_EXTENSION,
+  CORE_TOOL_NAMES.BRIDGE.RELOAD_EXTENSION,
 ]);
-
-type JsonObject = Record<string, any>;
 
 interface RoutedArgs {
   args: JsonObject;
@@ -136,137 +123,38 @@ interface RoutedArgs {
 /**
  * What this MCP session is pinned to.
  *
- * Workato resolves the workspace and environment from the browser tab's own
- * session, so "profile + tab" is the whole identity of a call: the same recipe
- * id is a different recipe in another workspace, and a wrong-workspace id
- * answers 404 rather than an error anyone can act on. Pinning the tuple, and
- * refusing to route around it, is what keeps a long session on one target.
+ * Core pins profile + tab: a tab id means something only inside one Chrome
+ * profile, and a long session must not drift to another tab. A module adds
+ * what the pinned tab IS for its tools (Workato: host, workspace, environment)
+ * under its id in `modules`; the router stores those fields and hands them
+ * back to the module, but never reads them. Pinning the tuple, and refusing to
+ * route around it, is what keeps a long session on one target.
  */
 export interface SessionContext {
   profile: string;
   tabId: number | null;
-  host?: string;
-  workspace_id?: number;
-  workspace_name?: string;
-  environment?: string;
+  /** Pin fields each module added on top of profile + tab, by module id. */
+  modules: Record<string, JsonObject>;
   /** ISO timestamp of the pin. */
   pinned_at: string;
   /**
    * profileRegistry generation observed when the context was last verified. A
-   * change means a profile connected or disconnected, so the pinned tab is
+   * change means a profile connected or disconnected, so a module's pin is
    * re-checked before the next call is routed.
    */
   generation: number;
 }
 
-/** The subset a write handler compares the target tab against. */
-interface ExpectedContext {
-  host?: string;
-  workspace_id?: number;
-  environment?: string;
-}
-
-function sessionExpectedContext(session: SessionContext | null): ExpectedContext | null {
-  if (!session) return null;
-  const expected: ExpectedContext = {};
-  if (session.host) expected.host = session.host;
-  if (session.workspace_id !== undefined) expected.workspace_id = session.workspace_id;
-  if (session.environment !== undefined) expected.environment = session.environment;
-  return Object.keys(expected).length > 0 ? expected : null;
-}
-
-const CONTEXT_BLOCK_PREFIX = '{"context":';
-
-function firstText(result: CallToolResult | undefined): string {
-  const block = Array.isArray(result?.content)
-    ? result.content.find((item: any) => item?.type === 'text')
-    : undefined;
-  return typeof (block as any)?.text === 'string' ? (block as any).text : '';
-}
-
-/** Parse the last JSON object line of a `summary\nJSON` tool response. */
-function parseLastJsonObject(text: string): JsonObject | null {
-  const lines = text.split(/\r?\n/).reverse();
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('{')) continue;
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-    } catch {
-      /* try the next line */
-    }
-  }
-  return null;
-}
-
-/** Index of the trailing actual-context block the extension appends, if any. */
-function contextBlockIndex(result: CallToolResult | undefined): number {
-  if (!result || !Array.isArray(result.content) || result.content.length === 0) return -1;
-  const last = result.content.length - 1;
-  const block: any = result.content[last];
-  if (block?.type !== 'text' || typeof block.text !== 'string') return -1;
-  return block.text.startsWith(CONTEXT_BLOCK_PREFIX) ? last : -1;
-}
-
-/** The extension's actual-context block, parsed. Null when there is none. */
-function readContextBlock(result: CallToolResult | undefined): JsonObject | null {
-  const index = contextBlockIndex(result);
-  if (index < 0) return null;
-  try {
-    const parsed = JSON.parse((result!.content[index] as any).text);
-    const context = parsed?.context;
-    return context && typeof context === 'object' && !Array.isArray(context) ? context : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Add the routed profile to the extension's context block. The extension knows
- * the tab and workspace; only the bridge knows which profile the call went to.
- */
-function stampContextBlock(result: CallToolResult, profile: string | null): CallToolResult {
-  const index = contextBlockIndex(result);
-  if (index < 0) return result;
-  const context = readContextBlock(result);
-  if (!context) return result;
-  const content = [...result.content];
-  content[index] = {
-    type: 'text',
-    text: JSON.stringify({ context: { ...context, profile: profile ?? null } }),
-  };
-  return { ...result, content };
-}
-
-/** Origin metadata for a recipe file, from the pull response and the routing. */
-function buildPullOrigin(
-  result: CallToolResult,
-  profile: string | null,
-  args: JsonObject,
-): Partial<RecipeFileOrigin> {
-  const context = readContextBlock(result);
-  const origin: Partial<RecipeFileOrigin> = {};
-  if (profile) origin.profile = profile;
-  const tabId =
-    typeof context?.tab_id === 'number'
-      ? context.tab_id
-      : typeof args?.tabId === 'number'
-        ? args.tabId
-        : undefined;
-  if (tabId !== undefined) origin.tab_id = tabId;
-  if (typeof context?.host === 'string') origin.host = context.host;
-  if (typeof context?.workspace_id === 'number') origin.workspace_id = context.workspace_id;
-  if (typeof context?.workspace_name === 'string') origin.workspace_name = context.workspace_name;
-  if (context?.environment !== undefined && context.environment !== null) {
-    origin.environment = String(context.environment);
-  }
-  return origin;
-}
-
 interface ToolRouter {
   listTools: () => Promise<{ tools: Tool[] }>;
   handleToolCall: (name: string, args: any, signal?: AbortSignal) => Promise<CallToolResult>;
+}
+
+export interface ToolRouterOptions {
+  /** Installed modules; defaults to src/modules/index.ts. */
+  modules?: readonly BridgeModule[];
+  /** Which modules are on; defaults to all of them. */
+  switch?: ModuleSwitchView;
 }
 
 const CANCELLED_TEXT = 'Cancelled by the MCP client; the browser may still finish the action.';
@@ -326,6 +214,29 @@ export function withProfileRoutingToolSchemas(tools: Tool[]): Tool[] {
   });
 }
 
+/** Auto-file rules of core plus every installed module. */
+export function autoFileRulesFor(modules: readonly BridgeModule[]): AutoFileRules {
+  return combineAutoFileRules([
+    CORE_AUTO_FILE_RULES,
+    ...modules.flatMap((module) => (module.autoFile ? [module.autoFile] : [])),
+  ]);
+}
+
+/** The tools listed with these modules on: core first, then each module's. */
+export function listedToolSchemas(modules: readonly BridgeModule[]): Tool[] {
+  return [...CORE_TOOL_SCHEMAS, ...modules.flatMap((module) => module.tools)];
+}
+
+/**
+ * The tools/list payload: routing, file and lease params added the same way
+ * for core and module tools.
+ */
+export function servedToolList(enabled: readonly BridgeModule[], rules: AutoFileRules): Tool[] {
+  return withLeaseToolSchemas(
+    withOutFileToolSchemas(withProfileRoutingToolSchemas(listedToolSchemas(enabled)), rules),
+  );
+}
+
 function routeError(message: string): CallToolResult {
   return { content: [{ type: 'text', text: message }], isError: true };
 }
@@ -351,52 +262,6 @@ function normalizeTabId(value: unknown): number | null {
     throw new Error(`${TAB_ROUTING_ARG} must be a non-negative integer Chrome tab id`);
   }
   return value;
-}
-
-function isSessionTargetedTool(name: string): boolean {
-  if (!name.startsWith('workato_')) return false;
-  return !PROFILE_MANAGEMENT_TOOLS.has(name);
-}
-
-/**
- * Put the session's pinned tab and expected workspace on a call.
- *
- * Applied to the top-level call and to every nested orchestrator call, so a
- * multi-step operation cannot read one tab and write another. An explicit
- * tabId/windowId always wins, and `allow_context_mismatch:true` is the caller
- * saying they know the target is elsewhere.
- */
-function withSessionTarget(
-  name: string,
-  args: JsonObject,
-  session: SessionContext | null,
-  routingProfile: string | null,
-): JsonObject {
-  if (!session || !isSessionTargetedTool(name)) return args;
-  // Tab ids and workspaces belong to one Chrome profile: a call routed to
-  // another profile (explicit profile arg, or a lease there) gets nothing
-  // from this pin.
-  if (routingProfile !== null && routingProfile !== session.profile) return args;
-  let next = args;
-  if (
-    session.tabId !== null &&
-    typeof args.tabId !== 'number' &&
-    typeof args.windowId !== 'number'
-  ) {
-    next = { ...next, tabId: session.tabId };
-  }
-  const expected = sessionExpectedContext(session);
-  if (
-    expected &&
-    name !== TOOL_NAMES.WORKATO_SESSION.SESSION_CONTEXT &&
-    // A switch exists to leave the pinned context; checking it against that would refuse it.
-    !isContextChangingTool(name) &&
-    args.expected_context == null &&
-    args.allow_context_mismatch !== true
-  ) {
-    next = { ...next, expected_context: expected };
-  }
-  return next;
 }
 
 function isConnectedProfile(profile: string): boolean {
@@ -480,45 +345,12 @@ async function sendRequestToExtension(
   }
 }
 
-interface ProbedContext {
-  tab_id?: number;
-  host?: string;
-  workspace_id?: number;
-  workspace_name?: string;
-  environment?: string;
-}
+/** A tool call to the extension, routed like any other: what module hooks get. */
+const requestExtension: ExtensionRequest = (name, args, profile, timeoutMs) =>
+  sendRequestToExtension({ name, args }, NativeMessageType.CALL_TOOL, timeoutMs, profile);
 
-/**
- * Read one tab's workspace/environment through the extension. Cheap by design:
- * workato_session_context is cached per tab in the service worker.
- */
-async function probeSessionContext(
-  profile: string | null,
-  tabId: number,
-): Promise<{ context?: ProbedContext; error?: string }> {
-  try {
-    const response = await sendRequestToExtension(
-      { name: TOOL_NAMES.WORKATO_SESSION.SESSION_CONTEXT, args: { tabId } },
-      NativeMessageType.CALL_TOOL,
-      30000,
-      profile,
-    );
-    if (!response || response.status !== 'success') {
-      return { error: response?.error || 'no response from the extension' };
-    }
-    const data = response.data as CallToolResult;
-    const text = firstText(data);
-    if (data?.isError) return { error: text || 'workato_session_context failed' };
-    const parsed = parseLastJsonObject(text);
-    if (!parsed) return { error: 'could not read the workato_session_context response' };
-    return { context: parsed as ProbedContext };
-  } catch (err: any) {
-    return { error: err?.message || String(err) };
-  }
-}
-
-export const setupTools = (server: Server) => {
-  const router = createToolRouter();
+export const setupTools = (server: Server, options: ToolRouterOptions = {}) => {
+  const router = createToolRouter(options);
 
   // List tools handler
   server.setRequestHandler(ListToolsRequestSchema, router.listTools);
@@ -529,12 +361,71 @@ export const setupTools = (server: Server) => {
   );
 };
 
-export function createToolRouter(): ToolRouter {
+export function createToolRouter(options: ToolRouterOptions = {}): ToolRouter {
+  const installed = options.modules ?? INSTALLED_MODULES;
+  const switches = options.switch ?? ALL_MODULES_ON;
+  const autoFileRules = autoFileRulesFor(installed);
+
+  const enabledModules = (): BridgeModule[] =>
+    installed.filter((module) => switches.isEnabled(module.id));
+  const installedOwner = (name: string): BridgeModule | undefined =>
+    installed.find((module) => module.owns(name));
+  /** The module that owns `name`, when it is on. */
+  const enabledOwner = (name: string): BridgeModule | undefined => {
+    const owner = installedOwner(name);
+    return owner && switches.isEnabled(owner.id) ? owner : undefined;
+  };
+
+  // The served catalogue changes only when a module is switched; bridge_info
+  // hashes it, so the same array is reused while the switch stays put.
+  let servedCache: { key: string; tools: Tool[] } | null = null;
+  const servedCatalogue = (): Tool[] => {
+    const enabled = enabledModules();
+    const key = enabled.map((module) => module.id).join(',');
+    if (!servedCache || servedCache.key !== key) {
+      servedCache = { key, tools: servedToolSchemas(listedToolSchemas(enabled), autoFileRules) };
+    }
+    return servedCache.tools;
+  };
+
   // One pinned tuple per MCP session (one createToolRouter per transport).
   let session: SessionContext | null = null;
 
   const getRoutingProfile = (callProfile: string | null): string | null =>
     callProfile || session?.profile || null;
+
+  /**
+   * Put the session's pinned tab, and the owning module's pin, on a call.
+   *
+   * Applied to the top-level call and to every nested orchestrator call, so a
+   * multi-step operation cannot read one tab and write another. An explicit
+   * tabId/windowId always wins, and the module decides what else a call
+   * carries (Workato: expected_context, unless allow_context_mismatch:true).
+   */
+  const withSessionTarget = (
+    name: string,
+    args: JsonObject,
+    routingProfile: string | null,
+  ): JsonObject => {
+    if (!session) return args;
+    const owner = enabledOwner(name);
+    const hooks = owner?.session;
+    if (!owner || !hooks || !hooks.targets(name)) return args;
+    // Tab ids and module pins belong to one Chrome profile: a call routed to
+    // another profile (explicit profile arg, or a lease there) gets nothing
+    // from this pin.
+    if (routingProfile !== null && routingProfile !== session.profile) return args;
+    let next = args;
+    if (
+      session.tabId !== null &&
+      typeof args.tabId !== 'number' &&
+      typeof args.windowId !== 'number'
+    ) {
+      next = { ...next, tabId: session.tabId };
+    }
+    const pin = session.modules[owner.id];
+    return pin ? hooks.inject(name, next, pin) : next;
+  };
 
   // Leases of THIS MCP session. Subagents share the session, so the lease id
   // they pass is what tells their calls apart.
@@ -578,7 +469,7 @@ export function createToolRouter(): ToolRouter {
   const findTabWindow = async (profile: string, tabId: number): Promise<number | null> => {
     const reply = await profileRegistry.sendRequest(
       profile,
-      { name: TOOL_NAMES.BROWSER.GET_WINDOWS_AND_TABS, args: {} },
+      { name: CORE_TOOL_NAMES.BROWSER.GET_WINDOWS_AND_TABS, args: {} },
       NativeMessageType.CALL_TOOL,
       15000,
     );
@@ -702,7 +593,7 @@ export function createToolRouter(): ToolRouter {
     args: JsonObject,
     profile: string | null,
   ): string | null => {
-    if (name !== TOOL_NAMES.BROWSER.CLOSE_TABS || leases.size === 0) return null;
+    if (name !== CORE_TOOL_NAMES.BROWSER.CLOSE_TABS || leases.size === 0) return null;
     const target = profile ?? profileRegistry.getActiveProfile();
     if (!target) return null;
     const leased = leases.tabIdsIn(target);
@@ -747,18 +638,56 @@ export function createToolRouter(): ToolRouter {
     });
   };
 
-  const sessionSummary = () =>
-    session
-      ? {
-          profile: session.profile,
-          tab_id: session.tabId,
-          host: session.host ?? null,
-          workspace_id: session.workspace_id ?? null,
-          workspace_name: session.workspace_name ?? null,
-          environment: session.environment ?? null,
-          pinned_at: session.pinned_at,
-        }
-      : null;
+  /** `{profile, tab_id, <each module's pin fields>, pinned_at}`, or null. */
+  const sessionSummary = (): JsonObject | null => {
+    if (!session) return null;
+    const summary: JsonObject = { profile: session.profile, tab_id: session.tabId };
+    for (const module of enabledModules()) {
+      if (module.session)
+        Object.assign(summary, module.session.summary(session.modules[module.id]));
+    }
+    summary.pinned_at = session.pinned_at;
+    return summary;
+  };
+
+  /**
+   * An extension call the way the router makes one, for a module's bridge-side
+   * tools: the same pinned tab and module pin as a top-level call (an
+   * orchestrator that reads in one tab must not write in another), and the
+   * same file-param resolution, so an orchestrator can pass code_path straight
+   * through to the save tool.
+   */
+  const moduleContext = (routingProfile: string | null): ModuleCallContext => ({
+    profile: routingProfile,
+    session: sessionSummary(),
+    callExtension: async (toolName, toolArgs) => {
+      let nestedArgs: JsonObject = withSessionTarget(toolName, toolArgs || {}, routingProfile);
+      let nested: PreparedModuleCall | undefined;
+      const nestedOwner = enabledOwner(toolName);
+      if (nestedOwner?.prepare) {
+        nested = nestedOwner.prepare(toolName, nestedArgs);
+        nestedArgs = nested.args;
+      }
+      const response = await sendRequestToExtension(
+        {
+          name: toolName,
+          args: nestedArgs,
+        },
+        NativeMessageType.CALL_TOOL,
+        120000,
+        routingProfile,
+      );
+      if (response.status === 'success') {
+        return nested?.finish
+          ? nested.finish(response.data, { profile: routingProfile, args: nestedArgs })
+          : response.data;
+      }
+      return {
+        content: [{ type: 'text', text: `Error calling tool: ${response.error}` }],
+        isError: true,
+      };
+    },
+  });
 
   const handleToolCall = async (
     name: string,
@@ -766,8 +695,10 @@ export function createToolRouter(): ToolRouter {
     signal?: AbortSignal,
   ): Promise<CallToolResult> => {
     try {
+      const owner = installedOwner(name);
+
       // 1. Check for Profile Management Admin Tools
-      if (name === TOOL_NAMES.WORKATO.LIST_PROFILES) {
+      if (name === CORE_TOOL_NAMES.BRIDGE.LIST_PROFILES) {
         const defaultProfile = profileRegistry.getActiveProfile();
         const connected = profileRegistry.getConnectedProfiles();
         return {
@@ -802,7 +733,7 @@ export function createToolRouter(): ToolRouter {
         };
       }
 
-      if (name === TOOL_NAMES.WORKATO.SWITCH_PROFILE) {
+      if (name === CORE_TOOL_NAMES.BRIDGE.SWITCH_PROFILE) {
         const targetProfile = normalizeProfile(args?.profile);
         if (!targetProfile) {
           return routeError('Error: target profile parameter is required.');
@@ -825,48 +756,37 @@ export function createToolRouter(): ToolRouter {
         const next: SessionContext = {
           profile: targetProfile,
           tabId: nextTabId,
+          modules: {},
           pinned_at: new Date().toISOString(),
           generation: profileRegistry.getGeneration(),
         };
 
-        // Pin what the tab actually is, not what it was assumed to be: one
-        // cheap workato_session_context call is the whole difference between
-        // "pinned to a tab" and "pinned to a workspace".
+        // Each module that pins more than the tab reads it off the tab now.
+        const pinning = enabledModules().filter((module) => module.session);
         let contextNote = '';
         if (nextTabId !== null) {
-          const probe = await probeSessionContext(targetProfile, nextTabId);
-          if (probe.context) {
-            if (typeof probe.context.host === 'string') next.host = probe.context.host;
-            if (typeof probe.context.workspace_id === 'number') {
-              next.workspace_id = probe.context.workspace_id;
-            }
-            if (typeof probe.context.workspace_name === 'string') {
-              next.workspace_name = probe.context.workspace_name;
-            }
-            if (probe.context.environment !== undefined && probe.context.environment !== null) {
-              next.environment = String(probe.context.environment);
-            }
-          } else {
-            contextNote =
-              ` Workspace context was NOT pinned (${probe.error}); writes will not be ` +
-              'checked against a workspace until this succeeds.';
+          for (const module of pinning) {
+            const probe = await module.session!.probe(targetProfile, nextTabId, requestExtension);
+            if (probe.pin) next.modules[module.id] = probe.pin;
+            else if (probe.note) contextNote += probe.note;
           }
         }
         session = next;
 
         const summary = sessionSummary();
+        const tabLabel =
+          pinning.find((module) => module.session?.tabLabel)?.session?.tabLabel ?? 'tab ID';
+        const pinned = session;
         return {
           content: [
             {
               type: 'text',
               text:
                 `Successfully switched this MCP session to profile context: "${targetProfile}"` +
-                (session.tabId !== null ? ` and Workato tab ID: ${session.tabId}` : '') +
-                (session.workspace_id !== undefined
-                  ? `, workspace ${session.workspace_id}` +
-                    (session.workspace_name ? ` "${session.workspace_name}"` : '') +
-                    (session.environment ? `, environment ${session.environment}` : '')
-                  : '') +
+                (pinned.tabId !== null ? ` and ${tabLabel}: ${pinned.tabId}` : '') +
+                pinning
+                  .map((module) => module.session!.describe(pinned.modules[module.id]))
+                  .join('') +
                 contextNote +
                 `\n${JSON.stringify({ session_context: summary })}`,
             },
@@ -933,53 +853,31 @@ export function createToolRouter(): ToolRouter {
         );
       }
 
-      // A profile that reconnected may be a different browser session; the
-      // pinned tab id can now belong to another workspace. Re-check once per
-      // registry generation before anything is routed.
-      if (
-        session &&
-        session.tabId !== null &&
-        name.startsWith('workato_') &&
-        !isContextChangingTool(name) &&
-        (session.workspace_id !== undefined || session.environment !== undefined)
-      ) {
-        const generation = profileRegistry.getGeneration();
-        if (generation !== session.generation) {
-          const probe = await probeSessionContext(session.profile, session.tabId);
-          if (probe.context) {
-            const actual = probe.context;
-            const workspaceChanged =
-              session.workspace_id !== undefined &&
-              actual.workspace_id !== undefined &&
-              Number(actual.workspace_id) !== Number(session.workspace_id);
-            const environmentChanged =
-              session.environment !== undefined &&
-              actual.environment !== undefined &&
-              String(actual.environment) !== String(session.environment);
-            if (workspaceChanged || environmentChanged) {
-              return routeError(
-                `ContextChanged: profile "${session.profile}" reconnected and tab ` +
-                  `${session.tabId} is now workspace ${actual.workspace_id ?? '?'}` +
-                  (actual.environment ? `, environment ${actual.environment}` : '') +
-                  `, but this session is pinned to workspace ${session.workspace_id ?? '?'}` +
-                  (session.environment ? `, environment ${session.environment}` : '') +
-                  '. Nothing was sent. Check workato_session_context, then re-pin with ' +
-                  'workato_switch_profile(profile, tabId).',
-              );
+      // A profile that reconnected may be a different browser session: the
+      // owning module re-checks its pin once per registry generation before
+      // anything is routed.
+      const hooks = owner?.session;
+      if (owner && hooks && session && session.tabId !== null) {
+        const pin = session.modules[owner.id];
+        if (pin && hooks.needsRecheck(name, pin)) {
+          const generation = profileRegistry.getGeneration();
+          if (generation !== session.generation) {
+            const checked = await hooks.recheck(
+              pin,
+              { profile: session.profile, tabId: session.tabId },
+              requestExtension,
+            );
+            if (checked.refusal) return routeError(checked.refusal);
+            // A failed probe leaves the generation alone so the next call retries;
+            // the call itself surfaces the real transport failure.
+            if (checked.pin && session) {
+              session.modules[owner.id] = checked.pin;
+              session.generation = generation;
             }
-            if (typeof actual.host === 'string') session.host = actual.host;
-            if (typeof actual.workspace_name === 'string') {
-              session.workspace_name = actual.workspace_name;
-            }
-            session.generation = generation;
           }
-          // A failed probe leaves the generation alone so the next call retries;
-          // the call itself surfaces the real transport failure.
         }
       }
 
-      // workato_pull_recipe(out_file) / workato_ui_save_recipe_code(code_path):
-      // resolve the file params here (this process has filesystem access).
       // Strict targeting looks at the caller's own arguments (lease applied),
       // before the session pin is injected: the pin is shared by every agent
       // of the session, so it must not count as naming a tab.
@@ -991,7 +889,7 @@ export function createToolRouter(): ToolRouter {
       if (strictRefusal) return routeError(strictRefusal);
       const closeRefusal = leasedTabCloseGuard(name, routed.args || {}, routingProfile);
       if (closeRefusal) return routeError(closeRefusal);
-      let effectiveArgs: any = withSessionTarget(name, routed.args || {}, session, routingProfile);
+      let effectiveArgs: any = withSessionTarget(name, routed.args || {}, routingProfile);
       // Unredacted output is the bridge's call, never the caller's: drop any
       // rawOutput here, whatever the tool. prepareAutoFileCall sets it again
       // only for chrome_javascript with an explicit out_file.
@@ -999,29 +897,22 @@ export function createToolRouter(): ToolRouter {
         effectiveArgs = { ...effectiveArgs };
         delete effectiveArgs[RAW_OUTPUT_ARG];
       }
-      let pullOutFile: string | undefined;
-      if (isWorkatoFileTool(name)) {
-        const prepared = prepareWorkatoCall(name, effectiveArgs || {});
-        effectiveArgs = prepared.args;
-        pullOutFile = prepared.pullOutFile;
-      }
 
-      // workato_lcap_page_get(out_file) / *_save(content_path) / api_request(out_file):
-      // the LCAP page tree and raw response bodies get the same treatment.
-      let lcapOutFile: LcapOutFile | undefined;
-      if (isWorkatoLcapFileTool(name)) {
-        const prepared = prepareLcapCall(name, effectiveArgs || {});
+      // A module's own file params (Workato: recipe out_file / code_path, LCAP
+      // content_path): resolved here, since this process has filesystem access.
+      let prepared: PreparedModuleCall | undefined;
+      if (owner?.prepare) {
+        prepared = owner.prepare(name, effectiveArgs || {});
         effectiveArgs = prepared.args;
-        lcapOutFile = prepared.outFile;
       }
 
       // chrome_fetch_to_file(out_file): the extension replies with the body as
       // base64, which only the file writer below may see. See chrome-fetch-to-file.ts.
       let fetchOutFile: string | undefined;
       if (isFetchToFileTool(name)) {
-        const prepared = prepareFetchToFileCall(effectiveArgs || {});
-        effectiveArgs = prepared.args;
-        fetchOutFile = prepared.outFile;
+        const preparedFetch = prepareFetchToFileCall(effectiveArgs || {});
+        effectiveArgs = preparedFetch.args;
+        fetchOutFile = preparedFetch.outFile;
       }
 
       // Generic out_file / auto-file for every other read tool and for
@@ -1029,96 +920,28 @@ export function createToolRouter(): ToolRouter {
       // way back out. See workato-auto-file.ts.
       let autoFilePlan: AutoFilePlan | undefined;
       {
-        const prepared = prepareAutoFileCall(name, effectiveArgs || {});
-        effectiveArgs = prepared.args;
-        autoFilePlan = prepared.plan;
+        const preparedAutoFile = prepareAutoFileCall(name, effectiveArgs || {}, autoFileRules);
+        effectiveArgs = preparedAutoFile.args;
+        autoFilePlan = preparedAutoFile.plan;
       }
 
-      // `workato_datapill` is pure string assembly — no browser round trip.
-      if (isWorkatoDatapillTool(name)) {
-        return handleWorkatoDatapillCall(name, effectiveArgs || {});
+      // A module's bridge-side tools: pure helpers, and orchestrators that drive
+      // several extension tools in sequence. Returned as is, like before.
+      if (owner?.handle) {
+        const handled = owner.handle(name, effectiveArgs || {}, moduleContext(routingProfile));
+        if (handled) return handled;
       }
 
       // `workato_bridge_info` reports this build's own identity, locally.
       if (isWorkatoBridgeInfoTool(name)) {
-        return handleWorkatoBridgeInfoCall({
-          connected_profiles: profileRegistry.getConnectedProfiles(),
-          session_context: sessionSummary(),
-          default_profile: profileRegistry.getActiveProfile(),
-        });
-      }
-
-      // Native orchestrators: they drive several extension tools in sequence
-      // (pull -> mutate -> save, or stop -> save -> restore) and need Node's
-      // filesystem for code_path, so they run here rather than in the page.
-      if (
-        isWorkatoRecipeMutatorTool(name) ||
-        isWorkatoCallableTool(name) ||
-        isWorkatoSaveWithDependentsTool(name) ||
-        isWorkatoOperationTool(name) ||
-        isStepSchemaApplyCall(name, effectiveArgs)
-      ) {
-        const callExtension = async (
-          toolName: string,
-          toolArgs: Record<string, unknown>,
-        ): Promise<CallToolResult> => {
-          // Each nested call goes through the same file-param resolution the
-          // top-level dispatch does, so an orchestrator can pass code_path
-          // straight through to the save tool.
-          // Nested calls get the same pinned tab and workspace as the top-level
-          // one: an orchestrator that reads in one tab must not write in another.
-          let nestedArgs: JsonObject = withSessionTarget(
-            toolName,
-            toolArgs || {},
-            session,
-            routingProfile,
-          );
-          let nestedOutFile: string | undefined;
-          if (isWorkatoFileTool(toolName)) {
-            const prepared = prepareWorkatoCall(toolName, nestedArgs);
-            nestedArgs = prepared.args;
-            nestedOutFile = prepared.pullOutFile;
-          }
-          const response = await sendRequestToExtension(
-            {
-              name: toolName,
-              args: nestedArgs,
-            },
-            NativeMessageType.CALL_TOOL,
-            120000,
-            routingProfile,
-          );
-          if (response.status === 'success') {
-            return nestedOutFile
-              ? writePulledRecipe(
-                  nestedOutFile,
-                  response.data,
-                  buildPullOrigin(response.data, routingProfile, nestedArgs),
-                )
-              : response.data;
-          }
-          return {
-            content: [{ type: 'text', text: `Error calling tool: ${response.error}` }],
-            isError: true,
-          };
-        };
-
-        if (isWorkatoRecipeMutatorTool(name)) {
-          return handleWorkatoRecipeMutatorCall(name, effectiveArgs || {}, callExtension);
-        }
-        // workato_step_schema(apply_to): generate in the extension, then write
-        // both schemas onto the step in one saved version.
-        if (isStepSchemaApplyCall(name, effectiveArgs)) {
-          return handleWorkatoStepSchemaApplyCall(name, effectiveArgs || {}, callExtension);
-        }
-        if (isWorkatoCallableTool(name)) {
-          return handleWorkatoCallableCall(name, effectiveArgs || {}, callExtension);
-        }
-        // Journal reads happen in this process; only refresh/resume calls out.
-        if (isWorkatoOperationTool(name)) {
-          return handleWorkatoOperationCall(name, effectiveArgs || {}, callExtension);
-        }
-        return handleWorkatoSaveWithDependentsCall(name, effectiveArgs || {}, callExtension);
+        return handleWorkatoBridgeInfoCall(
+          {
+            connected_profiles: profileRegistry.getConnectedProfiles(),
+            session_context: sessionSummary(),
+            default_profile: profileRegistry.getActiveProfile(),
+          },
+          servedCatalogue(),
+        );
       }
 
       const response = await sendRequestToExtension(
@@ -1131,24 +954,28 @@ export function createToolRouter(): ToolRouter {
         routingProfile,
       );
       if (response.status === 'success') {
-        if (pullOutFile) {
-          return writePulledRecipe(
-            pullOutFile,
-            response.data,
-            buildPullOrigin(response.data, routingProfile, effectiveArgs),
-          );
+        if (prepared?.finish) {
+          return await prepared.finish(response.data, {
+            profile: routingProfile,
+            args: effectiveArgs,
+          });
         }
-        if (lcapOutFile) return writeLcapOutFile(lcapOutFile, response.data);
         if (fetchOutFile) return finishFetchToFile(fetchOutFile, response.data);
+        // A call whose job is to change the pinned context: a pin on the profile
+        // that just switched follows it, or its next call reports ContextChanged.
+        if (hooks?.isContextChanging(name) && session && session.profile === routingProfile) {
+          const followed = hooks.follow(response.data, session.modules[owner!.id]);
+          if (followed) {
+            session = {
+              ...session,
+              modules: { ...session.modules, [owner!.id]: followed },
+              generation: profileRegistry.getGeneration(),
+            };
+          }
+        }
         // Single return path for a routed tool response: spill a large result
         // to disk first (the context block is kept out of the file), then stamp
         // the profile into the context block (only this side knows the name).
-        // The session cookie belongs to the Chrome profile: a pin on the profile
-        // that just switched follows it, or its next call reports ContextChanged.
-        if (isContextChangingTool(name) && session && session.profile === routingProfile) {
-          const switched = parseSwitchResult(response.data);
-          if (switched) session = followSwitch(session, switched, profileRegistry.getGeneration());
-        }
         return stampContextBlock(applyAutoFile(name, autoFilePlan, response.data), routingProfile);
       } else {
         return {
@@ -1174,11 +1001,7 @@ export function createToolRouter(): ToolRouter {
     }
   };
 
-  const listTools = async () => ({
-    tools: withLeaseToolSchemas(
-      withOutFileToolSchemas(withProfileRoutingToolSchemas(TOOL_SCHEMAS)),
-    ),
-  });
+  const listTools = async () => ({ tools: servedToolList(enabledModules(), autoFileRules) });
 
   const handleToolCallWithCancel = (name: string, args: any, signal?: AbortSignal) =>
     raceAbort(handleToolCall(name, args, signal), signal);
