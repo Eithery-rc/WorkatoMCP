@@ -1,6 +1,7 @@
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { COMMAND_NAME } from './constant';
 
 const distDir = path.join(__dirname, '..', '..', 'dist');
 
@@ -52,12 +53,12 @@ Native Messaging host for the Chrome extension.
 3. Register the Native Messaging host:
    \`\`\`
    # User-level (recommended)
-   ${packageJson.name} register
+   ${COMMAND_NAME} register
 
    # System-level (if user-level fails)
-   ${packageJson.name} register --system
+   ${COMMAND_NAME} register --system
    # or with admin privileges
-   sudo ${packageJson.name} register
+   sudo ${COMMAND_NAME} register
    \`\`\`
 
 ## Usage
