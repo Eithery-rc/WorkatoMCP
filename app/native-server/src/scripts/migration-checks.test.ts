@@ -132,6 +132,19 @@ describe('the Claude Code registration', () => {
     expect(outcome.check.status).toBe('warn');
   });
 
+  test('a 2.0 stdio registration (mokutab-stdio) is recognized as this bridge', () => {
+    const outcome = check({ mcpServers: { mokutab: { command: 'mokutab-stdio', args: [] } } });
+    expect(outcome.check).toMatchObject({ status: 'ok', message: 'registered as mokutab (user)' });
+    // Next to an old one: only the removal is left.
+    const both = check({
+      mcpServers: {
+        mokutab: { command: 'mokutab-stdio' },
+        workato: { command: 'workatomcp-stdio' },
+      },
+    });
+    expect(both.nextSteps).toEqual(['claude mcp remove workato -s user']);
+  });
+
   test('a "workato" server that is not this bridge is somebody else\'s', () => {
     const outcome = check({
       mcpServers: { workato: { type: 'http', url: 'https://example.com/mcp' } },

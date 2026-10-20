@@ -153,7 +153,8 @@ function pointsAtBridge(entry: unknown): boolean {
   if (!entry || typeof entry !== 'object') return false;
   const text = JSON.stringify(entry);
   return (
-    /(127\.0\.0\.1|localhost):12306\b/.test(text) || /(workatomcp|mcp-chrome)-stdio/.test(text)
+    /(127\.0\.0\.1|localhost):12306\b/.test(text) ||
+    /(mokutab|workatomcp|mcp-chrome)-stdio/.test(text)
   );
 }
 
