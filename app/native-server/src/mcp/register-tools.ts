@@ -855,22 +855,25 @@ export function createToolRouter(options: ToolRouterOptions = {}): ToolRouter {
       // owning module re-checks its pin once per registry generation before
       // anything is routed.
       const hooks = owner?.session;
-      if (owner && hooks && session && session.tabId !== null) {
-        const pin = session.modules[owner.id];
+      // The session this check reads; a switch_profile during the probe
+      // replaces `session`, and the answer must not land on the new pin.
+      const checkedSession = session;
+      if (owner && hooks && checkedSession && checkedSession.tabId !== null) {
+        const pin = checkedSession.modules[owner.id];
         if (pin && hooks.needsRecheck(name, pin)) {
           const generation = profileRegistry.getGeneration();
-          if (generation !== session.generation) {
+          if (generation !== checkedSession.generation) {
             const checked = await hooks.recheck(
               pin,
-              { profile: session.profile, tabId: session.tabId },
+              { profile: checkedSession.profile, tabId: checkedSession.tabId },
               requestExtension,
             );
             if (checked.refusal) return routeError(checked.refusal);
             // A failed probe leaves the generation alone so the next call retries;
             // the call itself surfaces the real transport failure.
-            if (checked.pin && session) {
-              session.modules[owner.id] = checked.pin;
-              session.generation = generation;
+            if (checked.pin && session === checkedSession) {
+              checkedSession.modules[owner.id] = checked.pin;
+              checkedSession.generation = generation;
             }
           }
         }
