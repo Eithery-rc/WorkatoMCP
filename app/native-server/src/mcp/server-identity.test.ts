@@ -103,25 +103,49 @@ describe('server instructions', () => {
     expect(landed).toEqual([]);
   });
 
-  test('cover the task-to-tool routes the plan asks for', () => {
+  /**
+   * Every tool the instructions named before the module split (the routing
+   * table of 1.13). Rewording the snippets must never drop a route: a tool
+   * that leaves this list leaves it on purpose, here.
+   */
+  const ROUTES_BEFORE_THE_SPLIT = [
+    'workato_apps_list',
+    'workato_adapter_meta',
+    'workato_step_schema',
+    'workato_recipe_set_input_path',
+    'workato_recipe_apply',
+    'workato_recipe_grep',
+    'workato_job_trace',
+    'workato_list_jobs',
+    'workato_recipe_callers',
+    'workato_recipe_connections',
+    'workato_recipe_validate',
+    'workato_recipe_save_with_dependents',
+    'workato_operation_status',
+    'workato_test_recipe',
+    'workato_session_context',
+    'workato_bridge_info',
+    'workato_switch_environment',
+    'workato_deploy_plan',
+    'workato_deploy_run',
+    'chrome_lease_tab',
+    'chrome_watch_start',
+  ];
+
+  test('still name every route the instructions had before the split', () => {
     const allOn = instructionsFor(new Set(INSTALLED_MODULES.map((module) => module.id)));
-    for (const name of [
-      'workato_recipe_set_input_path',
-      'workato_recipe_apply',
-      'workato_recipe_grep',
-      'workato_job_trace',
-      'workato_list_jobs',
-      'workato_recipe_callers',
-      'workato_recipe_connections',
-      'workato_recipe_save_with_dependents',
-      'workato_operation_status',
-      'workato_test_recipe',
-      'workato_session_context',
-      'workato_bridge_info',
-    ]) {
-      expect(allOn).toContain(name);
+    expect(toolNamesIn(allOn).sort()).toEqual([...ROUTES_BEFORE_THE_SPLIT].sort());
+    for (const word of ['auto_file', 'out_file', 'wait_command']) expect(allOn).toContain(word);
+  });
+
+  test('with a module off, its routes are gone and every core route stays', () => {
+    const allOff = instructionsFor(new Set());
+    for (const name of ['workato_bridge_info', 'chrome_lease_tab', 'chrome_watch_start']) {
+      expect(allOff).toContain(name);
     }
-    expect(allOn).toContain('auto_file');
+    expect(toolNamesIn(allOff).filter((name) => name.startsWith('workato_'))).toEqual([
+      'workato_bridge_info',
+    ]);
   });
 
   test('the core snippet names core tools only', () => {

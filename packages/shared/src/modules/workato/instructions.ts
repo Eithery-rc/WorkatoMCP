@@ -5,7 +5,7 @@
  * bridge (server-identity.test.ts).
  */
 export const WORKATO_INSTRUCTIONS = [
-  'Workato: app and adapter name -> workato_apps_list(query);',
+  'Workato: which app exists, its adapter name -> workato_apps_list(query);',
   "an adapter's actions and field names -> workato_adapter_meta;",
   "a step's real extended_*_schema, never hand-written -> workato_step_schema;",
   'one field to change -> workato_recipe_set_input_path;',
@@ -17,7 +17,7 @@ export const WORKATO_INSTRUCTIONS = [
   'can a recipe still authenticate -> workato_recipe_connections;',
   'what a change would break -> workato_recipe_validate;',
   'a save that stops and restarts callers -> workato_recipe_save_with_dependents,',
-  'on timeout workato_operation_status;',
+  'then workato_operation_status on timeout;',
   'run a fixture through a recipe -> workato_test_recipe;',
   'which workspace a call lands in -> workato_session_context;',
   'change environment or client workspace -> workato_switch_environment;',
