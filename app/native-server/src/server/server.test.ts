@@ -248,6 +248,31 @@ describe('server tests', () => {
       expect(read.text).toBe('top secret');
     });
 
+    test('/file takes only the extension or no Origin, never a local page', async () => {
+      const page = await http()
+        .get('/file')
+        .query({ path: file })
+        .set('Origin', 'http://127.0.0.1:5173');
+      expect(page.status).toBe(403);
+      expect(page.text).not.toContain('top secret');
+      expect(errorSpy.mock.calls.map((call) => String(call[0])).join('\n')).toMatch(
+        /\[bridge\] refused a \/file read from origin "http:\/\/127\.0\.0\.1:5173"/,
+      );
+      // The same local page may still use the other routes.
+      await http().get('/ping').set('Origin', 'http://127.0.0.1:5173').expect(200);
+
+      const extension = await http()
+        .get('/file')
+        .query({ path: file })
+        .set('Origin', `chrome-extension://${EXTENSION_IDS[0]}`);
+      expect(extension.status).toBe(200);
+      expect(extension.text).toBe('top secret');
+
+      const noOrigin = await http().get('/file').query({ path: file });
+      expect(noOrigin.status).toBe(200);
+      expect(noOrigin.text).toBe('top secret');
+    });
+
     test('localhost on the bridge port is the same bridge', async () => {
       const server = Server.getInstance().server;
       await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));

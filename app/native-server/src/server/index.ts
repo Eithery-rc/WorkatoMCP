@@ -204,6 +204,17 @@ export class Server {
   private setupFileRoutes(): void {
     this.fastify.get(
       '/file',
+      {
+        // It reads any local file by path, and only the extension needs it
+        // (lookup table CSV imports): the profile socket's rule, no Origin or
+        // this extension, not local http pages.
+        preValidation: async (request, reply) => {
+          const origin = request.headers.origin;
+          if (isAllowedWsOrigin(origin)) return;
+          logRefusal(`a /file read from origin ${JSON.stringify(origin)}`);
+          await reply.code(HTTP_STATUS.FORBIDDEN).send({ error: 'origin not allowed' });
+        },
+      },
       async (request: FastifyRequest<{ Querystring: { path?: string } }>, reply: FastifyReply) => {
         const filePath = request.query?.path;
         if (typeof filePath !== 'string' || filePath.length === 0) {

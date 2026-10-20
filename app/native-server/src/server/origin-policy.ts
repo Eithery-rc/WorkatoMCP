@@ -9,10 +9,10 @@
  *
  *   Origin (a browser sends it; MCP clients and CLIs send none)
  *     /ws-client   none, or `chrome-extension://<id>` for this extension's
- *                  ids (EXTENSION_IDS, the same list the native-messaging
+ *     and /file    ids (EXTENSION_IDS, the same list the native-messaging
  *                  manifest allows)
- *     HTTP routes  the same, plus `http://127.0.0.1[:port]` for local
- *                  debugging pages
+ *     other HTTP   the same, plus `http://127.0.0.1[:port]` for local
+ *     routes       debugging pages
  *   Host (every HTTP/1.1 client sends it)
  *     `127.0.0.1:<port>` or `localhost:<port>`, the port this request came
  *     in on. A DNS-rebinding page is same-origin with the bridge, so its
@@ -50,7 +50,7 @@ function isOurExtension(origin: string, url: URL, extensionIds: readonly string[
   );
 }
 
-/** The extension WebSocket: no Origin, or this extension. */
+/** The extension WebSocket and /file: no Origin, or this extension. */
 export function isAllowedWsOrigin(
   origin: string | undefined | null,
   extensionIds: readonly string[] = EXTENSION_IDS,
