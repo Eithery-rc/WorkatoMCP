@@ -153,12 +153,17 @@ One release, 2.0.0, so colleagues migrate once. Separate commits, each green on 
 
 ### 5.1 Install steps for each machine
 
-1. `npm i -g @mokuhub/mokutab-bridge`. Postinstall registers the native host under the same id; the manifest now points into the new package.
-2. Load the 2.0.0 extension (zip from the release, or the repo build). Same extension ID, so it replaces the old one in place and keeps its permissions, including the userScripts toggle.
-3. `claude mcp add --transport http -s user mokutab http://127.0.0.1:12306/mcp`, then `claude mcp remove workato -s user`, then restart the sessions. Workato stays on after an upgrade (§3.4); switch it in the popup if not needed. A machine that skips this step keeps working under the old key, with the old `mcp__workato__` prefix.
-4. `npm uninstall -g workatomcp-bridge`.
+1. Quit Chrome completely, every profile. The running native host locks the old package's files on Windows.
+2. `npm uninstall -g workatomcp-bridge`. The 2.0 package keeps the old command names (`workatomcp-bridge`, `workatomcp-stdio`, `mcp-chrome-bridge`, `chrome-mcp-bridge`, `mcp-chrome-stdio`) as aliases until 3.0, so installing it over the old package fails with `EEXIST`. `--force` is not a workaround: a later uninstall of the old package deletes the shared command names.
+3. `npm i -g @mokuhub/mokutab-bridge`. Postinstall registers the native host under the same id; the manifest now points into the new package.
+4. Put the 2.0.0 extension in place (zip from the release over the folder Chrome loads it from, or the repo build). Same extension ID, so it replaces the old one in place and keeps its permissions, including the userScripts toggle.
+5. Start Chrome. The first bridge start moves `~/.workatomcp` to `~/.mokutab` (§5.2); if something holds the directory open, the move is retried at the next start.
+6. `claude mcp add --transport http -s user mokutab http://127.0.0.1:12306/mcp`, then `claude mcp remove workato -s user`, then restart the sessions. Workato stays on after an upgrade (§3.4); switch it in the popup if not needed. A machine that skips this step keeps working under the old key, with the old `mcp__workato__` prefix; allowlists that name `mcp__workato__*` need `mcp__mokutab__*`.
+7. `mokutab-bridge doctor`.
 
-`mokutab-bridge doctor` checks the leftovers: the old package still installed, a native host manifest that points at a missing package, a registration that still uses the key `workato`.
+Order changed on 2026-10-20: the first draft installed the new package before removing the old one, which fails with `EEXIST` because the two share command names, so the uninstall (with Chrome closed) now comes first.
+
+`mokutab-bridge doctor` checks the leftovers: the old package still installed, a native host manifest that points at a missing package or into the old one, a registration that still uses the key `workato`, and a data dir that has not moved.
 
 ### 5.2 Data
 
