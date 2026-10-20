@@ -181,4 +181,6 @@ export const STORAGE_KEYS = {
   NATIVE_SERVER_PORT: 'nativeServerPort',
   NATIVE_AUTO_CONNECT_ENABLED: 'nativeAutoConnectEnabled',
   PROFILE_NAME: 'profileName',
+  /** The bridge's module switch, as last pushed (see common/module-state.ts). */
+  MODULES_STATE: 'modulesState',
 } as const;

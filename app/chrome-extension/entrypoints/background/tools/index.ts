@@ -1,8 +1,9 @@
 import { createErrorResponse } from '@/common/tool-handler';
 import { ERROR_MESSAGES } from '@/common/constants';
+import { moduleOffMessage } from 'workatomcp-shared';
 import * as browserTools from './browser';
 import { EXTENSION_MODULES } from '../modules';
-import type { ExtensionModule } from '../extension-module';
+import { moduleEnabled, type ExtensionModule } from '../extension-module';
 import { runExclusiveForTab } from './tab-queue';
 
 const toolsMap = new Map<string, any>(
@@ -33,7 +34,12 @@ export const handleCallTool = async (param: ToolCallParam) => {
   if (!tool) {
     return createErrorResponse(`Tool ${param.name} not found`);
   }
+  // A module switched off in the bridge refuses here too: a bridge that did
+  // not refuse (an older one, or the native-messaging path) gets the same answer.
   const owner = ownerOf.get(param.name);
+  if (owner && !(await moduleEnabled(owner.id))) {
+    return createErrorResponse(moduleOffMessage(owner, param.name));
+  }
   const tabId = param.args?.tabId;
   // chrome_handle_dialog answers the dialog another call on this tab is blocked
   // on; queueing it behind that call would deadlock the tab.

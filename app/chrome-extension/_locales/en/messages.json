@@ -80,5 +80,31 @@
   "configCopiedNotification": {
     "message": "Configuration copied to clipboard",
     "description": "Configuration copied success message"
+  },
+  "modulesSectionLabel": {
+    "message": "Modules",
+    "description": "Popup section header for the module switches"
+  },
+  "moduleDescription_workato": {
+    "message": "Recipes, jobs, connections, tables and Workflow App pages in Workato.",
+    "description": "One-line description of the Workato module in the popup"
+  },
+  "modulesBridgeOffNote": {
+    "message": "Connect to the bridge to change modules. The switch applies to every Chrome profile on this machine.",
+    "description": "Shown under the module switches while the bridge is not connected"
+  },
+  "modulesBridgeOldNote": {
+    "message": "This bridge cannot switch modules. Update the bridge to change them.",
+    "description": "Shown under the module switches when the bridge does not answer module requests"
+  },
+  "modulesSaveFailed": {
+    "message": "Could not change the switch: $ERROR$",
+    "description": "Shown when the bridge refused a module switch change",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "the bridge connection closed"
+      }
+    }
   }
 }

@@ -87,9 +87,10 @@ describe('core never imports a module', () => {
     expect(moduleOf(path.join(MODULES_DIR, 'index.ts'))).toBeNull();
   });
 
-  test('every module entry point exists', () => {
+  test('every module entry point exists and starts through its module gate', () => {
     for (const rel of Object.keys(MODULE_ENTRYPOINTS)) {
-      expect(readFileSync(path.join(ROOT, rel), 'utf8').length).toBeGreaterThan(0);
+      const source = readFileSync(path.join(ROOT, rel), 'utf8');
+      expect(source).toMatch(/gateWorkatoContent\(/);
     }
   });
 });

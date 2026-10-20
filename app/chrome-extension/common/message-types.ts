@@ -15,6 +15,10 @@ export const BACKGROUND_MESSAGE_TYPES = {
   GET_SERVER_STATUS: 'get_server_status',
   REFRESH_SERVER_STATUS: 'refresh_server_status',
   SERVER_STATUS_CHANGED: 'server_status_changed',
+  // Module switch (popup <-> background; the background asks the bridge)
+  GET_MODULES: 'get_modules',
+  SET_MODULE: 'set_module',
+  MODULES_CHANGED: 'modules_changed',
   // Element picker (human-in-the-loop element selection)
   ELEMENT_PICKER_UI_EVENT: 'element_picker_ui_event',
   ELEMENT_PICKER_FRAME_EVENT: 'element_picker_frame_event',

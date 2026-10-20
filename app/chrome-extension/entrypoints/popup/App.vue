@@ -89,6 +89,34 @@
             </button>
           </div>
         </div>
+
+        <!-- Module switches: one per machine, kept in the bridge -->
+        <div v-if="modules.length > 0" class="section modules-section">
+          <h2 class="section-title">{{ getMessage('modulesSectionLabel') }}</h2>
+          <div class="config-card modules-card">
+            <div v-for="module in modules" :key="module.id" class="module-row">
+              <div class="module-text">
+                <p class="module-name">{{ module.title }}</p>
+                <p v-if="moduleDescription(module.id)" class="module-description">
+                  {{ moduleDescription(module.id) }}
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                class="module-switch"
+                :class="{ on: module.enabled }"
+                :aria-checked="module.enabled"
+                :aria-label="module.title"
+                :disabled="!modulesEditable || savingModule !== null"
+                @click="toggleModule(module)"
+              >
+                <span class="module-switch-knob"></span>
+              </button>
+            </div>
+            <p v-if="modulesNote" class="modules-note">{{ modulesNote }}</p>
+          </div>
+        </div>
       </div>
 
       <div class="footer">
@@ -160,6 +188,82 @@ const showMcpConfig = computed(() => {
 });
 
 const copyButtonText = ref(getMessage('copyConfigButton'));
+
+// Module switches. The state is the bridge's (one per machine); the background
+// relays reads and writes over its bridge connection.
+interface PopupModule {
+  id: string;
+  title: string;
+  enabled: boolean;
+}
+type ModulesBridge = 'connected' | 'disconnected' | 'unsupported';
+
+const modules = ref<PopupModule[]>([]);
+const modulesBridge = ref<ModulesBridge>('disconnected');
+const modulesError = ref('');
+const savingModule = ref<string | null>(null);
+
+const modulesEditable = computed(() => modulesBridge.value === 'connected');
+
+const modulesNote = computed(() => {
+  if (modulesError.value) return getMessage('modulesSaveFailed', [modulesError.value]);
+  if (modulesBridge.value === 'disconnected') return getMessage('modulesBridgeOffNote');
+  if (modulesBridge.value === 'unsupported') return getMessage('modulesBridgeOldNote');
+  return '';
+});
+
+const moduleDescription = (id: string): string => {
+  const key = `moduleDescription_${id}`;
+  const text = getMessage(key);
+  return text === key ? '' : text;
+};
+
+const applyModulesReply = (reply: any) => {
+  if (Array.isArray(reply?.modules)) modules.value = reply.modules;
+  if (reply?.bridge) modulesBridge.value = reply.bridge;
+  modulesError.value = reply?.success === false && reply?.error ? String(reply.error) : '';
+};
+
+const loadModules = async () => {
+  try {
+    applyModulesReply(
+      await chrome.runtime.sendMessage({ type: BACKGROUND_MESSAGE_TYPES.GET_MODULES }),
+    );
+  } catch (error) {
+    console.error('Failed to load module switches:', error);
+  }
+};
+
+const toggleModule = async (module: PopupModule) => {
+  if (!modulesEditable.value || savingModule.value !== null) return;
+  savingModule.value = module.id;
+  try {
+    const reply = await chrome.runtime.sendMessage({
+      type: BACKGROUND_MESSAGE_TYPES.SET_MODULE,
+      id: module.id,
+      enabled: !module.enabled,
+    });
+    applyModulesReply(reply);
+  } catch (error) {
+    modulesError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    savingModule.value = null;
+  }
+};
+
+/** A modules_state push the background relayed (a change from any profile). */
+const onModulesChanged = (payload: any) => {
+  const pushed = new Map<string, boolean>();
+  for (const entry of Array.isArray(payload?.modules) ? payload.modules : []) {
+    if (entry && typeof entry.id === 'string' && typeof entry.enabled === 'boolean') {
+      pushed.set(entry.id, entry.enabled);
+    }
+  }
+  modules.value = modules.value.map((module) => ({
+    ...module,
+    enabled: pushed.get(module.id) ?? module.enabled,
+  }));
+};
 
 const mcpConfigJson = computed(() => {
   const port = serverStatus.value.port || nativeServerPort.value;
@@ -330,6 +434,7 @@ const testNativeConnection = async () => {
     nativeConnectionStatus.value = 'disconnected';
   } finally {
     isConnecting.value = false;
+    void loadModules();
   }
 };
 
@@ -386,6 +491,11 @@ const setupServerStatusListener = () => {
     if (message.type === BACKGROUND_MESSAGE_TYPES.SERVER_STATUS_CHANGED && message.payload) {
       serverStatus.value = message.payload as any;
       console.log('Server status updated:', message.payload);
+      // The bridge came or went: the module switches follow.
+      void loadModules();
+    }
+    if (message.type === BACKGROUND_MESSAGE_TYPES.MODULES_CHANGED && message.payload) {
+      onModulesChanged(message.payload);
     }
   };
   chrome.runtime.onMessage.addListener(onMessage);
@@ -400,6 +510,7 @@ onMounted(async () => {
   await checkServerStatus();
 
   setupServerStatusListener();
+  await loadModules();
 });
 
 onUnmounted(() => {
@@ -780,6 +891,97 @@ onUnmounted(() => {
 .connect-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.modules-section {
+  margin-top: 14px;
+}
+
+.modules-card {
+  gap: 10px;
+  animation-delay: 0.1s;
+}
+
+.module-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px;
+}
+
+.module-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.module-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  margin: 0;
+}
+
+.module-description {
+  font-size: 11px;
+  color: #64748b;
+  margin: 0;
+  line-height: 1.35;
+}
+
+.module-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(100, 116, 139, 0.25);
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.module-switch.on {
+  background: linear-gradient(135deg, #d97757 0%, #c4664a 100%);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 2px 8px rgba(217, 119, 87, 0.25);
+}
+
+.module-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.module-switch.on .module-switch-knob {
+  transform: translateX(14px);
+}
+
+.module-switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2);
+}
+
+.module-switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.modules-note {
+  font-size: 10px;
+  color: #64748b;
+  margin: 0;
+  padding: 0 2px;
+  line-height: 1.4;
 }
 
 :deep(.icon-small) {
