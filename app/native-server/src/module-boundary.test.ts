@@ -87,34 +87,71 @@ function isInside(dir: string, target: string): boolean {
  */
 const AGGREGATE_EXPORT = /^(?:TOOL_SCHEMAS|TOOL_NAMES|MODULES|moduleOfTool|WORKATO_\w+)$/;
 
-const SHARED_IMPORT = /import\s+(type\s+)?(\{[^}]*\}|\*\s+as\s+\w+)\s+from\s+'workatomcp-shared'/g;
+const SHARED = `['"]workatomcp-shared['"]`;
 
-/** Non-test files outside `modulesDir` that import an aggregate shared export. */
+/** `import|export [type] {names} | * [as x] from 'workatomcp-shared'` */
+const STATIC_FORM = new RegExp(
+  `\\b(import|export)\\s+(?:type\\s+)?(\\{[^}]*\\}|\\*(?:\\s+as\\s+\\w+)?)\\s*from\\s*${SHARED}`,
+  'g',
+);
+
+/** `const|let|var {names} = [await] require|import('workatomcp-shared')` */
+const DESTRUCTURED_CALL = new RegExp(
+  `\\b(?:const|let|var)\\s+(\\{[^}]*\\})\\s*=\\s*(?:await\\s+)?(?:require|import)\\s*\\(\\s*${SHARED}\\s*\\)`,
+  'g',
+);
+
+/** Any other `require('workatomcp-shared')` / `import('workatomcp-shared')`: the whole package. */
+const WHOLE_CALL = new RegExp(`\\b(require|import)\\s*\\(\\s*${SHARED}\\s*\\)`, 'g');
+
+/** The names a `{ ... }` list binds, with comments, `type` and aliases dropped. */
+function namesIn(braces: string): string[] {
+  return braces
+    .slice(1, -1)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ')
+    .split(',')
+    .map((part) =>
+      part
+        .trim()
+        .replace(/^type\s+/, '')
+        .split(/\s+as\s+|\s*:\s*/)[0]
+        .trim(),
+    )
+    .filter(Boolean);
+}
+
+/** Every aggregate shared export one source file reaches, as `file: name` lines. */
+export function aggregateUses(rel: string, source: string): string[] {
+  const out: string[] = [];
+  let rest = source;
+  for (const match of source.matchAll(STATIC_FORM)) {
+    if (match[2].startsWith('*')) {
+      out.push(`${rel}: ${match[1]} * (whole package)`);
+      continue;
+    }
+    for (const name of namesIn(match[2]))
+      if (AGGREGATE_EXPORT.test(name)) out.push(`${rel}: ${name}`);
+  }
+  for (const match of source.matchAll(DESTRUCTURED_CALL)) {
+    for (const name of namesIn(match[1]))
+      if (AGGREGATE_EXPORT.test(name)) out.push(`${rel}: ${name}`);
+    rest = rest.replace(match[0], '');
+  }
+  for (const match of rest.matchAll(WHOLE_CALL)) {
+    out.push(`${rel}: ${match[1]}() (whole package)`);
+  }
+  return out;
+}
+
+/** Non-test files outside `modulesDir` that reach an aggregate shared export. */
 export function aggregateImports(root: string, modulesDir: string): string[] {
   const offenders: string[] = [];
   for (const file of walk(root)) {
     if (file === __filename || /\.test\.ts$/.test(file)) continue;
     if (!path.relative(modulesDir, file).startsWith('..')) continue;
-    const source = fs.readFileSync(file, 'utf8');
     const rel = path.relative(root, file).replace(/\\/g, '/');
-    for (const match of source.matchAll(SHARED_IMPORT)) {
-      if (match[2].startsWith('*')) {
-        offenders.push(`${rel}: * as (namespace import)`);
-        continue;
-      }
-      const names = match[2]
-        .slice(1, -1)
-        .split(',')
-        .map((part) =>
-          part
-            .trim()
-            .replace(/^type\s+/, '')
-            .split(/\s+as\s+/)[0]
-            .trim(),
-        )
-        .filter(Boolean);
-      for (const name of names) if (AGGREGATE_EXPORT.test(name)) offenders.push(`${rel}: ${name}`);
-    }
+    offenders.push(...aggregateUses(rel, fs.readFileSync(file, 'utf8')));
   }
   return offenders.sort();
 }
@@ -177,12 +214,34 @@ describe('the checker itself', () => {
     put('all.ts', "import {\n  NativeMessageType,\n  TOOL_SCHEMAS,\n} from 'workatomcp-shared';\n");
     put('alias.ts', "import { WORKATO_TOOL_NAMES as W } from 'workatomcp-shared';\n");
     put('star.ts', "import * as shared from 'workatomcp-shared';\n");
+    put('reexport.ts', "export { MODULES as installed } from 'workatomcp-shared';\n");
+    put('reexport-all.ts', 'export * from "workatomcp-shared";\n');
+    put(
+      'commented.ts',
+      "import {\n  CORE_TOOL_NAMES, // core\n  /* sneaky */ TOOL_NAMES,\n} from 'workatomcp-shared';\n",
+    );
+    put(
+      'required.ts',
+      "const { moduleOfTool, CORE_TOOL_NAMES: C } = require('workatomcp-shared');\n",
+    );
+    put('required-ok.ts', "const { CORE_TOOL_SCHEMAS } = require('workatomcp-shared');\n");
+    put('required-whole.ts', "const shared = require('workatomcp-shared');\n");
+    put('dynamic.ts', "const { TOOL_SCHEMAS } = await import('workatomcp-shared');\n");
+    put('dynamic-whole.ts', "void import('workatomcp-shared').then((m) => m);\n");
+    put('resolve-ok.ts', "const entry = require.resolve('workatomcp-shared');\n");
     put('modules/alpha/index.ts', "import { TOOL_NAMES } from 'workatomcp-shared';\n");
     put('core.test.ts', "import { TOOL_SCHEMAS } from 'workatomcp-shared';\n");
     expect(aggregateImports(shared, path.join(shared, 'modules'))).toEqual([
       'alias.ts: WORKATO_TOOL_NAMES',
       'all.ts: TOOL_SCHEMAS',
-      'star.ts: * as (namespace import)',
+      'commented.ts: TOOL_NAMES',
+      'dynamic-whole.ts: import() (whole package)',
+      'dynamic.ts: TOOL_SCHEMAS',
+      'reexport-all.ts: export * (whole package)',
+      'reexport.ts: MODULES',
+      'required-whole.ts: require() (whole package)',
+      'required.ts: moduleOfTool',
+      'star.ts: import * (whole package)',
     ]);
   });
 });
