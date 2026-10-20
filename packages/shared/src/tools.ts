@@ -65,12 +65,15 @@ export const CORE_TOOL_NAMES = {
     SNAPSHOT_HOVER: 'chrome_snapshot_hover',
     SNAPSHOT_WAIT_FOR: 'chrome_snapshot_wait_for',
   },
-  /** Profile and bridge tools. Core, named workato_* for historical reasons. */
+  /**
+   * Profile and bridge tools. Named workato_* until 2.0; the Workato module
+   * keeps those old names as aliases until 3.0 (modules/workato/aliases.ts).
+   */
   BRIDGE: {
-    LIST_PROFILES: 'workato_list_profiles',
-    BRIDGE_INFO: 'workato_bridge_info',
-    RELOAD_EXTENSION: 'workato_reload_extension',
-    SWITCH_PROFILE: 'workato_switch_profile',
+    LIST_PROFILES: 'chrome_list_profiles',
+    BRIDGE_INFO: 'chrome_bridge_info',
+    RELOAD_EXTENSION: 'chrome_reload_extension',
+    SWITCH_PROFILE: 'chrome_switch_profile',
   },
 };
 

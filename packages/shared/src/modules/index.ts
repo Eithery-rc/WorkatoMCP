@@ -19,19 +19,21 @@ export {
   WORKATO_TOOL_NAMES,
   WORKATO_TOOL_SCHEMAS,
   WORKATO_INSTRUCTIONS,
+  WORKATO_TOOL_ALIASES,
 } from './workato';
 
 /** Every installed module, in listing order. */
 export const MODULES: readonly ToolModule[] = [WORKATO_MODULE];
 
 /**
- * Every tool name, grouped as before the module split. WORKATO still holds the
- * four core profile/bridge tools (CORE_TOOL_NAMES.BRIDGE) so existing lookups
- * keep working.
+ * Every tool name, grouped as before the module split, plus BRIDGE: the four
+ * core profile/bridge tools, which sat in WORKATO while they carried the
+ * workato_ prefix.
  */
 export const TOOL_NAMES = {
   BROWSER: CORE_TOOL_NAMES.BROWSER,
-  WORKATO: { ...WORKATO_TOOL_NAMES.WORKATO, ...CORE_TOOL_NAMES.BRIDGE },
+  BRIDGE: CORE_TOOL_NAMES.BRIDGE,
+  WORKATO: WORKATO_TOOL_NAMES.WORKATO,
   WORKATO_UI: WORKATO_TOOL_NAMES.WORKATO_UI,
   WORKATO_RECIPE: WORKATO_TOOL_NAMES.WORKATO_RECIPE,
   WORKATO_LCAP: WORKATO_TOOL_NAMES.WORKATO_LCAP,

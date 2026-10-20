@@ -37,7 +37,7 @@ describe('register-tools profile routing', () => {
     jest.restoreAllMocks();
   });
 
-  test('keeps workato_switch_profile scoped to each MCP router instance', async () => {
+  test('keeps chrome_switch_profile scoped to each MCP router instance', async () => {
     jest.spyOn(profileRegistry, 'getConnectedProfiles').mockReturnValue(['centium', 'bluBanyan']);
     const sendRequest = jest.spyOn(profileRegistry, 'sendRequest').mockResolvedValue({
       status: 'success',
@@ -46,8 +46,8 @@ describe('register-tools profile routing', () => {
     const firstRouter = createToolRouter();
     const secondRouter = createToolRouter();
 
-    await firstRouter.handleToolCall('workato_switch_profile', { profile: 'centium' });
-    await secondRouter.handleToolCall('workato_switch_profile', { profile: 'bluBanyan' });
+    await firstRouter.handleToolCall('chrome_switch_profile', { profile: 'centium' });
+    await secondRouter.handleToolCall('chrome_switch_profile', { profile: 'bluBanyan' });
 
     await firstRouter.handleToolCall('get_windows_and_tabs', {});
     await secondRouter.handleToolCall('get_windows_and_tabs', {});
@@ -63,7 +63,7 @@ describe('register-tools profile routing', () => {
     });
     const router = createToolRouter();
 
-    await router.handleToolCall('workato_switch_profile', { profile: 'bluBanyan' });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'bluBanyan' });
     await router.handleToolCall('get_windows_and_tabs', { profile: 'centium' });
     await router.handleToolCall('get_windows_and_tabs', {});
 
@@ -84,7 +84,7 @@ describe('register-tools profile routing', () => {
     });
     const router = createToolRouter();
 
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium', tabId: 42 });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium', tabId: 42 });
     sendRequest.mockClear();
     await router.handleToolCall('workato_whoami', {});
     await router.handleToolCall('get_windows_and_tabs', {});
@@ -116,7 +116,7 @@ describe('register-tools profile routing', () => {
       });
     const router = createToolRouter();
 
-    const switched = await router.handleToolCall('workato_switch_profile', {
+    const switched = await router.handleToolCall('chrome_switch_profile', {
       profile: 'centium',
       tabId: 42,
     });
@@ -124,7 +124,7 @@ describe('register-tools profile routing', () => {
     expect((sendRequest.mock.calls[0][1] as any).name).toBe('workato_session_context');
     expect((switched.content?.[0] as any).text).toContain('workspace 5150');
 
-    const listed = await router.handleToolCall('workato_list_profiles', {});
+    const listed = await router.handleToolCall('chrome_list_profiles', {});
     const payload = JSON.parse((listed.content?.[0] as any).text);
     expect(payload.session_context).toMatchObject({
       profile: 'centium',
@@ -159,7 +159,7 @@ describe('register-tools profile routing', () => {
       .mockResolvedValue({ status: 'success', data: { content: [] } } as any);
     const router = createToolRouter();
 
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium' });
     const result = await router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
 
     expect(result.isError).toBe(true);
@@ -202,7 +202,7 @@ describe('register-tools profile routing', () => {
     } as never);
     const router = createToolRouter();
 
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium' });
     const result = await router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
 
     const blocks = result.content as any[];
@@ -225,7 +225,7 @@ describe('register-tools profile routing', () => {
     });
     const router = createToolRouter();
 
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium', tabId: 42 });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium', tabId: 42 });
     sendRequest.mockClear();
     await router.handleToolCall('workato_whoami', { tabId: 7 });
     await router.handleToolCall('workato_ui_list_steps', { windowId: 3 });
@@ -249,8 +249,8 @@ describe('register-tools profile routing', () => {
     jest.spyOn(profileRegistry, 'getActiveProfile').mockReturnValue('default');
     const router = createToolRouter();
 
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium', tabId: 42 });
-    const result = await router.handleToolCall('workato_list_profiles', {});
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium', tabId: 42 });
+    const result = await router.handleToolCall('chrome_list_profiles', {});
     const first = result.content[0];
     expect(first.type).toBe('text');
     if (first.type !== 'text') throw new Error('expected text result');
@@ -271,7 +271,7 @@ describe('register-tools profile routing', () => {
         inputSchema: { type: 'object', properties: {}, required: [] },
       },
       {
-        name: 'workato_switch_profile',
+        name: 'chrome_switch_profile',
         description: 'Switch profile',
         inputSchema: {
           type: 'object',
@@ -347,7 +347,7 @@ describe('register-tools native orchestrator routing', () => {
     const sendRequest = stubExtension();
     const router = createToolRouter();
 
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium' });
     sendRequest.mockClear();
 
     const result = await router.handleToolCall('workato_datapill', {
@@ -362,7 +362,7 @@ describe('register-tools native orchestrator routing', () => {
   test('workato_callable_schema_set drives pull then save through the extension', async () => {
     const sendRequest = stubExtension();
     const router = createToolRouter();
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium' });
     sendRequest.mockClear();
 
     const result = await router.handleToolCall('workato_callable_schema_set', {
@@ -381,7 +381,7 @@ describe('register-tools native orchestrator routing', () => {
   test('injects the pinned tab and workspace into every nested orchestrator call', async () => {
     const sendRequest = stubExtension();
     const router = createToolRouter();
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium', tabId: 42 });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium', tabId: 42 });
     sendRequest.mockClear();
 
     await router.handleToolCall('workato_callable_schema_set', {
@@ -408,7 +408,7 @@ describe('register-tools native orchestrator routing', () => {
     const sendRequest = stubExtension();
     const router = createToolRouter();
 
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium' });
     sendRequest.mockClear();
 
     const result = await router.handleToolCall('workato_recipe_save_with_dependents', {
@@ -425,7 +425,7 @@ describe('register-tools native orchestrator routing', () => {
   test('workato_recipe_save_with_dependents restores a stopped dependent after saving', async () => {
     const sendRequest = stubExtension();
     const router = createToolRouter();
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium' });
     sendRequest.mockClear();
 
     const result = await router.handleToolCall('workato_recipe_save_with_dependents', {

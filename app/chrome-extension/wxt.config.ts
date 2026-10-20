@@ -20,7 +20,7 @@ const IS_DEV = process.env.NODE_ENV !== 'production' && process.env.MODE !== 'pr
 
 // One stamp per build: baked into the bundle as __BUILD_TIME__ and written to
 // build-info.json. The extension compares the two to tell a stale running build
-// from the dist/ on disk (workato_reload_extension).
+// from the dist/ on disk (chrome_reload_extension).
 const BUILD_TIME = new Date().toISOString();
 
 // See https://wxt.dev/api/config.html

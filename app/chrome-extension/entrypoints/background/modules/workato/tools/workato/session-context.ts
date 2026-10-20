@@ -304,7 +304,7 @@ export async function assertTabContext(
       'ContextMismatch',
       `Tab ${tabId} is not the Workato context this call expects (${describeExpected(expected)}): ` +
         `${diffs.join('; ')}. Nothing was changed. Pin the right tab with ` +
-        'workato_switch_profile(profile, tabId), or pass allow_context_mismatch:true if the ' +
+        'chrome_switch_profile(profile, tabId), or pass allow_context_mismatch:true if the ' +
         'other workspace really is the target.',
       { tabId, expected, actual },
     );
@@ -338,11 +338,8 @@ export async function assertExpectedContext(
 /** Byte ceiling for the extra context block, before the bridge adds profile. */
 const CONTEXT_BLOCK_MAX_BYTES = 200;
 
-const CONTEXT_BLOCK_EXCLUDED_TOOLS = new Set<string>([
-  TOOL_NAMES.WORKATO_SESSION.SESSION_CONTEXT,
-  TOOL_NAMES.WORKATO.LIST_PROFILES,
-  TOOL_NAMES.WORKATO.SWITCH_PROFILE,
-]);
+/** workato_* tools whose result is the context already. */
+const CONTEXT_BLOCK_EXCLUDED_TOOLS = new Set<string>([TOOL_NAMES.WORKATO_SESSION.SESSION_CONTEXT]);
 
 function byteLength(text: string): number {
   if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(text).length;

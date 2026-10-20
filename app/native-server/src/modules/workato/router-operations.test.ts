@@ -137,7 +137,7 @@ describe('register-tools dispatch for workato_operation_status', () => {
 
     const operationId = journalledOperation();
     const router = createToolRouter();
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium', tabId: 42 });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium', tabId: 42 });
     sendRequest.mockClear();
 
     const result = await router.handleToolCall('workato_operation_status', {

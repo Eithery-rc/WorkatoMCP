@@ -85,7 +85,7 @@ describe('server tests', () => {
         id: 99,
         method: 'tools/call',
         params: {
-          name: 'workato_list_profiles',
+          name: 'chrome_list_profiles',
           arguments: {},
         },
       })

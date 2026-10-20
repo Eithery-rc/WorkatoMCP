@@ -1,6 +1,6 @@
 /**
  * Developer reload of the unpacked extension, driven by the bridge
- * (workato_reload_extension), so a rebuilt dist/ goes live without anyone
+ * (chrome_reload_extension), so a rebuilt dist/ goes live without anyone
  * clicking reload in chrome://extensions.
  *
  * Every Chrome profile loads the same unpacked dist/, and each runs its own

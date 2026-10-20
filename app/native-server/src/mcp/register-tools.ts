@@ -17,9 +17,14 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import nativeMessagingHostInstance from '../native-messaging-host';
-import { CORE_TOOL_NAMES, NativeMessageType, moduleOffMessage } from '@mokuhub/mokutab-shared';
+import {
+  CORE_TOOL_NAMES,
+  NativeMessageType,
+  aliasOffMessage,
+  moduleOffMessage,
+} from '@mokuhub/mokutab-shared';
 import { INSTALLED_MODULES } from '../modules';
-import { listedToolSchemas } from './catalogue';
+import { listedToolSchemas, withAliasToolSchemas } from './catalogue';
 import type {
   BridgeModule,
   ExtensionRequest,
@@ -29,15 +34,8 @@ import type {
 } from './module-api';
 import { moduleSwitch, type ModuleSwitchView } from './module-switch';
 import { stampContextBlock } from './tool-result';
-import {
-  handleWorkatoBridgeInfoCall,
-  isWorkatoBridgeInfoTool,
-  servedToolSchemas,
-} from './workato-bridge-info';
-import {
-  handleWorkatoReloadExtensionCall,
-  isWorkatoReloadExtensionTool,
-} from './workato-reload-extension';
+import { handleBridgeInfoCall, isBridgeInfoTool, servedToolSchemas } from './bridge-info';
+import { handleReloadExtensionCall, isReloadExtensionTool } from './reload-extension';
 import {
   applyAutoFile,
   combineAutoFileRules,
@@ -47,7 +45,7 @@ import {
   withOutFileToolSchemas,
   type AutoFilePlan,
   type AutoFileRules,
-} from './workato-auto-file';
+} from './auto-file';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { profileRegistry } from '../server/profile-registry';
 import {
@@ -222,11 +220,15 @@ export { listedToolSchemas };
 
 /**
  * The tools/list payload: routing, file and lease params added the same way
- * for core and module tools.
+ * for core and module tools, then the enabled modules' aliases as copies of
+ * the served tools they name.
  */
 export function servedToolList(enabled: readonly BridgeModule[], rules: AutoFileRules): Tool[] {
-  return withLeaseToolSchemas(
-    withOutFileToolSchemas(withProfileRoutingToolSchemas(listedToolSchemas(enabled)), rules),
+  return withAliasToolSchemas(
+    withLeaseToolSchemas(
+      withOutFileToolSchemas(withProfileRoutingToolSchemas(listedToolSchemas(enabled)), rules),
+    ),
+    enabled,
   );
 }
 
@@ -295,7 +297,7 @@ async function sendRequestToExtension(
         `call to pinned profile "${profile}" failed: ${err?.message || String(err)}. ` +
           `Connected profiles: ${JSON.stringify(profileRegistry.getConnectedProfiles())}. ` +
           'The call was NOT re-sent to another profile or to the native-messaging host, because ' +
-          'this session is pinned. Use workato_switch_profile to move the session deliberately.',
+          'this session is pinned. Use chrome_switch_profile to move the session deliberately.',
       );
     }
   }
@@ -316,7 +318,7 @@ async function sendRequestToExtension(
           `${JSON.stringify(profileRegistry.getConnectedProfiles())}. No profile is pinned for ` +
           'this MCP session and the call was NOT re-sent through the native-messaging host, ' +
           'because a Chrome profile is connected. Pin the intended one with ' +
-          'workato_switch_profile(profile, tabId).',
+          'chrome_switch_profile(profile, tabId).',
       );
     }
   }
@@ -333,7 +335,7 @@ async function sendRequestToExtension(
     throw new Error(
       `no Chrome profile is connected to the bridge, so the call was sent through the legacy ` +
         `native-messaging host, which failed: ${err?.message || String(err)}. Open Chrome with ` +
-        'the WorkatoMCP extension, then check workato_list_profiles.',
+        'the MokuTab extension, then check chrome_list_profiles.',
     );
   }
 }
@@ -368,6 +370,13 @@ export function createToolRouter(options: ToolRouterOptions = {}): ToolRouter {
     const owner = installedOwner(name);
     return owner && switches.isEnabled(owner.id) ? owner : undefined;
   };
+  /** Old tool name -> the module keeping it and the tool it now names. */
+  const aliases = new Map<string, { module: BridgeModule; target: string }>();
+  for (const module of installed) {
+    for (const [alias, target] of Object.entries(module.aliases ?? {})) {
+      aliases.set(alias, { module, target });
+    }
+  }
 
   // The served catalogue changes only when a module is switched; bridge_info
   // hashes it, so the same array is reused while the switch stays put.
@@ -376,7 +385,13 @@ export function createToolRouter(options: ToolRouterOptions = {}): ToolRouter {
     const enabled = enabledModules();
     const key = enabled.map((module) => module.id).join(',');
     if (!servedCache || servedCache.key !== key) {
-      servedCache = { key, tools: servedToolSchemas(listedToolSchemas(enabled), autoFileRules) };
+      servedCache = {
+        key,
+        tools: withAliasToolSchemas(
+          servedToolSchemas(listedToolSchemas(enabled), autoFileRules),
+          enabled,
+        ),
+      };
     }
     return servedCache.tools;
   };
@@ -683,12 +698,21 @@ export function createToolRouter(options: ToolRouterOptions = {}): ToolRouter {
   });
 
   const handleToolCall = async (
-    name: string,
+    requested: string,
     args: any,
     signal?: AbortSignal,
   ): Promise<CallToolResult> => {
     try {
-      // 0. A module switched off on this machine refuses its tools, named, so
+      // 0. An alias runs the tool it names, while the module keeping it is on.
+      // Everything below sees the real name, so routing, the pin, strict mode
+      // and auto-file treat the two names alike.
+      const alias = aliases.get(requested);
+      if (alias && !switches.isEnabled(alias.module.id)) {
+        return routeError(aliasOffMessage(alias.module, requested, alias.target));
+      }
+      const name = alias ? alias.target : requested;
+
+      // A module switched off on this machine refuses its tools, named, so
       // a session that still has the old tool list learns why.
       const owner = installedOwner(name);
       if (owner && !switches.isEnabled(owner.id)) {
@@ -719,7 +743,7 @@ export function createToolRouter(options: ToolRouterOptions = {}): ToolRouter {
                     : connected.length > 0
                       ? 'No profile is pinned: calls follow the bridge default profile, which ' +
                         'can change when profiles connect or disconnect. Pin one with ' +
-                        'workato_switch_profile(profile, tabId).'
+                        'chrome_switch_profile(profile, tabId).'
                       : 'No Chrome profile is connected: calls go through the legacy ' +
                         'native-messaging host, which has no profile or tab identity.',
                 },
@@ -793,8 +817,8 @@ export function createToolRouter(options: ToolRouterOptions = {}): ToolRouter {
       }
 
       // Runs across every connected profile, so it bypasses profile routing.
-      if (isWorkatoReloadExtensionTool(name)) {
-        return handleWorkatoReloadExtensionCall(args, {
+      if (isReloadExtensionTool(name)) {
+        return handleReloadExtensionCall(args, {
           connectedProfiles: () => profileRegistry.getConnectedProfiles(),
           connectionSerial: (profile) => profileRegistry.getConnectionSerial(profile),
           defaultProfile: () => profileRegistry.getActiveProfile(),
@@ -922,7 +946,7 @@ export function createToolRouter(options: ToolRouterOptions = {}): ToolRouter {
 
       // Generic out_file / auto-file for every other read tool and for
       // chrome_screenshot: strip the file params here, spill the result on the
-      // way back out. See workato-auto-file.ts.
+      // way back out. See auto-file.ts.
       let autoFilePlan: AutoFilePlan | undefined;
       {
         const preparedAutoFile = prepareAutoFileCall(name, effectiveArgs || {}, autoFileRules);
@@ -937,9 +961,9 @@ export function createToolRouter(options: ToolRouterOptions = {}): ToolRouter {
         if (handled) return handled;
       }
 
-      // `workato_bridge_info` reports this build's own identity, locally.
-      if (isWorkatoBridgeInfoTool(name)) {
-        return handleWorkatoBridgeInfoCall(
+      // `chrome_bridge_info` reports this build's own identity, locally.
+      if (isBridgeInfoTool(name)) {
+        return handleBridgeInfoCall(
           {
             connected_profiles: profileRegistry.getConnectedProfiles(),
             session_context: sessionSummary(),

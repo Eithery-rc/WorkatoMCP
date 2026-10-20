@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, test } from '@jest/globals';
 import { NativeMessageType } from '@mokuhub/mokutab-shared';
 import {
-  handleWorkatoReloadExtensionCall,
+  handleReloadExtensionCall,
   resetReloadExtensionState,
   type ExtensionBuildInfo,
   type ReloadExtensionDeps,
-} from './workato-reload-extension';
+} from './reload-extension';
 
 interface FakeProfile {
   info: ExtensionBuildInfo;
@@ -68,7 +68,7 @@ function parse(result: any): any {
   return JSON.parse(result.content[0].text);
 }
 
-describe('workato_reload_extension', () => {
+describe('chrome_reload_extension', () => {
   beforeEach(() => resetReloadExtensionState());
 
   test('reloads the bridge owner last and reports it as scheduled', async () => {
@@ -78,7 +78,7 @@ describe('workato_reload_extension', () => {
       centium: { info: { built_at: 'A', owns_bridge: false }, nextBuild: 'B' },
     });
 
-    const result = await handleWorkatoReloadExtensionCall({}, deps);
+    const result = await handleReloadExtensionCall({}, deps);
     const body = parse(result);
 
     expect(result.isError).toBe(false);
@@ -104,7 +104,7 @@ describe('workato_reload_extension', () => {
       centium: { info: { built_at: 'A' } },
     });
 
-    await handleWorkatoReloadExtensionCall({}, deps);
+    await handleReloadExtensionCall({}, deps);
 
     const sequence = calls.map((c) => `${c.profile}:${c.type}`);
     const firstAfterInfo = sequence.indexOf(`bluBanyan:${NativeMessageType.DEV_EXTENSION_INFO}`, 2);
@@ -118,7 +118,7 @@ describe('workato_reload_extension', () => {
       bluBanyan: { info: { built_at: 'A' }, reconnectAfterMs: null },
     });
 
-    const result = await handleWorkatoReloadExtensionCall({ timeout_ms: 3000 }, deps);
+    const result = await handleReloadExtensionCall({ timeout_ms: 3000 }, deps);
     const body = parse(result);
 
     expect(result.isError).toBe(true);
@@ -132,13 +132,13 @@ describe('workato_reload_extension', () => {
       bluBanyan: { info: { built_at: 'A' }, nextBuild: 'B' },
     });
 
-    const result = await handleWorkatoReloadExtensionCall({}, deps);
+    const result = await handleReloadExtensionCall({}, deps);
     const body = parse(result);
 
     expect(result.isError).toBe(true);
     const personal = body.profiles.find((p: any) => p.profile === 'personal');
     expect(personal.status).toBe('failed');
-    expect(personal.error).toContain('older than workato_reload_extension');
+    expect(personal.error).toContain('older than chrome_reload_extension');
     expect(body.profiles.find((p: any) => p.profile === 'bluBanyan').status).toBe('reloaded');
   });
 
@@ -148,7 +148,7 @@ describe('workato_reload_extension', () => {
       bluBanyan: { info: { built_at: 'A' } },
     });
 
-    const body = parse(await handleWorkatoReloadExtensionCall({ profile: 'bluBanyan' }, deps));
+    const body = parse(await handleReloadExtensionCall({ profile: 'bluBanyan' }, deps));
 
     expect(body.profiles.map((p: any) => p.profile)).toEqual(['bluBanyan']);
     expect(body.bridge_restarting).toBe(false);
@@ -158,7 +158,7 @@ describe('workato_reload_extension', () => {
   test('an unknown profile is refused before anything reloads', async () => {
     const { deps, calls } = harness({ personal: { info: {} } });
 
-    const result = await handleWorkatoReloadExtensionCall({ profile: 'nope' }, deps);
+    const result = await handleReloadExtensionCall({ profile: 'nope' }, deps);
 
     expect(result.isError).toBe(true);
     expect(parse(result).error).toContain('"nope" is not connected');
@@ -171,7 +171,7 @@ describe('workato_reload_extension', () => {
       bluBanyan: { info: { built_at: 'B', disk_built_at: 'B', stale: false } },
     });
 
-    const body = parse(await handleWorkatoReloadExtensionCall({ check_only: true }, deps));
+    const body = parse(await handleReloadExtensionCall({ check_only: true }, deps));
 
     expect(body.all_current).toBe(false);
     expect(body.profiles.find((p: any) => p.profile === 'personal')).toMatchObject({

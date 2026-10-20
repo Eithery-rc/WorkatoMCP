@@ -16,7 +16,7 @@ export enum NativeMessageType {
   ENSURE_NATIVE = 'ensure_native',
   PING_NATIVE = 'ping_native',
   DISCONNECT_NATIVE = 'disconnect_native',
-  // Bridge -> extension developer requests (workato_reload_extension)
+  // Bridge -> extension developer requests (chrome_reload_extension)
   DEV_EXTENSION_INFO = 'dev_extension_info',
   DEV_RELOAD_EXTENSION = 'dev_reload_extension',
   // Bridge -> extension: tabs for chrome_lease_tab / chrome_release_tab

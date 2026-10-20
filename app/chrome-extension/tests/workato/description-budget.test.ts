@@ -23,7 +23,7 @@ const DESCRIPTION_LIMIT_BYTES = 2048;
 /**
  * Properties the BRIDGE injects into the served schema, copied verbatim from
  * app/native-server/src/mcp/register-tools.ts (PROFILE_ROUTING_PROPERTY) and
- * workato-auto-file.ts (OUT_FILE / AUTO_FILE / AUTO_FILE_THRESHOLD), read
+ * auto-file.ts (OUT_FILE / AUTO_FILE / AUTO_FILE_THRESHOLD), read
  * 2026-09-07. The extension package cannot import the bridge, so they are
  * replicated here: they change the served SCHEMA, and their own descriptions
  * are part of what a client is charged for.
@@ -41,8 +41,8 @@ const BRIDGE_INJECTED_PROPERTY_DESCRIPTIONS = {
 
 /** Tools the bridge does NOT give a `profile` property (PROFILE_MANAGEMENT_TOOLS). */
 const PROFILE_MANAGEMENT_TOOLS = new Set<string>([
-  TOOL_NAMES.WORKATO.LIST_PROFILES,
-  TOOL_NAMES.WORKATO.SWITCH_PROFILE,
+  TOOL_NAMES.BRIDGE.LIST_PROFILES,
+  TOOL_NAMES.BRIDGE.SWITCH_PROFILE,
 ]);
 
 const DASH = /[–—]/;

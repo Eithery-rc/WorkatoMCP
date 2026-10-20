@@ -74,13 +74,13 @@ const sent = () => calls.splice(0).map((call) => call.name);
 
 async function pinnedRouter(tabId = 42) {
   const router = createToolRouter();
-  await router.handleToolCall('workato_switch_profile', { profile: 'centium', tabId });
+  await router.handleToolCall('chrome_switch_profile', { profile: 'centium', tabId });
   calls.length = 0;
   return router;
 }
 
 async function sessionContext(router: ReturnType<typeof createToolRouter>) {
-  const listed = await router.handleToolCall('workato_list_profiles', {});
+  const listed = await router.handleToolCall('chrome_list_profiles', {});
   return JSON.parse(text(listed)).session_context;
 }
 
@@ -113,7 +113,7 @@ describe('the workspace re-check after a profile reconnects', () => {
       'ContextChanged: profile "centium" reconnected and tab 42 is now workspace 9999, ' +
         'environment production, but this session is pinned to workspace 5150, environment ' +
         'production. Nothing was sent. Check workato_session_context, then re-pin with ' +
-        'workato_switch_profile(profile, tabId).',
+        'chrome_switch_profile(profile, tabId).',
     );
     expect(sent()).toEqual(['workato_session_context']);
 
@@ -201,7 +201,7 @@ describe('the workspace re-check after a profile reconnects', () => {
     const pending = router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
     await new Promise((resolve) => setImmediate(resolve));
     // The session moves to another tab while the re-check of tab 42 is out.
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium', tabId: 77 });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium', tabId: 77 });
     releaseProbe(context(42, { workspace_name: 'Stale name', host: 'stale.workato.com' }));
     await pending;
 
@@ -233,7 +233,7 @@ describe('a re-check that a re-pin overtakes', () => {
     holdProbe = true;
     const pending = router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
     await new Promise((resolve) => setImmediate(resolve));
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium', tabId: 77 });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium', tabId: 77 });
     calls.length = 0;
     // The old tab moved to another workspace; that is no longer this session's pin.
     releaseProbe(context(42, { workspace_id: 9999 }));

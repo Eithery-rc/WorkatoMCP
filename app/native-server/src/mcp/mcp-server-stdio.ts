@@ -13,7 +13,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { INSTALLED_MODULES } from '../modules';
 import { moduleSwitch } from './module-switch';
-import { listedToolSchemas } from './catalogue';
+import { listedToolSchemas, withAliasToolSchemas } from './catalogue';
 import { withProfileRoutingToolSchemas } from './register-tools';
 import { buildServerInstructions, SERVER_NAME, serverVersion } from './server-identity';
 import * as fs from 'fs';
@@ -97,9 +97,16 @@ export const ensureMcpClient = async () => {
 
 export const setupTools = (server: Server) => {
   // List tools handler
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: withProfileRoutingToolSchemas(listedToolSchemas(enabledModules())),
-  }));
+  // Calls go to the HTTP bridge, which resolves aliases itself.
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const enabled = enabledModules();
+    return {
+      tools: withAliasToolSchemas(
+        withProfileRoutingToolSchemas(listedToolSchemas(enabled)),
+        enabled,
+      ),
+    };
+  });
 
   // Call tool handler
   server.setRequestHandler(CallToolRequestSchema, async (request) =>

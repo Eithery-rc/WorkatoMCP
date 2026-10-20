@@ -1,5 +1,5 @@
 /**
- * `workato_bridge_info`: which build is answering these calls.
+ * `chrome_bridge_info`: which build is answering these calls.
  *
  * Until now the MCP handshake said "ChromeMcpServer 1.0.0", a name and a
  * version that were never true of any release, so a client had no way to tell
@@ -17,15 +17,16 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
+import { CORE_TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { installedToolSchemas } from './catalogue';
-import { withOutFileToolSchemas, type AutoFileRules } from './workato-auto-file';
+import { withOutFileToolSchemas, type AutoFileRules } from './auto-file';
 
-export const BRIDGE_INFO_TOOL = 'workato_bridge_info';
+export const BRIDGE_INFO_TOOL = CORE_TOOL_NAMES.BRIDGE.BRIDGE_INFO;
 
 /** Reported when a manifest could not be read; never an invented version. */
 export const UNKNOWN_VERSION = 'unknown';
 
-export function isWorkatoBridgeInfoTool(name: string): boolean {
+export function isBridgeInfoTool(name: string): boolean {
   return name === BRIDGE_INFO_TOOL;
 }
 
@@ -60,7 +61,7 @@ export function readPackageVersion(candidates: string[]): VersionRead {
 /**
  * Where the bridge's own package.json sits, in both layouts.
  *
- * Compiled: dist/mcp/workato-bridge-info.js -> ../../package.json.
+ * Compiled: dist/mcp/bridge-info.js -> ../../package.json.
  * Under ts-jest the sources run in place: src/mcp -> ../../package.json.
  * Both resolve to the package root, so one candidate covers both; the second
  * is the belt-and-braces case of a flatter build layout.
@@ -213,10 +214,7 @@ export function resetBridgeInfoCache(): void {
  * @param tools The served catalogue (servedToolSchemas of what the router
  *   lists); defaults to every tool.
  */
-export function handleWorkatoBridgeInfoCall(
-  context: BridgeInfoContext,
-  tools?: Tool[],
-): CallToolResult {
+export function handleBridgeInfoCall(context: BridgeInfoContext, tools?: Tool[]): CallToolResult {
   const parts = staticParts();
   const info = buildBridgeInfo(context, {
     tools: tools ?? parts.tools,

@@ -127,7 +127,7 @@ export async function findWorkatoTab(
           err instanceof Error ? err.message : String(err)
         }. Tab ids are per Chrome PROFILE: a tab that exists in another profile ` +
           `reports exactly this. If the tab is open in front of you, pass the profile it ` +
-          `belongs to (profile:"<name>") — workato_list_profiles shows what is connected.`,
+          `belongs to (profile:"<name>") — chrome_list_profiles shows what is connected.`,
         { tabId },
       );
     }
@@ -180,7 +180,7 @@ export async function findWorkatoTab(
       'No Workato tab open in this Chrome profile. Open https://app.workato.com (or your ' +
         'region) and sign in before calling this tool. If Workato IS open, it is probably ' +
         'in a different profile than the one this call routed to — check ' +
-        'workato_list_profiles and pass profile:"<name>".',
+        'chrome_list_profiles and pass profile:"<name>".',
     );
   }
 

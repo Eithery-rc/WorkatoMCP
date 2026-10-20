@@ -106,7 +106,9 @@ describe('server instructions', () => {
   /**
    * Every tool the instructions named before the module split (the routing
    * table of 1.13). Rewording the snippets must never drop a route: a tool
-   * that leaves this list leaves it on purpose, here.
+   * that leaves this list leaves it on purpose, here. workato_bridge_info
+   * became chrome_bridge_info in 2.0 (the old name is a Workato alias, which
+   * the instructions do not advertise).
    */
   const ROUTES_BEFORE_THE_SPLIT = [
     'workato_apps_list',
@@ -124,7 +126,7 @@ describe('server instructions', () => {
     'workato_operation_status',
     'workato_test_recipe',
     'workato_session_context',
-    'workato_bridge_info',
+    'chrome_bridge_info',
     'workato_switch_environment',
     'workato_deploy_plan',
     'workato_deploy_run',
@@ -140,12 +142,11 @@ describe('server instructions', () => {
 
   test('with a module off, its routes are gone and every core route stays', () => {
     const allOff = instructionsFor(new Set());
-    for (const name of ['workato_bridge_info', 'chrome_lease_tab', 'chrome_watch_start']) {
+    for (const name of ['chrome_bridge_info', 'chrome_lease_tab', 'chrome_watch_start']) {
       expect(allOff).toContain(name);
     }
-    expect(toolNamesIn(allOff).filter((name) => name.startsWith('workato_'))).toEqual([
-      'workato_bridge_info',
-    ]);
+    // The core snippet names no workato_* tool since the profile/bridge tools are chrome_*.
+    expect(toolNamesIn(allOff).filter((name) => name.startsWith('workato_'))).toEqual([]);
   });
 
   test('the core snippet names core tools only', () => {

@@ -173,7 +173,7 @@ export function createWorkatoSessionHooks(owns: (name: string) => boolean): Modu
             `, but this session is pinned to workspace ${pin.workspace_id ?? '?'}` +
             (pin.environment ? `, environment ${pin.environment}` : '') +
             '. Nothing was sent. Check workato_session_context, then re-pin with ' +
-            'workato_switch_profile(profile, tabId).',
+            'chrome_switch_profile(profile, tabId).',
         };
       }
       const next: WorkatoPin = { ...pin };

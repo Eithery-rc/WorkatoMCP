@@ -11,8 +11,8 @@ import {
   CORE_AUTO_FILE_RULES,
   DEFAULT_AUTO_FILE_THRESHOLD_CHARS,
   parseResultPayload,
-} from '../../mcp/workato-auto-file';
-import * as autoFile from '../../mcp/workato-auto-file';
+} from '../../mcp/auto-file';
+import * as autoFile from '../../mcp/auto-file';
 import { workatoModule } from '.';
 
 /**

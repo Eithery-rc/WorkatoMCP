@@ -114,7 +114,7 @@ describe('tab leases', () => {
   test('the session pin is not injected into a call routed to another profile', async () => {
     const sendRequest = mockExtension();
     const router = createToolRouter();
-    await router.handleToolCall('workato_switch_profile', { profile: 'personal', tabId: 5 });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'personal', tabId: 5 });
 
     await router.handleToolCall('workato_recipe_status', { recipe_id: 1, profile: 'centium' });
     await router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
@@ -180,7 +180,7 @@ describe('tab leases', () => {
   test('a session pin does not satisfy strict mode while leases are held', async () => {
     const sendRequest = mockExtension();
     const router = createToolRouter();
-    await router.handleToolCall('workato_switch_profile', { profile: 'personal', tabId: 5 });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'personal', tabId: 5 });
     parse(await router.handleToolCall('chrome_lease_tab', { profile: 'personal' }));
 
     const refused = await router.handleToolCall('workato_recipe_status', { recipe_id: 1 });
@@ -251,7 +251,7 @@ describe('tab leases', () => {
     // The handler keeps running after the cancelled reply; let it finish.
     await new Promise((resolve) => setTimeout(resolve, 10));
     // No lease, so no strict mode: a tabless call goes through.
-    const listed = parse(await router.handleToolCall('workato_list_profiles', {}));
+    const listed = parse(await router.handleToolCall('chrome_list_profiles', {}));
     expect(listed.leases).toEqual([]);
     expect(
       sendRequest.mock.calls.some((c: any[]) => c[2] === NativeMessageType.AGENT_TAB_CLOSE),

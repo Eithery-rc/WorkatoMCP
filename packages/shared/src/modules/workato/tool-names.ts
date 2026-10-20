@@ -2,7 +2,8 @@
  * Workato module tool names.
  *
  * The families keep the keys they had in TOOL_NAMES. The four profile/bridge
- * tools that still carry the workato_ prefix are core (CORE_TOOL_NAMES.BRIDGE).
+ * tools are core (CORE_TOOL_NAMES.BRIDGE, chrome_* since 2.0); their 1.x
+ * workato_* names are this module's aliases (./aliases.ts).
  */
 export const WORKATO_TOOL_NAMES = {
   WORKATO: {

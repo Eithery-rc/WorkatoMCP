@@ -12,13 +12,13 @@ import {
   buildBridgeInfo,
   bridgePackageCandidates,
   computeSchemaRevision,
-  handleWorkatoBridgeInfoCall,
-  isWorkatoBridgeInfoTool,
+  handleBridgeInfoCall,
+  isBridgeInfoTool,
   readPackageVersion,
   resetBridgeInfoCache,
   servedToolSchemas,
   sharedPackageCandidates,
-} from './workato-bridge-info';
+} from './bridge-info';
 
 const CONTEXT = {
   connected_profiles: ['personal'],
@@ -33,14 +33,14 @@ function tmpFile(name: string, contents: string): string {
   return file;
 }
 
-describe('workato_bridge_info tool identity', () => {
+describe('chrome_bridge_info tool identity', () => {
   test('the schema is registered exactly once under the name the router matches', () => {
-    expect(TOOL_NAMES.WORKATO.BRIDGE_INFO).toBe(BRIDGE_INFO_TOOL);
+    expect(TOOL_NAMES.BRIDGE.BRIDGE_INFO).toBe(BRIDGE_INFO_TOOL);
     const matches = TOOL_SCHEMAS.filter((tool) => tool.name === BRIDGE_INFO_TOOL);
     expect(matches).toHaveLength(1);
     expect(matches[0].inputSchema.required ?? []).toEqual([]);
-    expect(isWorkatoBridgeInfoTool(BRIDGE_INFO_TOOL)).toBe(true);
-    expect(isWorkatoBridgeInfoTool('workato_pull_recipe')).toBe(false);
+    expect(isBridgeInfoTool(BRIDGE_INFO_TOOL)).toBe(true);
+    expect(isBridgeInfoTool('workato_pull_recipe')).toBe(false);
   });
 });
 
@@ -154,11 +154,11 @@ describe('buildBridgeInfo', () => {
   });
 });
 
-describe('handleWorkatoBridgeInfoCall', () => {
+describe('handleBridgeInfoCall', () => {
   beforeEach(() => resetBridgeInfoCache());
 
   test('answers with parseable JSON and never an error', () => {
-    const result = handleWorkatoBridgeInfoCall(CONTEXT);
+    const result = handleBridgeInfoCall(CONTEXT);
     expect(result.isError).toBe(false);
     const block = result.content[0] as { type: string; text: string };
     expect(block.type).toBe('text');
@@ -170,14 +170,14 @@ describe('handleWorkatoBridgeInfoCall', () => {
   });
 
   test('two calls in one process report the same revision', () => {
-    const first = JSON.parse((handleWorkatoBridgeInfoCall(CONTEXT).content[0] as any).text);
-    const second = JSON.parse((handleWorkatoBridgeInfoCall(CONTEXT).content[0] as any).text);
+    const first = JSON.parse((handleBridgeInfoCall(CONTEXT).content[0] as any).text);
+    const second = JSON.parse((handleBridgeInfoCall(CONTEXT).content[0] as any).text);
     expect(second.schema_revision).toBe(first.schema_revision);
     expect(second.bridge_version).toBe(first.bridge_version);
   });
 });
 
-describe('the router answers workato_bridge_info without a browser', () => {
+describe('the router answers chrome_bridge_info without a browser', () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });

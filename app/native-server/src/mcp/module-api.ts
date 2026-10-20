@@ -8,9 +8,11 @@
  *
  * The router keeps the parts every tool shares: profile routing, the session
  * pin of profile + tab, leases, strict mode, auto-file, the context-block
- * stamp. A module plugs into four places:
+ * stamp. A module plugs into five places:
  *
  *   tools / instructions  listed and announced only while the module is on
+ *   aliases               old tool names kept working, routed to the tool
+ *                         each now names (listed only while the module is on)
  *   prepare               file params in before the extension call, the
  *                         write-out after it (recipe out_file, LCAP content_path)
  *   handle                tools answered in the bridge (pure helpers and
@@ -20,11 +22,11 @@
  */
 
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { AutoFileRules } from './workato-auto-file';
+import type { AutoFileRules } from './auto-file';
 
 export type JsonObject = Record<string, any>;
 
-/** The pinned session as the router reports it (workato_list_profiles' session_context). */
+/** The pinned session as the router reports it (chrome_list_profiles' session_context). */
 export type SessionSummary = JsonObject;
 
 /** Raw extension request, as the router routes it: no pin, no file params. */
@@ -66,7 +68,7 @@ export interface PreparedModuleCall {
 /** Pin fields read off a tab, or why they could not be. */
 export interface ModulePinProbe {
   pin?: JsonObject;
-  /** Text appended to the workato_switch_profile reply when the probe failed. */
+  /** Text appended to the chrome_switch_profile reply when the probe failed. */
   note?: string;
 }
 
@@ -86,7 +88,7 @@ export interface ModuleSessionHooks {
   probe(profile: string, tabId: number, request: ExtensionRequest): Promise<ModulePinProbe>;
   /** Fields this module adds to the session summary (a fixed key set, null when unknown). */
   summary(pin: JsonObject | undefined): JsonObject;
-  /** Suffix for the workato_switch_profile reply, e.g. `, workspace 12 "Acme"`. */
+  /** Suffix for the chrome_switch_profile reply, e.g. `, workspace 12 "Acme"`. */
   describe(pin: JsonObject | undefined): string;
   /** How the switch reply names the pinned tab (default "tab ID"). */
   tabLabel?: string;
@@ -116,6 +118,12 @@ export interface BridgeModule {
   tools: Tool[];
   /** Server-instructions snippet, appended while the module is on. */
   instructions: string;
+  /**
+   * Old name -> the tool it now names (Workato: the 1.x workato_* names of the
+   * profile/bridge tools). Not owned: the router lists each with its target's
+   * served schema and runs the target, while the module is on.
+   */
+  aliases?: Readonly<Record<string, string>>;
   owns(name: string): boolean;
   /** Read tools that spill to a file, and the tools that accept out_file. */
   autoFile?: AutoFileRules;

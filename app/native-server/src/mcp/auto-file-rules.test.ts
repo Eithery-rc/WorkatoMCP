@@ -6,7 +6,7 @@ import {
   prepareAutoFileCall,
   withOutFileToolSchemas,
   type AutoFileRules,
-} from './workato-auto-file';
+} from './auto-file';
 
 /**
  * Core auto-file knows only core tools; a module brings its own read tools
@@ -17,7 +17,7 @@ describe('core auto-file rules', () => {
     expect(isAutoFileEligible('chrome_snapshot')).toBe(true);
     expect(isAutoFileEligible('chrome_screenshot')).toBe(true);
     expect(isAutoFileEligible('workato_job_trace')).toBe(false);
-    expect(isAutoFileEligible('workato_bridge_info')).toBe(false);
+    expect(isAutoFileEligible('chrome_bridge_info')).toBe(false);
   });
 
   test('a module tool keeps its args untouched under core rules alone', () => {

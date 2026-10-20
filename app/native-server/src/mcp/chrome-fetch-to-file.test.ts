@@ -14,7 +14,7 @@ import {
   prepareFetchToFileCall,
   printableMagic,
 } from './chrome-fetch-to-file';
-import { isAutoFileEligible } from './workato-auto-file';
+import { isAutoFileEligible } from './auto-file';
 
 const PDF_BYTES = Buffer.from('%PDF-1.7\n\x00\x01\x02binary tail', 'latin1');
 
@@ -186,7 +186,7 @@ describe('router wiring', () => {
 
   async function pinnedRouter() {
     const router = createToolRouter();
-    await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'centium' });
     return router;
   }
 

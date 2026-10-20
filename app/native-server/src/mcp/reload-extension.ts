@@ -1,5 +1,5 @@
 /**
- * `workato_reload_extension`: put a freshly built extension (and bridge) live
+ * `chrome_reload_extension`: put a freshly built extension (and bridge) live
  * without a click in chrome://extensions.
  *
  * Every connected Chrome profile loads the same unpacked dist/ and runs its
@@ -18,11 +18,11 @@
  */
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { NativeMessageType } from '@mokuhub/mokutab-shared';
+import { CORE_TOOL_NAMES, NativeMessageType } from '@mokuhub/mokutab-shared';
 
-export const RELOAD_EXTENSION_TOOL = 'workato_reload_extension';
+export const RELOAD_EXTENSION_TOOL = CORE_TOOL_NAMES.BRIDGE.RELOAD_EXTENSION;
 
-export function isWorkatoReloadExtensionTool(name: string): boolean {
+export function isReloadExtensionTool(name: string): boolean {
   return name === RELOAD_EXTENSION_TOOL;
 }
 
@@ -214,7 +214,7 @@ export function resetReloadExtensionState(): void {
   reloadInFlight = false;
 }
 
-export async function handleWorkatoReloadExtensionCall(
+export async function handleReloadExtensionCall(
   args: any,
   deps: ReloadExtensionDeps,
 ): Promise<CallToolResult> {

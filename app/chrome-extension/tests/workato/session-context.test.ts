@@ -334,7 +334,7 @@ describe('maybeAppendContextBlock', () => {
     expect(
       (await maybeAppendContextBlock('workato_session_context', {}, ok())).content,
     ).toHaveLength(1);
-    expect((await maybeAppendContextBlock('workato_list_profiles', {}, ok())).content).toHaveLength(
+    expect((await maybeAppendContextBlock('chrome_list_profiles', {}, ok())).content).toHaveLength(
       1,
     );
     const failure = { content: [{ type: 'text' as const, text: 'boom' }], isError: true };

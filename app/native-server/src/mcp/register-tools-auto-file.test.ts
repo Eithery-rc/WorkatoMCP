@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { TOOL_SCHEMAS } from '@mokuhub/mokutab-shared';
+import { TOOL_SCHEMAS, WORKATO_TOOL_ALIASES } from '@mokuhub/mokutab-shared';
 import { createToolRouter } from './register-tools';
 import { profileRegistry } from '../server/profile-registry';
 import nativeMessagingHostInstance from '../native-messaging-host';
@@ -25,7 +25,7 @@ function stubResponse(data: unknown) {
 /** Pin a profile so every call takes the WebSocket path, as the router tests do. */
 async function pinnedRouter() {
   const router = createToolRouter();
-  await router.handleToolCall('workato_switch_profile', { profile: 'centium' });
+  await router.handleToolCall('chrome_switch_profile', { profile: 'centium' });
   return router;
 }
 
@@ -123,7 +123,7 @@ describe('register-tools image and auto-file wiring', () => {
     expect(JSON.parse(result.content[0].text)).toEqual(payload);
   });
 
-  test('lists exactly the shared schemas without asking the extension', async () => {
+  test('lists exactly the shared schemas and the aliases without asking the extension', async () => {
     const viaProfile = jest.spyOn(profileRegistry, 'sendRequest');
     const viaNative = jest.spyOn(nativeMessagingHostInstance, 'sendRequestToExtensionAndWait');
     const router = createToolRouter();
@@ -132,8 +132,12 @@ describe('register-tools image and auto-file wiring', () => {
 
     expect(viaProfile).not.toHaveBeenCalled();
     expect(viaNative).not.toHaveBeenCalled();
-    expect(tools).toHaveLength(TOOL_SCHEMAS.length);
-    expect(tools.map((tool) => tool.name)).toEqual(TOOL_SCHEMAS.map((tool) => tool.name));
+    const aliases = Object.keys(WORKATO_TOOL_ALIASES);
+    expect(tools).toHaveLength(TOOL_SCHEMAS.length + aliases.length);
+    expect(tools.map((tool) => tool.name)).toEqual([
+      ...TOOL_SCHEMAS.map((tool) => tool.name),
+      ...aliases,
+    ]);
   });
 
   test('serves out_file and auto_file on read tools, not on write tools', async () => {

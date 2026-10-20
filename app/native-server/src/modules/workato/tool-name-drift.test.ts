@@ -52,7 +52,7 @@ const PROVIDER_LITERALS = new Set([
 ]);
 
 const MODULE_TOOLS = new Set(WORKATO_MODULE.tools.map((tool) => tool.name));
-/** Core tools a module message may still name (workato_switch_profile and friends). */
+/** Core tools a module message may still name (chrome_switch_profile and friends). */
 const CORE_BRIDGE_TOOLS = new Set<string>(Object.values(CORE_TOOL_NAMES.BRIDGE));
 
 const NAME_SETS: Record<string, string[]> = {
@@ -95,6 +95,18 @@ describe('workato module tool name sets are tools the module serves', () => {
     for (const name of MODULE_TOOLS) expect(workatoModule.owns(name)).toBe(true);
     for (const name of CORE_BRIDGE_TOOLS) expect(workatoModule.owns(name)).toBe(false);
     expect(workatoModule.owns('chrome_snapshot')).toBe(false);
+  });
+
+  test('the aliases are the shared table, name core tools, and are not owned', () => {
+    expect(workatoModule.aliases).toBe(WORKATO_MODULE.aliases);
+    const aliases = Object.entries(workatoModule.aliases ?? {});
+    expect(aliases).toHaveLength(4);
+    for (const [alias, target] of aliases) {
+      expect(CORE_BRIDGE_TOOLS.has(target)).toBe(true);
+      // Owned would mean the module's pin, file params and refusal apply to it.
+      expect(workatoModule.owns(alias)).toBe(false);
+      expect(MODULE_TOOLS.has(alias)).toBe(false);
+    }
   });
 });
 

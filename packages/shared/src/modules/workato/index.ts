@@ -1,10 +1,12 @@
 import type { ToolModule } from '../../module';
+import { WORKATO_TOOL_ALIASES } from './aliases';
 import { WORKATO_INSTRUCTIONS } from './instructions';
 import { WORKATO_TOOL_SCHEMAS } from './schemas';
 
 export { WORKATO_TOOL_NAMES } from './tool-names';
 export { WORKATO_TOOL_SCHEMAS } from './schemas';
 export { WORKATO_INSTRUCTIONS } from './instructions';
+export { WORKATO_TOOL_ALIASES } from './aliases';
 
 /**
  * The id and title on their own, for code that needs no schemas (the
@@ -19,4 +21,5 @@ export const WORKATO_MODULE: ToolModule = {
   title: WORKATO_MODULE_TITLE,
   tools: WORKATO_TOOL_SCHEMAS,
   instructions: WORKATO_INSTRUCTIONS,
+  aliases: WORKATO_TOOL_ALIASES,
 };

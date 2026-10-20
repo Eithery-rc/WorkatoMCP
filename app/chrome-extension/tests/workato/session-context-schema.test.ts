@@ -57,14 +57,14 @@ describe('file round-trip overrides', () => {
 
 describe('profile routing descriptions', () => {
   it('switch_profile explains the pinned workspace and the no-fallback rule', () => {
-    const description = schema(TOOL_NAMES.WORKATO.SWITCH_PROFILE)?.description ?? '';
+    const description = schema(TOOL_NAMES.BRIDGE.SWITCH_PROFILE)?.description ?? '';
     expect(description).toMatch(/workspace/);
     expect(description).toMatch(/never|not/i);
     expect(new TextEncoder().encode(description).length).toBeLessThanOrEqual(1500);
   });
 
   it('list_profiles advertises session_context', () => {
-    const description = schema(TOOL_NAMES.WORKATO.LIST_PROFILES)?.description ?? '';
+    const description = schema(TOOL_NAMES.BRIDGE.LIST_PROFILES)?.description ?? '';
     expect(description).toMatch(/session_context/);
   });
 });

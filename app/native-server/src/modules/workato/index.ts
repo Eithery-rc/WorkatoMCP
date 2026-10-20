@@ -116,6 +116,8 @@ export const workatoModule: BridgeModule = {
   title: WORKATO_MODULE.title,
   tools: WORKATO_MODULE.tools,
   instructions: WORKATO_MODULE.instructions,
+  // The 1.x workato_* names of the core profile/bridge tools, until 3.0.
+  aliases: WORKATO_MODULE.aliases,
   owns: (name) => OWNED.has(name),
 
   autoFile: {

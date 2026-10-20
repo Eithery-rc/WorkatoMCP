@@ -95,7 +95,7 @@ describe('workato_switch_environment routing', () => {
         return { status: 'success', data: { content: [{ type: 'text', text: 'ok' }] } } as any;
       });
     const router = createToolRouter();
-    await router.handleToolCall('workato_switch_profile', { profile: 'personal', tabId: 42 });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'personal', tabId: 42 });
 
     sendRequest.mockClear();
     await router.handleToolCall('workato_switch_environment', { environment: 'prod' });
@@ -111,7 +111,7 @@ describe('workato_switch_environment routing', () => {
       environment: 'Production',
     });
 
-    const listed = await router.handleToolCall('workato_list_profiles', {});
+    const listed = await router.handleToolCall('chrome_list_profiles', {});
     expect(JSON.parse((listed.content?.[0] as any).text).session_context).toMatchObject({
       environment: 'Production',
       workspace_id: 8070978,
@@ -128,14 +128,14 @@ describe('workato_switch_environment routing', () => {
       return switchReply('Production', 8070980) as any;
     });
     const router = createToolRouter();
-    await router.handleToolCall('workato_switch_profile', { profile: 'personal', tabId: 42 });
+    await router.handleToolCall('chrome_switch_profile', { profile: 'personal', tabId: 42 });
 
     await router.handleToolCall('workato_switch_environment', {
       environment: 'prod',
       profile: 'bluBanyan',
     });
 
-    const listed = await router.handleToolCall('workato_list_profiles', {});
+    const listed = await router.handleToolCall('chrome_list_profiles', {});
     expect(JSON.parse((listed.content?.[0] as any).text).session_context).toMatchObject({
       environment: 'Development',
     });
