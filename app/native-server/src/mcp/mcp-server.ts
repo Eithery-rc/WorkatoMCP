@@ -68,7 +68,10 @@ export function liveMcpServerCount(): number {
 /**
  * Tell every open session its tool list changed. Best effort: a session that
  * is mid-shutdown, or whose transport refuses the send, is skipped. Resolves
- * to how many sessions the notification was actually sent to.
+ * to how many sends the transports accepted. That is not a count of clients
+ * that heard it: a streamable HTTP session with no standalone SSE stream
+ * open accepts the send and drops it, and a client may ignore it. Such a
+ * client sees the change on its next tools/list or in its next session.
  */
 export async function notifyToolListChanged(): Promise<number> {
   const sends = [...liveServers].map((server) => server.sendToolListChanged());
