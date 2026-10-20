@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 const journalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wops-status-'));
-process.env.WORKATOMCP_OPERATIONS_DIR = journalDir;
+process.env.MOKUTAB_OPERATIONS_DIR = journalDir;
 // A real recipe file: save_with_dependents checks code_path before it stops anything.
 const codeFile = path.join(journalDir, 'r.json');
 fs.writeFileSync(codeFile, JSON.stringify({ recipe_id: 999, code: { block: [] } }));

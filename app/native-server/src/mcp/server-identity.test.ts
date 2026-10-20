@@ -43,7 +43,7 @@ const instructionsFor = (on: Set<string>) =>
 
 describe('server identity', () => {
   test('the handshake names the product, not the upstream project', () => {
-    expect(SERVER_NAME).toBe('WorkatoMCP');
+    expect(SERVER_NAME).toBe('MokuTab');
   });
 
   test('the version is the real bridge version, never the old hardcoded 1.0.0', () => {
@@ -78,7 +78,7 @@ describe('server instructions', () => {
       expect(allOff).toContain(module.title);
     }
     expect(allOn).not.toMatch(/Switched off/);
-    expect(allOff).toMatch(/Switched off on this machine: .*extension popup/);
+    expect(allOff).toMatch(/Switched off on this machine: .*MokuTab popup/);
   });
 
   test('every tool they name is served in that combination', () => {

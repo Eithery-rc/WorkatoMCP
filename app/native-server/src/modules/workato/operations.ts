@@ -36,8 +36,11 @@ import * as path from 'path';
 import { createHash, randomUUID } from 'crypto';
 
 import { updateStateDir } from '../../update-checker';
+import { readEnv } from '../../env';
 
 type JsonObject = Record<string, unknown>;
+
+export const OPERATIONS_DIR_ENV = 'MOKUTAB_OPERATIONS_DIR';
 
 export const OPERATION_RETENTION_FILES = 200;
 export const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -134,10 +137,10 @@ let prunedThisProcess = false;
  */
 export function operationsDir(): string {
   if (cachedDir) return cachedDir;
-  const override = process.env.WORKATOMCP_OPERATIONS_DIR;
+  const override = readEnv(OPERATIONS_DIR_ENV);
   const candidates = override
     ? [override]
-    : [path.join(updateStateDir(), 'operations'), path.join(os.tmpdir(), 'workatomcp-operations')];
+    : [path.join(updateStateDir(), 'operations'), path.join(os.tmpdir(), 'mokutab-operations')];
   let lastError: unknown;
   for (const dir of candidates) {
     try {

@@ -20,6 +20,6 @@ export interface ToolModule {
 export function moduleOffMessage(module: Pick<ToolModule, 'id' | 'title'>, tool: string): string {
   return (
     `Error: ${tool} belongs to the ${module.title} module, which is switched off on this ` +
-    `machine. Nothing was sent. Turn it on in the extension popup (Modules).`
+    `machine. Nothing was sent. Turn it on in the MokuTab popup (Modules).`
   );
 }

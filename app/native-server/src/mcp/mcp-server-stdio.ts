@@ -144,6 +144,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error('Fatal error Chrome MCP Server main():', error);
+  console.error('Fatal error in the MokuTab stdio server:', error);
   process.exit(1);
 });

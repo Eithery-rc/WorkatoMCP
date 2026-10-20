@@ -40,7 +40,7 @@ describe('FnRegistry', () => {
     expect(saved.previous_version).toBeNull();
     expect(saved.file).toBe(path.join(dir, 'acme', 'case.read.yaml'));
     const text = fs.readFileSync(saved.file, 'utf8');
-    expect(text).toMatch(/^# WorkatoMCP browser function/);
+    expect(text).toMatch(/^# MokuTab browser function/);
     // Multi-line code is a literal block, readable in a diff.
     expect(text).toContain('code: |-\n');
     const log = await execGit(['log', '--format=%s%n%b', '-1'], dir);

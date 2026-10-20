@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 const journalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wops-journal-'));
-process.env.WORKATOMCP_OPERATIONS_DIR = journalDir;
+process.env.MOKUTAB_OPERATIONS_DIR = journalDir;
 
 import {
   beginPhase,

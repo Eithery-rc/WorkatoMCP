@@ -13,16 +13,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createHmac, randomBytes } from 'crypto';
 import { updateStateDir } from '../update-checker';
+import { readEnv } from '../env';
 
-export const FN_STATE_DIR_ENV = 'WORKATOMCP_FN_STATE_DIR';
+export const FN_STATE_DIR_ENV = 'MOKUTAB_FN_STATE_DIR';
 const STATE_FILE = 'fn-state.json';
 const KEY_FILE = 'fn-hash.key';
 
 export function defaultRunsDir(): string {
-  const override = process.env[FN_STATE_DIR_ENV];
-  return override && override.trim()
-    ? path.resolve(override.trim())
-    : path.join(updateStateDir(), 'fn-runs');
+  const override = readEnv(FN_STATE_DIR_ENV);
+  return override ? path.resolve(override.trim()) : path.join(updateStateDir(), 'fn-runs');
 }
 
 /**

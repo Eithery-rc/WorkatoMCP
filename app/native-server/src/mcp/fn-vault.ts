@@ -19,6 +19,7 @@
  */
 
 import { execFile } from 'child_process';
+import { readEnv } from '../env';
 
 export type VaultField = 'username' | 'password' | 'totp';
 export const VAULT_FIELDS: readonly VaultField[] = ['username', 'password', 'totp'];
@@ -37,7 +38,7 @@ export interface FnVault {
 /** A vault problem the caller can act on (locked, missing item); never carries a secret. */
 export class VaultError extends Error {}
 
-export const BW_PATH_ENV = 'WORKATOMCP_BW_PATH';
+export const BW_PATH_ENV = 'MOKUTAB_BW_PATH';
 
 type Exec = (
   file: string,
@@ -93,7 +94,7 @@ async function sessionKeys(exec: Exec): Promise<string[]> {
 }
 
 export function bitwardenVault(exec: Exec = execBw): FnVault {
-  const bw = process.env[BW_PATH_ENV]?.trim() || 'bw';
+  const bw = readEnv(BW_PATH_ENV)?.trim() || 'bw';
   const run = async (args: string[]): Promise<string> => {
     const keys = await sessionKeys(exec);
     for (let i = 0; ; i++) {

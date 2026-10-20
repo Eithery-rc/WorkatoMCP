@@ -39,12 +39,12 @@ describe('update flag persistence', () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workatomcp-update-test-'));
-    process.env.WORKATOMCP_UPDATE_STATE_DIR = tempDir;
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mokutab-update-test-'));
+    process.env.MOKUTAB_UPDATE_STATE_DIR = tempDir;
   });
 
   afterEach(() => {
-    delete process.env.WORKATOMCP_UPDATE_STATE_DIR;
+    delete process.env.MOKUTAB_UPDATE_STATE_DIR;
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 

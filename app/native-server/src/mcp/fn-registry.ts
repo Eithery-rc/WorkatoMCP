@@ -2,7 +2,7 @@
  * Browser functions: the registry on disk.
  *
  * One YAML file per function in a private git repository (default
- * ~/.workatomcp/functions, override WORKATOMCP_FN_DIR): `centium.case.read`
+ * ~/.workatomcp/functions, override MOKUTAB_FN_DIR): `centium.case.read`
  * lives in `centium/case.read.yaml`, helper `_helpers.netsuite` in
  * `_helpers/netsuite.yaml`. Every save is a commit whose subject carries the
  * version, so git is the version history: diffs, blame and rollback come from
@@ -28,8 +28,9 @@ import {
   type HelperDefinition,
 } from './fn-definition';
 import { dataDir } from '../data-dir';
+import { readEnv } from '../env';
 
-export const FN_DIR_ENV = 'WORKATOMCP_FN_DIR';
+export const FN_DIR_ENV = 'MOKUTAB_FN_DIR';
 const LOCK_FILE = '.fn-save.lock';
 const LOCK_STALE_MS = 60_000;
 const LOCK_WAIT_MS = 10_000;
@@ -37,10 +38,8 @@ const GIT_USER = 'workatomcp';
 const GIT_IDENTITY = ['-c', `user.name=${GIT_USER}`, '-c', 'user.email=workatomcp@localhost'];
 
 export function defaultRegistryDir(): string {
-  const override = process.env[FN_DIR_ENV];
-  return override && override.trim()
-    ? path.resolve(override.trim())
-    : path.join(dataDir(), 'functions');
+  const override = readEnv(FN_DIR_ENV);
+  return override ? path.resolve(override.trim()) : path.join(dataDir(), 'functions');
 }
 
 export type GitRunner = (args: string[], cwd: string) => Promise<string>;
@@ -54,7 +53,7 @@ const SAFE_GIT = [
   '-c',
   'core.fsmonitor=false',
   '-c',
-  `core.hooksPath=${path.join(os.tmpdir(), `workatomcp-no-hooks-${process.pid}`)}`,
+  `core.hooksPath=${path.join(os.tmpdir(), `mokutab-no-hooks-${process.pid}`)}`,
 ];
 
 export const execGit: GitRunner = (args, cwd) =>
@@ -111,7 +110,7 @@ export interface SaveResult {
 }
 
 const HEADER =
-  '# WorkatoMCP browser function. Saved by chrome_fn_save; each save is a git commit.\n' +
+  '# MokuTab browser function. Saved by chrome_fn_save; each save is a git commit.\n' +
   '# Editing by hand is fine: bump `version`, then commit, or the next save refuses.\n';
 
 const KEY_ORDER = [
@@ -238,7 +237,7 @@ export class FnRegistry {
     fs.writeFileSync(path.join(this.dir, '.gitignore'), `${LOCK_FILE}\n`);
     fs.writeFileSync(
       path.join(this.dir, 'README.md'),
-      '# Browser functions\n\nWorkatoMCP `chrome_fn_*` registry: one YAML file per function, ' +
+      '# Browser functions\n\nMokuTab `chrome_fn_*` registry: one YAML file per function, ' +
         'helpers under `_helpers/`. Every save through chrome_fn_save is a commit; the subject ' +
         'is `<name> v<version>: <changelog>`.\n',
     );

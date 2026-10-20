@@ -19,6 +19,9 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { readEnv } from './env';
+
+export const UPDATE_STATE_DIR_ENV = 'MOKUTAB_UPDATE_STATE_DIR';
 
 const LOG_PREFIX = '[UpdateChecker]';
 const PACKAGE_NAME = '@mokuhub/mokutab-bridge';
@@ -51,11 +54,14 @@ export function markMcpActivity(): void {
 
 /**
  * State dir shared with apply-update.cjs (keep both implementations in sync).
- * Mirrors the wrapper scripts' log-dir bases so everything lives in one place.
- * WORKATOMCP_UPDATE_STATE_DIR overrides for tests.
+ * It keeps its 1.x name (mcp-chrome-bridge) on purpose: the update flag, the
+ * default profile, watches, the fn-runs log and the operations journal live
+ * here and stay where an upgrade in place finds them. The wrapper logs moved
+ * to their own mokutab-bridge dir (scripts/utils.ts getLogDir).
+ * MOKUTAB_UPDATE_STATE_DIR (or WORKATOMCP_UPDATE_STATE_DIR) overrides for tests.
  */
 export function updateStateDir(): string {
-  const override = process.env.WORKATOMCP_UPDATE_STATE_DIR;
+  const override = readEnv(UPDATE_STATE_DIR_ENV);
   if (override) return override;
   if (process.platform === 'win32') {
     const base = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');

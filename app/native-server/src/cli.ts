@@ -17,7 +17,7 @@ import { runWatchWait } from './scripts/watch-wait';
 
 program
   .version(require('../package.json').version)
-  .description('Mcp Chrome Bridge - Local service for communicating with Chrome extension');
+  .description('MokuTab bridge: the local service the Chrome extension talks to');
 
 // Register Native Messaging host
 program
@@ -116,8 +116,8 @@ program
               'yellow',
             ),
           );
-          console.log(colorText('  1. sudo mcp-chrome-bridge register', 'yellow'));
-          console.log(colorText('  2. mcp-chrome-bridge register --system', 'yellow'));
+          console.log(colorText('  1. sudo mokutab-bridge register', 'yellow'));
+          console.log(colorText('  2. mokutab-bridge register --system', 'yellow'));
           process.exit(1);
         }
       }

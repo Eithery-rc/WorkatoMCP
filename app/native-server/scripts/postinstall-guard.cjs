@@ -14,8 +14,8 @@ const { join } = require('node:path');
 const target = join(__dirname, '..', 'dist', 'scripts', 'postinstall.js');
 
 if (!existsSync(target)) {
-  console.log('[workatomcp-bridge] dist/ not built yet — skipping native-messaging registration.');
-  console.log('[workatomcp-bridge] Run `pnpm build` first, then `workatomcp-bridge register`.');
+  console.log('[mokutab-bridge] dist/ not built yet, skipping native-messaging registration.');
+  console.log('[mokutab-bridge] Run `pnpm build` first, then `mokutab-bridge register`.');
   process.exit(0);
 }
 

@@ -13,26 +13,27 @@ export const writeFile = promisify(fs.writeFile);
 /**
  * Get the log directory path for wrapper scripts.
  * Uses platform-appropriate user directories to avoid permission issues.
+ * Must match LOG_DIR in run_host.bat / run_host.sh, which write the logs.
  *
- * - macOS: ~/Library/Logs/mcp-chrome-bridge
- * - Windows: %LOCALAPPDATA%/mcp-chrome-bridge/logs
- * - Linux: $XDG_STATE_HOME/mcp-chrome-bridge/logs or ~/.local/state/mcp-chrome-bridge/logs
+ * - macOS: ~/Library/Logs/mokutab-bridge
+ * - Windows: %LOCALAPPDATA%/mokutab-bridge/logs
+ * - Linux: $XDG_STATE_HOME/mokutab-bridge/logs or ~/.local/state/mokutab-bridge/logs
  */
 export function getLogDir(): string {
   const homedir = os.homedir();
 
   if (os.platform() === 'darwin') {
-    return path.join(homedir, 'Library', 'Logs', 'workatomcp-bridge');
+    return path.join(homedir, 'Library', 'Logs', 'mokutab-bridge');
   } else if (os.platform() === 'win32') {
     return path.join(
       process.env.LOCALAPPDATA || path.join(homedir, 'AppData', 'Local'),
-      'workatomcp-bridge',
+      'mokutab-bridge',
       'logs',
     );
   } else {
     // Linux: XDG_STATE_HOME or ~/.local/state
     const xdgState = process.env.XDG_STATE_HOME || path.join(homedir, '.local', 'state');
-    return path.join(xdgState, 'workatomcp-bridge', 'logs');
+    return path.join(xdgState, 'mokutab-bridge', 'logs');
   }
 }
 

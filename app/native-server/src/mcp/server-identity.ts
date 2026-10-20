@@ -14,7 +14,7 @@ import {
   UNKNOWN_VERSION,
 } from './workato-bridge-info';
 
-export const SERVER_NAME = 'WorkatoMCP';
+export const SERVER_NAME = 'MokuTab';
 
 /**
  * Concise task-to-tool guidance, sent once at initialize: the core snippet,
@@ -55,7 +55,7 @@ export function buildServerInstructions(
   }
   if (off.length > 0) {
     parts.push(
-      `Switched off on this machine: ${off.join(', ')} (turn on in the extension popup, Modules).`,
+      `Switched off on this machine: ${off.join(', ')} (turn on in the MokuTab popup, Modules).`,
     );
   }
   return parts.join(' ');

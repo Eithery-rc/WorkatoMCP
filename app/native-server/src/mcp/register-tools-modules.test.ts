@@ -70,7 +70,7 @@ describe('a switched-off module refuses its tools', () => {
       expect(result.isError).toBe(true);
       expect(text(result)).toContain(name);
       expect(text(result)).toContain('Workato module');
-      expect(text(result)).toContain('extension popup (Modules)');
+      expect(text(result)).toContain('MokuTab popup (Modules)');
       expect(text(result)).not.toMatch(/not found/i);
     }
     expect(sendRequest).not.toHaveBeenCalled();

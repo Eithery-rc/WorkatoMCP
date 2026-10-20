@@ -250,7 +250,7 @@ const SESSION_STAMP = `${process.pid}-${Date.now().toString(36)}`;
 
 /** Where auto-mode files go: one directory per bridge process. */
 export function autoFileSessionDir(): string {
-  return path.join(os.tmpdir(), 'workatomcp-results', `session-${SESSION_STAMP}`);
+  return path.join(os.tmpdir(), 'mokutab-results', `session-${SESSION_STAMP}`);
 }
 
 function autoFilePath(plan: AutoFilePlan, extension: string): string {

@@ -125,7 +125,7 @@ describe('the background refuses a switched-off module', () => {
     const text = (result.content[0] as any).text as string;
     expect(result.isError).toBe(true);
     expect(text).toContain('workato_pull_recipe');
-    expect(text).toContain('extension popup (Modules)');
+    expect(text).toContain('MokuTab popup (Modules)');
     expect(text).not.toMatch(/not found/i);
   });
 });

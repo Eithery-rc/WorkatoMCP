@@ -13,7 +13,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 const journalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wops-router-'));
-process.env.WORKATOMCP_OPERATIONS_DIR = journalDir;
+process.env.MOKUTAB_OPERATIONS_DIR = journalDir;
 
 import { createToolRouter } from '../../mcp/register-tools';
 import { profileRegistry } from '../../server/profile-registry';

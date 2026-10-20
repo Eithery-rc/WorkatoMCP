@@ -17,7 +17,7 @@ import { resetOperationsDirCache } from './operations';
 // Every orchestrator call now journals to disk; keep that out of the real
 // bridge state directory.
 const journalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wops-sd-'));
-process.env.WORKATOMCP_OPERATIONS_DIR = journalDir;
+process.env.MOKUTAB_OPERATIONS_DIR = journalDir;
 resetOperationsDirCache();
 
 afterAll(() => {

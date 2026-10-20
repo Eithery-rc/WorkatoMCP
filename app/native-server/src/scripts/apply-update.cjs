@@ -30,9 +30,12 @@ const LOCK_STALE_MS = 15 * 60_000;
 const INSTALL_TIMEOUT_MS = 180_000;
 const LOG_MAX_BYTES = 256 * 1024;
 
-/** Must mirror updateStateDir() in update-checker.ts. */
+/** Must mirror updateStateDir() in update-checker.ts, the 1.x variable name included. */
 function stateDir() {
-  const override = process.env.WORKATOMCP_UPDATE_STATE_DIR;
+  const override = [
+    process.env.MOKUTAB_UPDATE_STATE_DIR,
+    process.env.WORKATOMCP_UPDATE_STATE_DIR,
+  ].find((value) => value !== undefined && value.trim() !== '');
   if (override) return override;
   if (process.platform === 'win32') {
     const base = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');

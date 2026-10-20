@@ -14,13 +14,14 @@ import { randomBytes } from 'crypto';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { CORE_TOOL_NAMES } from '@mokuhub/mokutab-shared';
 import { installedToolSchemas } from './catalogue';
+import { readEnv } from '../env';
 
 export const LEASE_TAB_TOOL = CORE_TOOL_NAMES.BROWSER.LEASE_TAB;
 export const RELEASE_TAB_TOOL = CORE_TOOL_NAMES.BROWSER.RELEASE_TAB;
 export const LEASE_ARG = 'lease';
 /** A lease nobody used for this long is released and its tab closed. */
 export const LEASE_IDLE_MS = 30 * 60 * 1000;
-export const STRICT_TABS_ENV = 'WORKATOMCP_STRICT_TABS';
+export const STRICT_TABS_ENV = 'MOKUTAB_STRICT_TABS';
 
 const LEASE_PROPERTY = {
   type: 'string',
@@ -202,7 +203,7 @@ export function applyLease(
 }
 
 export function strictTabsFromEnv(): boolean {
-  return process.env[STRICT_TABS_ENV] === '1';
+  return readEnv(STRICT_TABS_ENV) === '1';
 }
 
 /**

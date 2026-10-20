@@ -1,4 +1,5 @@
-export const COMMAND_NAME = 'workatomcp-bridge';
+/** The command; the 1.x names (workatomcp-bridge and the upstream ones) stay bin aliases until 3.0. */
+export const COMMAND_NAME = 'mokutab-bridge';
 
 /** The npm package, for install commands (the command name is not installable). */
 export const PACKAGE_NAME = '@mokuhub/mokutab-bridge';
@@ -18,4 +19,4 @@ export const EXTENSION_IDS = ['bpjpdgkeelhkijkllcmogemkmndgeana'];
 export const EXTENSION_ID = EXTENSION_IDS[0];
 
 export const HOST_NAME = 'com.chromemcp.nativehost';
-export const DESCRIPTION = 'WorkatoMCP native messaging host (Chrome ↔ MCP bridge)';
+export const DESCRIPTION = 'MokuTab native messaging host (Chrome ↔ MCP bridge)';

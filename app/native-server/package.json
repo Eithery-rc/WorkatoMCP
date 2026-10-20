@@ -4,6 +4,8 @@
   "description": "MokuTab native messaging host (Chrome ↔ MCP bridge)",
   "main": "dist/index.js",
   "bin": {
+    "mokutab-bridge": "./dist/cli.js",
+    "mokutab-stdio": "./dist/mcp/mcp-server-stdio.js",
     "workatomcp-bridge": "./dist/cli.js",
     "workatomcp-stdio": "./dist/mcp/mcp-server-stdio.js",
     "mcp-chrome-bridge": "./dist/cli.js",
