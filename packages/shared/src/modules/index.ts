@@ -14,6 +14,8 @@ import { WORKATO_MODULE, WORKATO_TOOL_NAMES } from './workato';
 
 export {
   WORKATO_MODULE,
+  WORKATO_MODULE_ID,
+  WORKATO_MODULE_TITLE,
   WORKATO_TOOL_NAMES,
   WORKATO_TOOL_SCHEMAS,
   WORKATO_INSTRUCTIONS,
@@ -38,15 +40,29 @@ export const TOOL_NAMES = {
   WORKATO_SESSION: WORKATO_TOOL_NAMES.WORKATO_SESSION,
 };
 
-/** Every tool schema: core first, then each module's. */
-export const TOOL_SCHEMAS: Tool[] = [...CORE_TOOL_SCHEMAS, ...MODULES.flatMap((m) => m.tools)];
+/**
+ * Every tool schema: core first, then each module's.
+ *
+ * Top-level code here must stay side-effect free for the bundler: a bare
+ * spread or loop over the schemas keeps all of them in every bundle that
+ * imports anything from this package (the extension popup and service worker
+ * need names only). Hence the pure call and the lazy owner map.
+ */
+export const TOOL_SCHEMAS: Tool[] = /* @__PURE__ */ allToolSchemas();
 
-const OWNER = new Map<string, ToolModule>();
-for (const module of MODULES) {
-  for (const tool of module.tools) OWNER.set(tool.name, module);
+function allToolSchemas(): Tool[] {
+  return [...CORE_TOOL_SCHEMAS, ...MODULES.flatMap((m) => m.tools)];
 }
+
+let owners: Map<string, ToolModule> | undefined;
 
 /** The installed module a tool belongs to, or undefined for a core (or unknown) tool. */
 export function moduleOfTool(name: string): ToolModule | undefined {
-  return OWNER.get(name);
+  if (!owners) {
+    owners = new Map();
+    for (const module of MODULES) {
+      for (const tool of module.tools) owners.set(tool.name, module);
+    }
+  }
+  return owners.get(name);
 }

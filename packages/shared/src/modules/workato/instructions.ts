@@ -4,7 +4,7 @@
  * documentation. The budget for core plus every module is checked in the
  * bridge (server-identity.test.ts).
  */
-export const WORKATO_INSTRUCTIONS = [
+export const WORKATO_INSTRUCTIONS = /* @__PURE__ */ [
   'Workato: which app exists, its adapter name -> workato_apps_list(query);',
   "an adapter's actions and field names -> workato_adapter_meta;",
   "a step's real extended_*_schema, never hand-written -> workato_step_schema;",

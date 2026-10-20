@@ -6,9 +6,17 @@ export { WORKATO_TOOL_NAMES } from './tool-names';
 export { WORKATO_TOOL_SCHEMAS } from './schemas';
 export { WORKATO_INSTRUCTIONS } from './instructions';
 
+/**
+ * The id and title on their own, for code that needs no schemas (the
+ * extension): its bundler keeps a whole object literal when one property is
+ * read, so reading WORKATO_MODULE.id would ship every Workato schema with it.
+ */
+export const WORKATO_MODULE_ID = 'workato';
+export const WORKATO_MODULE_TITLE = 'Workato';
+
 export const WORKATO_MODULE: ToolModule = {
-  id: 'workato',
-  title: 'Workato',
+  id: WORKATO_MODULE_ID,
+  title: WORKATO_MODULE_TITLE,
   tools: WORKATO_TOOL_SCHEMAS,
   instructions: WORKATO_INSTRUCTIONS,
 };

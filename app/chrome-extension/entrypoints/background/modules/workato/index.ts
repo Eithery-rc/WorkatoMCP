@@ -3,7 +3,8 @@
  * that appends the tab's workspace context block to every Workato result.
  */
 
-import { WORKATO_MODULE } from 'workatomcp-shared';
+// The id and title only: WORKATO_MODULE would bring every Workato schema along.
+import { WORKATO_MODULE_ID, WORKATO_MODULE_TITLE } from 'workatomcp-shared';
 import type { ExtensionModule, ModuleToolExecutor } from '../../extension-module';
 import * as workatoTools from './tools/workato';
 import * as workatoUiTools from './tools/workato-ui';
@@ -40,8 +41,8 @@ function description(): string {
 }
 
 export const workatoExtensionModule: ExtensionModule = {
-  id: WORKATO_MODULE.id,
-  title: WORKATO_MODULE.title,
+  id: WORKATO_MODULE_ID,
+  title: WORKATO_MODULE_TITLE,
   description: description(),
   executors,
   // Say which tab/workspace the call actually ran in. Best effort: it never
