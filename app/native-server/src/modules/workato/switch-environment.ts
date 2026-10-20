@@ -53,27 +53,3 @@ export function parseSwitchResult(result: CallToolResult | undefined): SwitchedC
     return null;
   }
 }
-
-interface PinnedContext {
-  workspace_id?: number;
-  workspace_name?: string;
-  environment?: string;
-  generation: number;
-}
-
-/**
- * The pinned session after a switch: same profile and tab, new workspace and
- * environment, and the current registry generation so the next call does not
- * re-probe and report the switch as a ContextChanged drift.
- */
-export function followSwitch<T extends PinnedContext>(
-  session: T,
-  switched: SwitchedContext,
-  generation: number,
-): T {
-  const next: T = { ...session, generation };
-  if (switched.workspace_id !== undefined) next.workspace_id = switched.workspace_id;
-  if (switched.workspace_name !== undefined) next.workspace_name = switched.workspace_name;
-  if (switched.environment !== undefined) next.environment = switched.environment;
-  return next;
-}

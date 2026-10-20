@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, jest, test } from '@jest/globals';
 import { createToolRouter } from '../../mcp/register-tools';
 import { profileRegistry } from '../../server/profile-registry';
-import { followSwitch, isContextChangingTool, parseSwitchResult } from './switch-environment';
+import { isContextChangingTool, parseSwitchResult } from './switch-environment';
 
 /** A workato_session_context response, as the extension returns it. */
 const sessionContextReply = (tabId: number) => ({
@@ -72,27 +72,6 @@ describe('workato_switch_environment helpers', () => {
       parseSwitchResult({ content: [{ type: 'text', text: 'nope' }], isError: true }),
     ).toBeNull();
     expect(parseSwitchResult({ content: [{ type: 'text', text: 'no payload' }] })).toBeNull();
-  });
-
-  test('followSwitch keeps profile and tab and takes the new context', () => {
-    const next = followSwitch(
-      {
-        profile: 'personal',
-        tabId: 42,
-        workspace_id: 1,
-        environment: 'Development',
-        generation: 3,
-      },
-      { workspace_id: 1, environment: 'Production' },
-      9,
-    );
-    expect(next).toEqual({
-      profile: 'personal',
-      tabId: 42,
-      workspace_id: 1,
-      environment: 'Production',
-      generation: 9,
-    });
   });
 });
 
