@@ -47,6 +47,14 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+/** The config.json.malformed-<time> copies in the test dir. */
+function malformedCopies(): string[] {
+  return fs
+    .readdirSync(dir)
+    .filter((name) => name.startsWith('config.json.malformed-'))
+    .map((name) => path.join(dir, name));
+}
+
 /** Write the file with a distinct mtime, so a re-read is never skipped by the stat check. */
 function writeConfig(text: string): void {
   fs.writeFileSync(file, text);
@@ -132,6 +140,29 @@ describe('reading the module switch', () => {
     expect(stats).toBe(1);
   });
 
+  test('a clock that steps back does not hold the next look off', () => {
+    let clock = 10_000;
+    const throttled = new ModuleSwitch(
+      () => file,
+      () => {},
+      { recheckMs: 250, now: () => clock, io },
+    );
+    writeConfig(JSON.stringify({ modules: { workato: true } }));
+    expect(throttled.isEnabled('workato')).toBe(true);
+    writeConfig(JSON.stringify({ modules: { workato: false } }));
+    // The wall clock jumps back an hour: elapsed is negative, so look now.
+    clock -= 3_600_000;
+    expect(throttled.isEnabled('workato')).toBe(false);
+  });
+
+  test('valid JSON that is not an object keeps the last good state and says so', () => {
+    writeConfig(JSON.stringify({ modules: { workato: false } }));
+    expect(switches.isEnabled('workato')).toBe(false);
+    writeConfig('[]');
+    expect(switches.isEnabled('workato')).toBe(false);
+    expect(logs.join('\n')).toMatch(/is not a JSON object \(an array\); keeping the last good/);
+  });
+
   test('a hand edit is picked up on the next read and reported as a change', () => {
     const seen: Record<string, boolean>[] = [];
     switches.onChange((states) => seen.push(states));
@@ -182,8 +213,32 @@ describe('writing the module switch', () => {
   test('set over a malformed file moves it aside instead of losing it silently', () => {
     writeConfig('{ broken');
     switches.set('workato', true);
-    expect(fs.readFileSync(`${file}.malformed`, 'utf8')).toBe('{ broken');
+    const copies = malformedCopies();
+    expect(copies).toHaveLength(1);
+    expect(fs.readFileSync(copies[0], 'utf8')).toBe('{ broken');
     expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ modules: { workato: true } });
+  });
+
+  test('valid JSON that is not an object is moved aside too, never overwritten', () => {
+    for (const text of ['[]', 'null', '42']) {
+      writeConfig(text);
+      switches.set('workato', true);
+    }
+    // Each one kept: a second copy never replaces the first.
+    const kept = malformedCopies().map((copy) => fs.readFileSync(copy, 'utf8'));
+    expect(kept.sort()).toEqual(['42', '[]', 'null']);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ modules: { workato: true } });
+  });
+
+  test('a UTF-8 BOM is not a malformed file', () => {
+    writeConfig('﻿' + JSON.stringify({ keep: 'me', modules: { workato: false } }));
+    expect(switches.isEnabled('workato')).toBe(false);
+    switches.set('workato', true);
+    expect(malformedCopies()).toEqual([]);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({
+      keep: 'me',
+      modules: { workato: true },
+    });
   });
 
   test('set over a file it cannot read fails and leaves the file alone', () => {
@@ -192,7 +247,7 @@ describe('writing the module switch', () => {
     failReads = 10;
     expect(() => switches.set('workato', false)).toThrow(/could not read .*EBUSY.*nothing changed/);
     failReads = 0;
-    expect(fs.existsSync(`${file}.malformed`)).toBe(false);
+    expect(malformedCopies()).toEqual([]);
     expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({
       keep: 'me',
       modules: { workato: true },

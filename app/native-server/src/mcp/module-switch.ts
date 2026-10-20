@@ -16,6 +16,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { performance } from 'perf_hooks';
 import { configFile } from '../data-dir';
 
 /** A module the config does not mention is on. Step 3 of the 2.0 plan flips this. */
@@ -61,6 +62,38 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 type FileSignature = { kind: 'file'; signature: string } | { kind: 'missing' } | { kind: 'error' };
 
+type ParsedConfig = { ok: true; doc: Record<string, unknown> } | { ok: false; reason: string };
+
+/**
+ * The config document, or why it is not one. A UTF-8 BOM (which some Windows
+ * editors write) is ignored; valid JSON that is not an object is as unusable
+ * as a syntax error.
+ */
+function parseConfig(raw: string): ParsedConfig {
+  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err: any) {
+    return { ok: false, reason: `not valid JSON (${err?.message || String(err)})` };
+  }
+  if (!isRecord(parsed)) {
+    return {
+      ok: false,
+      reason: `not a JSON object (${Array.isArray(parsed) ? 'an array' : String(parsed)})`,
+    };
+  }
+  return { ok: true, doc: parsed };
+}
+
+/** Where a malformed file is moved: stamped, so a second one never replaces the first. */
+function malformedCopyPath(file: string, at: Date): string {
+  const stem = `${file}.malformed-${at.toISOString().replace(/[:.]/g, '-')}`;
+  let candidate = stem;
+  for (let n = 1; fs.existsSync(candidate); n++) candidate = `${stem}-${n}`;
+  return candidate;
+}
+
 export class ModuleSwitch implements ModuleSwitchView {
   private states: ModuleStates = {};
   /**
@@ -82,7 +115,8 @@ export class ModuleSwitch implements ModuleSwitchView {
     options: ModuleSwitchOptions = {},
   ) {
     this.recheckMs = options.recheckMs ?? MODULE_SWITCH_RECHECK_MS;
-    this.now = options.now ?? Date.now;
+    // Monotonic by default: a wall clock can step back (NTP, a resumed laptop).
+    this.now = options.now ?? (() => performance.now());
     this.io = options.io ?? DEFAULT_IO;
   }
 
@@ -101,9 +135,9 @@ export class ModuleSwitch implements ModuleSwitchView {
 
   /**
    * Switch one module and persist it. Other keys of the file are kept; a file
-   * that is not valid JSON is moved aside to config.json.malformed first. A
-   * file that cannot be read for another reason is left alone and the set
-   * fails, rather than replacing settings it could not see.
+   * that is not a JSON object is moved aside to config.json.malformed-<time>
+   * first. A file that cannot be read for another reason is left alone and
+   * the set fails, rather than replacing settings it could not see.
    */
   set(id: string, enabled: boolean): void {
     this.refresh(true);
@@ -119,13 +153,13 @@ export class ModuleSwitch implements ModuleSwitchView {
       }
     }
     if (raw !== null) {
-      try {
-        const parsed = JSON.parse(raw);
-        if (isRecord(parsed)) doc = parsed;
-      } catch (err) {
-        if (!(err instanceof SyntaxError)) throw err;
-        fs.renameSync(file, `${file}.malformed`);
-        this.log(`${file} was not valid JSON; moved it to ${file}.malformed`);
+      const parsed = parseConfig(raw);
+      if (parsed.ok) {
+        doc = parsed.doc;
+      } else {
+        const aside = malformedCopyPath(file, new Date());
+        fs.renameSync(file, aside);
+        this.log(`${file} was ${parsed.reason}; moved it to ${aside}`);
       }
     }
     const modules = isRecord(doc.modules) ? { ...doc.modules } : {};
@@ -175,7 +209,9 @@ export class ModuleSwitch implements ModuleSwitchView {
   /** Re-read the file when it changed on disk (a hand edit, another process). */
   private refresh(force = false): void {
     const now = this.now();
-    if (!force && now - this.lastCheckAt < this.recheckMs) return;
+    const elapsed = now - this.lastCheckAt;
+    // A clock that stepped back (elapsed < 0) must not hold the check off.
+    if (!force && elapsed >= 0 && elapsed < this.recheckMs) return;
     this.lastCheckAt = now;
 
     const file = this.file();
@@ -194,20 +230,15 @@ export class ModuleSwitch implements ModuleSwitchView {
         // Locked or gone between the stat and the read: retry next time.
         return;
       }
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw);
-      } catch (err: any) {
+      const parsed = parseConfig(raw);
+      if (!parsed.ok) {
         if (this.reportedBad !== signature) {
           this.reportedBad = signature;
-          this.log(
-            `${file} is not valid JSON (${err?.message || String(err)}); keeping the last good ` +
-              'module state',
-          );
+          this.log(`${file} is ${parsed.reason}; keeping the last good module state`);
         }
         return;
       }
-      const modules = isRecord(parsed) && isRecord(parsed.modules) ? parsed.modules : {};
+      const modules = isRecord(parsed.doc.modules) ? parsed.doc.modules : {};
       for (const [id, value] of Object.entries(modules)) {
         if (typeof value === 'boolean') next[id] = value;
         else this.log(`${file}: modules.${id} is not true or false; using the default`);
