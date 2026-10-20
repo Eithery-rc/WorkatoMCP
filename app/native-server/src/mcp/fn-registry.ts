@@ -34,8 +34,24 @@ export const FN_DIR_ENV = 'MOKUTAB_FN_DIR';
 const LOCK_FILE = '.fn-save.lock';
 const LOCK_STALE_MS = 60_000;
 const LOCK_WAIT_MS = 10_000;
-const GIT_USER = 'workatomcp';
-const GIT_IDENTITY = ['-c', `user.name=${GIT_USER}`, '-c', 'user.email=workatomcp@localhost'];
+/** The identity chrome_fn_save commits with. */
+const GIT_USER = 'mokutab';
+const GIT_EMAIL = 'mokutab@localhost';
+const GIT_IDENTITY = ['-c', `user.name=${GIT_USER}`, '-c', `user.email=${GIT_EMAIL}`];
+
+/**
+ * Every name and email chrome_fn_save has committed with: 1.x saved as
+ * workatomcp. All of them count as the machine, permanently. The vault gate
+ * (handCommitted) lets a function read the vault only when a person made its
+ * last commit; if the old identity stopped counting, every function 1.x
+ * saved would pass that gate the day the name changed.
+ */
+export const MACHINE_IDENTITIES: ReadonlySet<string> = new Set([
+  GIT_USER,
+  GIT_EMAIL,
+  'workatomcp',
+  'workatomcp@localhost',
+]);
 
 export function defaultRegistryDir(): string {
   const override = readEnv(FN_DIR_ENV);
@@ -434,12 +450,14 @@ export class FnRegistry {
     }
     const last = (
       await this.git(
-        ['log', '-1', '--format=%an%x1f%cn', '--', this.rel(this.fileFor(name))],
+        ['log', '-1', '--format=%an%x1f%ae%x1f%cn%x1f%ce', '--', this.rel(this.fileFor(name))],
         this.dir,
       )
     ).trim();
-    const [author, committer] = last.split('\x1f');
-    if (!last || author === GIT_USER || committer === GIT_USER) {
+    // Author or committer, by name or by email: chrome_fn_save (now or in
+    // 1.x) made the commit, or a person only replayed one of its commits (an
+    // amend or a cherry-pick keeps the author).
+    if (!last || last.split('\x1f').some((field) => MACHINE_IDENTITIES.has(field.trim()))) {
       return `its last commit was made by chrome_fn_save, not by a person`;
     }
     return null;

@@ -499,7 +499,7 @@ async function executeViaScripting(
 type JobState = 'running' | 'done' | 'error' | 'busy' | 'lost';
 
 /** Page global holding the jobs this tool started in that document. */
-const JOB_STORE = '__workatomcpJobs';
+const JOB_STORE = '__mokutabJobs';
 /**
  * Budget for one look at the job store. A page whose main thread is blocked
  * (a sync XHR) cannot answer any evaluate, so a slower probe reports busy.

@@ -109,7 +109,7 @@ const DEFAULT_JS_MS = 60_000;
 const DEFAULT_TOOL_MS = 60_000;
 const DEFAULT_NAVIGATE_MS = 60_000;
 const PROBE_JS_MS = 8_000;
-const RESULT_MARK = '__workatomcp_fn';
+const RESULT_MARK = '__mokutab_fn';
 
 /**
  * Pages a function must never load: logging out or switching role ends the

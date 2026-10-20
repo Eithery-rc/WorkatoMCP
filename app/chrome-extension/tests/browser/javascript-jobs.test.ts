@@ -46,7 +46,7 @@ beforeEach(() => {
   cdp.hang = false;
   cdp.calls = [];
   chromeAny.tabs.get.mockImplementation(async (id: number) => ({ id, url: 'https://x.test/' }));
-  delete (window as any).__workatomcpJobs;
+  delete (window as any).__mokutabJobs;
   delete (window as any).__ran;
 });
 
@@ -86,14 +86,14 @@ describe('chrome_javascript async jobs', () => {
 
     // A reply that never reached the agent can be read once more.
     await tick();
-    expect(typeof (window as any).__workatomcpJobs[start.job_id].delivered).toBe('number');
+    expect(typeof (window as any).__mokutabJobs[start.job_id].delivered).toBe('number');
     const reread = await javascriptTool.execute({ tabId: 5, job_id: start.job_id });
     expect(reread.isError).toBe(false);
     expect(payloadOf(reread)).toMatchObject({ state: 'done', result: done.result });
     expect(payloadOf(reread).message).toMatch(/Second read/);
 
     await tick();
-    expect((window as any).__workatomcpJobs[start.job_id]).toBeUndefined();
+    expect((window as any).__mokutabJobs[start.job_id]).toBeUndefined();
 
     const again = await javascriptTool.execute({ tabId: 5, job_id: start.job_id });
     expect(again.isError).toBe(true);
@@ -110,17 +110,17 @@ describe('chrome_javascript async jobs', () => {
       'done',
     );
     await tick();
-    (window as any).__workatomcpJobs[start.job_id].delivered = Date.now() - 61_000;
+    (window as any).__mokutabJobs[start.job_id].delivered = Date.now() - 61_000;
 
     const late = await javascriptTool.execute({ tabId: 5, job_id: start.job_id });
     expect(late.isError).toBe(true);
     expect(payloadOf(late).error.message).toMatch(/already delivered/);
     await tick();
-    expect((window as any).__workatomcpJobs[start.job_id]).toBeUndefined();
+    expect((window as any).__mokutabJobs[start.job_id]).toBeUndefined();
   });
 
   it('drops long-finished jobs nobody polled when a new job starts', async () => {
-    (window as any).__workatomcpJobs = {
+    (window as any).__mokutabJobs = {
       job_old: {
         state: 'done',
         value: 'x'.repeat(100),
@@ -131,7 +131,7 @@ describe('chrome_javascript async jobs', () => {
       job_running: { state: 'running', started: 1 },
     };
     await javascriptTool.execute({ tabId: 5, async_job: true, code: 'return 1;' });
-    const store = (window as any).__workatomcpJobs;
+    const store = (window as any).__mokutabJobs;
     expect(store.job_old).toBeUndefined();
     expect(store.job_recent).toBeDefined();
     expect(store.job_running).toBeDefined();
@@ -188,7 +188,7 @@ describe('chrome_javascript async jobs', () => {
     const start = payloadOf(
       await javascriptTool.execute({ tabId: 5, async_job: true, code: 'return 1;' }),
     );
-    delete (window as any).__workatomcpJobs;
+    delete (window as any).__mokutabJobs;
     const lost = await javascriptTool.execute({ tabId: 5, job_id: start.job_id });
     expect(lost.isError).toBe(true);
     expect(payloadOf(lost)).toMatchObject({ state: 'lost' });
@@ -226,7 +226,7 @@ describe('chrome_javascript async jobs', () => {
     });
     expect(started.isError).toBe(true);
     expect(payloadOf(started).error.kind).toBe('syntax_error');
-    expect(Object.keys((window as any).__workatomcpJobs || {})).toHaveLength(0);
+    expect(Object.keys((window as any).__mokutabJobs || {})).toHaveLength(0);
   });
 
   it('validates the parameter combinations', async () => {
